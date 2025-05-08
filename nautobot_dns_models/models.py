@@ -290,6 +290,18 @@ class PTRRecordModel(DNSRecordModel):  # pylint: disable=too-many-ancestors
 class DNSRule(DNSModel):
     """Model for automatic DNS record creation rules."""
 
+    clone_fields = [
+        "content_type",
+        "priority",
+        "zone_template",
+        "record_type",
+        "name_template",
+        "value_template",
+        "ttl",
+        "mx_preference",
+        "enabled",
+    ]
+
     class Meta:
         """Meta attributes for DNSRule."""
 
