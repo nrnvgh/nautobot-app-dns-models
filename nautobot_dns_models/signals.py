@@ -133,7 +133,7 @@ def create_dns_records(obj):
         rules = DNSRule.objects.filter(content_type=content_type, enabled=True)
         
         for rule in rules:
-            logger.debug(f"[create_dns_records] Processing rule {rule.name} (value_template: {rule.value_template})")
+            logger.debug(f"[create_dns_records] Processing rule {rule.name}")
             try:
                 # Render templates to get record details
                 context = {"object": obj}
