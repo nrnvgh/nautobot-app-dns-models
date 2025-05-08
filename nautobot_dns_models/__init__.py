@@ -59,4 +59,5 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
         super().ready()
         from . import signals  # noqa: F401
 
+
 config = NautobotDnsModelsConfig  # pylint:disable=invalid-name

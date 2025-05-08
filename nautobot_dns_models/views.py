@@ -8,32 +8,31 @@ from nautobot.apps.ui import (
     ObjectsTablePanel,
     SectionChoices,
     StatsPanel,
-    ObjectTextPanel,
 )
-from nautobot.core.ui import object_detail
 from nautobot.core.templatetags import helpers
+from nautobot.core.ui import object_detail
 
 from nautobot_dns_models.api.serializers import (
     AAAARecordModelSerializer,
     ARecordModelSerializer,
     CNAMERecordModelSerializer,
+    DNSRuleSerializer,
     DNSZoneModelSerializer,
     MXRecordModelSerializer,
     NSRecordModelSerializer,
     PTRRecordModelSerializer,
     TXTRecordModelSerializer,
-    DNSRuleSerializer,
 )
 from nautobot_dns_models.filters import (
     AAAARecordModelFilterSet,
     ARecordModelFilterSet,
     CNAMERecordModelFilterSet,
+    DNSRuleFilterSet,
     DNSZoneModelFilterSet,
     MXRecordModelFilterSet,
     NSRecordModelFilterSet,
     PTRRecordModelFilterSet,
     TXTRecordModelFilterSet,
-    DNSRuleFilterSet,
 )
 from nautobot_dns_models.forms import (
     AAAARecordModelBulkEditForm,
@@ -45,6 +44,9 @@ from nautobot_dns_models.forms import (
     CNAMERecordModelBulkEditForm,
     CNAMERecordModelFilterForm,
     CNAMERecordModelForm,
+    DNSRuleBulkEditForm,
+    DNSRuleFilterForm,
+    DNSRuleForm,
     DNSZoneModelBulkEditForm,
     DNSZoneModelFilterForm,
     DNSZoneModelForm,
@@ -60,16 +62,13 @@ from nautobot_dns_models.forms import (
     TXTRecordModelBulkEditForm,
     TXTRecordModelFilterForm,
     TXTRecordModelForm,
-    DNSRuleBulkEditForm,
-    DNSRuleFilterForm,
-    DNSRuleForm,
 )
 from nautobot_dns_models.models import (
     AAAARecordModel,
     ARecordModel,
     CNAMERecordModel,
-    DNSZoneModel,
     DNSRule,
+    DNSZoneModel,
     MXRecordModel,
     NSRecordModel,
     PTRRecordModel,
@@ -79,12 +78,12 @@ from nautobot_dns_models.tables import (
     AAAARecordModelTable,
     ARecordModelTable,
     CNAMERecordModelTable,
+    DNSRuleTable,
     DNSZoneModelTable,
     MXRecordModelTable,
     NSRecordModelTable,
     PTRRecordModelTable,
     TXTRecordModelTable,
-    DNSRuleTable,
 )
 
 
@@ -420,7 +419,7 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
                     "priority",
                     "record_type",
                     "description",
-                ]
+                ],
             ),
             ObjectFieldsPanel(
                 weight=100,
@@ -430,13 +429,13 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
                     "name_template",
                     "value_template",
                     "ttl",
-                    #"mx_preference",
+                    # "mx_preference",
                 ],
-                value_transforms = {
+                value_transforms={
                     "zone_template": [helpers.pre_tag],
                     "name_template": [helpers.pre_tag],
                     "value_template": [helpers.pre_tag],
-                }
+                },
             ),
         ]
     )

@@ -133,5 +133,6 @@ class DNSRuleSerializer(NautobotModelSerializer):  # pylint: disable=too-many-an
 
     class Meta:
         """Meta attributes."""
+
         model = models.DNSRule
         fields = "__all__"

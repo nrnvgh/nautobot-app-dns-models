@@ -90,5 +90,6 @@ class DNSRuleFilterSet(NautobotFilterSet):
 
     class Meta:
         """Meta attributes for filter."""
+
         model = models.DNSRule
         fields = "__all__"

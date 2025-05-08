@@ -330,6 +330,7 @@ class DNSRuleTable(BaseTable):
 
     class Meta(BaseTable.Meta):
         """Meta attributes."""
+
         model = models.DNSRule
         fields = (
             "pk",

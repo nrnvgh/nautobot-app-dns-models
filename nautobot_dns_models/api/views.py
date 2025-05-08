@@ -6,34 +6,34 @@ from nautobot_dns_models.api.serializers import (
     AAAARecordModelSerializer,
     ARecordModelSerializer,
     CNAMERecordModelSerializer,
+    DNSRuleSerializer,
     DNSZoneModelSerializer,
     MXRecordModelSerializer,
     NSRecordModelSerializer,
     PTRRecordModelSerializer,
     TXTRecordModelSerializer,
-    DNSRuleSerializer,
 )
 from nautobot_dns_models.filters import (
     AAAARecordModelFilterSet,
     ARecordModelFilterSet,
     CNAMERecordModelFilterSet,
+    DNSRuleFilterSet,
     DNSZoneModelFilterSet,
     MXRecordModelFilterSet,
     NSRecordModelFilterSet,
     PTRRecordModelFilterSet,
     TXTRecordModelFilterSet,
-    DNSRuleFilterSet,
 )
 from nautobot_dns_models.models import (
     AAAARecordModel,
     ARecordModel,
     CNAMERecordModel,
+    DNSRule,
     DNSZoneModel,
     MXRecordModel,
     NSRecordModel,
     PTRRecordModel,
     TXTRecordModel,
-    DNSRule,
 )
 
 

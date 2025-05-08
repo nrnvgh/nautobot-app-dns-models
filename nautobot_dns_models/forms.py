@@ -1,17 +1,24 @@
 """Forms for nautobot_dns_models."""
 
+import logging
+
 from django import forms
+from django.contrib.contenttypes.models import ContentType
+from django.db.models import Q
+from django.template import engines
+from jinja2.exceptions import TemplateError, TemplateSyntaxError, UndefinedError
 from nautobot.apps.forms import (
     NautobotBulkEditForm,
     NautobotModelForm,
     TagsBulkEditFormMixin,
 )
 from nautobot.extras.forms import NautobotFilterForm
-from jinja2 import Environment, TemplateSyntaxError
-from django.contrib.contenttypes.models import ContentType
-from django.db.models import Q
 
 from nautobot_dns_models import models
+
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class DNSZoneModelForm(NautobotModelForm):
@@ -361,54 +368,62 @@ class DNSRuleForm(NautobotModelForm):
 
     class Meta:
         """Meta attributes."""
+
         model = models.DNSRule
         fields = [
-            'name',
-            'description',
-            'enabled',
-            'content_type',
-            'priority',
-            'record_type',
-            'zone_template',
-            'name_template',
-            'value_template',
-            'ttl',
-            'mx_preference',
+            "name",
+            "description",
+            "enabled",
+            "content_type",
+            "priority",
+            "record_type",
+            "zone_template",
+            "name_template",
+            "value_template",
+            "ttl",
+            "mx_preference",
         ]
         widgets = {
-            'zone_template': forms.Textarea(attrs={'rows': 3}),
-            'name_template': forms.Textarea(attrs={'rows': 3}),
-            'value_template': forms.Textarea(attrs={'rows': 3}),
+            "zone_template": forms.Textarea(attrs={"rows": 3}),
+            "name_template": forms.Textarea(attrs={"rows": 3}),
+            "value_template": forms.Textarea(attrs={"rows": 3}),
         }
 
     def __init__(self, *args, **kwargs):
+        """Initialize the form."""
         super().__init__(*args, **kwargs)
         # Update content types to include ipam.ipaddresstointerface
-        self.fields['content_type'].queryset = ContentType.objects.filter(
-            Q(app_label='dcim', model__in=['device', 'interface']) |
-            Q(app_label='ipam', model__in=['ipaddresstointerface'])
-        ).order_by('app_label', 'model')
+        self.fields["content_type"].queryset = ContentType.objects.filter(
+            Q(app_label="dcim", model__in=["device", "interface"])
+            | Q(app_label="ipam", model__in=["ipaddresstointerface"])
+        ).order_by("app_label", "model")
 
     def clean(self):
         """Validate the DNS rule form."""
-        cleaned_data = super().clean()
-        if not cleaned_data:
-            return cleaned_data
+        logger.info("[DNSRuleForm] clean()")
+        cleaned_data = super().clean() or self.cleaned_data
+        logger.info(f"[DNSRuleForm] {cleaned_data=}")
 
-        # Validate templates syntax
-        env = Environment()
-        for field in ['zone_template', 'name_template', 'value_template']:
+        # Validate templates syntax using Django's template engine
+        template_engine = engines["jinja"]
+
+        for field in ["zone_template", "name_template", "value_template"]:
+            logger.info(f"[DNSRuleForm] {field=}")
             template = cleaned_data.get(field)
             if template:
                 try:
-                    env.parse(template)
+                    template_engine.from_string(template)
                 except TemplateSyntaxError as e:
-                    self.add_error(field, f"Invalid Jinja2 template syntax: {str(e)}")
+                    self.add_error(field, f"Invalid template syntax: {str(e)}")
+                except UndefinedError as e:
+                    self.add_error(field, f"Undefined variable in template: {str(e)}")
+                except TemplateError as e:
+                    self.add_error(field, f"Template error: {str(e)}")
 
         # Validate MX preference is set when record type is MX
-        record_type = cleaned_data.get('record_type')
-        if record_type == 'MX' and not cleaned_data.get('mx_preference'):
-            self.add_error('mx_preference', "MX preference is required for MX records")
+        record_type = cleaned_data.get("record_type")
+        if record_type == "MX" and not cleaned_data.get("mx_preference"):
+            self.add_error("mx_preference", "MX preference is required for MX records")
 
         return cleaned_data
 
@@ -416,10 +431,7 @@ class DNSRuleForm(NautobotModelForm):
 class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
     """DNS Rule bulk edit form."""
 
-    pk = forms.ModelMultipleChoiceField(
-        queryset=models.DNSRule.objects.all(),
-        widget=forms.MultipleHiddenInput
-    )
+    pk = forms.ModelMultipleChoiceField(queryset=models.DNSRule.objects.all(), widget=forms.MultipleHiddenInput)
     enabled = forms.NullBooleanField(required=False)
     priority = forms.IntegerField(required=False)
     ttl = forms.IntegerField(required=False)
@@ -427,8 +439,9 @@ class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
 
     class Meta:
         """Meta attributes."""
+
         nullable_fields = [
-            'description',
+            "description",
         ]
 
 
@@ -444,24 +457,21 @@ class DNSRuleFilterForm(NautobotFilterForm):
     )
     name = forms.CharField(required=False)
     content_type = forms.ModelChoiceField(
-        queryset=ContentType.objects.filter(
-            app_label='dcim',
-            model__in=['device', 'interface']
-        ).order_by('model'),
-        required=False
+        queryset=ContentType.objects.filter(app_label="dcim", model__in=["device", "interface"]).order_by("model"),
+        required=False,
     )
     record_type = forms.ChoiceField(
-        choices=[('', '---------')] + models.DNSRule._meta.get_field('record_type').choices,
-        required=False
+        choices=[("", "---------")] + models.DNSRule._meta.get_field("record_type").choices, required=False
     )
     enabled = forms.NullBooleanField(required=False)
 
     class Meta:
         """Meta attributes."""
+
         fields = [
-            'q',
-            'name',
-            'content_type',
-            'record_type',
-            'enabled',
+            "q",
+            "name",
+            "content_type",
+            "record_type",
+            "enabled",
         ]
