@@ -17,6 +17,7 @@ router.register("cname-records", views.CNAMERecordModelUIViewSet)
 router.register("mx-records", views.MXRecordModelUIViewSet)
 router.register("txt-records", views.TXTRecordModelUIViewSet)
 router.register("ptr-records", views.PTRRecordModelUIViewSet)
+router.register("dns-rules", views.DNSRuleUIViewSet)
 
 urlpatterns = [
     path("docs/", RedirectView.as_view(url=static("nautobot_dns_models/docs/index.html")), name="docs"),

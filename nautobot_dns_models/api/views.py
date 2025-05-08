@@ -11,6 +11,7 @@ from nautobot_dns_models.api.serializers import (
     NSRecordModelSerializer,
     PTRRecordModelSerializer,
     TXTRecordModelSerializer,
+    DNSRuleSerializer,
 )
 from nautobot_dns_models.filters import (
     AAAARecordModelFilterSet,
@@ -21,6 +22,7 @@ from nautobot_dns_models.filters import (
     NSRecordModelFilterSet,
     PTRRecordModelFilterSet,
     TXTRecordModelFilterSet,
+    DNSRuleFilterSet,
 )
 from nautobot_dns_models.models import (
     AAAARecordModel,
@@ -31,6 +33,7 @@ from nautobot_dns_models.models import (
     NSRecordModel,
     PTRRecordModel,
     TXTRecordModel,
+    DNSRule,
 )
 
 
@@ -114,3 +117,11 @@ class PTRRecordModelViewSet(NautobotModelViewSet):  # pylint: disable=too-many-a
     filterset_class = PTRRecordModelFilterSet
 
     lookup_field = "pk"
+
+
+class DNSRuleViewSet(NautobotModelViewSet):  # pylint: disable=too-many-ancestors
+    """DNSRule API ViewSet."""
+
+    queryset = DNSRule.objects.all()
+    serializer_class = DNSRuleSerializer
+    filterset_class = DNSRuleFilterSet

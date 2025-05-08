@@ -54,5 +54,9 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
         ),
     }
 
+    def ready(self):
+        """Override the ready method to import signals."""
+        super().ready()
+        from . import signals  # noqa: F401
 
 config = NautobotDnsModelsConfig  # pylint:disable=invalid-name

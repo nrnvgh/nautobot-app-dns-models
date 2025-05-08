@@ -83,3 +83,12 @@ class PTRRecordModelFilterSet(NautobotFilterSet):
 
         model = models.PTRRecordModel
         fields = "__all__"
+
+
+class DNSRuleFilterSet(NautobotFilterSet):
+    """Filter for DNSRule."""
+
+    class Meta:
+        """Meta attributes for filter."""
+        model = models.DNSRule
+        fields = "__all__"

@@ -1,7 +1,10 @@
 """Models for Nautobot DNS Models."""
 
+from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from jinja2 import Environment, TemplateSyntaxError
 from nautobot.apps.models import PrimaryModel, extras_features
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 
@@ -271,3 +274,141 @@ class PTRRecordModel(DNSRecordModel):  # pylint: disable=too-many-ancestors
     def __str__(self):
         """String representation of PTRRecordModel."""
         return self.ptrdname
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class DNSRule(DNSModel):
+    """Model for automatic DNS record creation rules."""
+
+    class Meta:
+        """Meta attributes for DNSRule."""
+        ordering = ("name", "priority")
+        verbose_name = "DNS Rule"
+        verbose_name_plural = "DNS Rules"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["content_type", "record_type"],
+                name="unique_content_type_record_type"
+            )
+        ]
+
+    # Basic fields
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Name of the rule"
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Description of the rule's purpose"
+    )
+    enabled = models.BooleanField(
+        default=True,
+        help_text="Whether this rule is active"
+    )
+
+    # Rule configuration
+    content_type = models.ForeignKey(
+        to=ContentType,
+        on_delete=models.CASCADE,
+        help_text="The type of object this rule applies to (e.g. dcim.interface)"
+    )
+    priority = models.PositiveIntegerField(
+        default=1000,
+        help_text="Priority of this rule (lower numbers run first)"
+    )
+
+    # DNS Record configuration
+    zone_template = models.TextField(
+        help_text="Jinja2 template for determining the DNS zone (must resolve to a valid zone name)"
+    )
+    record_type = models.CharField(
+        max_length=10,
+        choices=[
+            ('A', 'A Record'),
+            ('AAAA', 'AAAA Record'),
+            ('CNAME', 'CNAME Record'),
+            ('MX', 'MX Record'),
+            ('NS', 'NS Record'),
+            ('PTR', 'PTR Record'),
+            ('TXT', 'TXT Record'),
+        ],
+        help_text="Type of DNS record to create"
+    )
+    name_template = models.TextField(
+        help_text="Jinja2 template for generating the DNS record name"
+    )
+    value_template = models.TextField(
+        help_text="Jinja2 template for generating the record value (IP Addresses must be represented as UUIDs)."
+    )
+    ttl = models.IntegerField(
+        validators=[MinValueValidator(300), MaxValueValidator(2147483647)],
+        default=3600,
+        help_text="Time To Live for created records"
+    )
+
+    # MX Record specific
+    mx_preference = models.IntegerField(
+        validators=[MinValueValidator(0), MaxValueValidator(65535)],
+        default=10,
+        help_text="Preference for MX records (ignored for other record types)",
+        null=True,
+        blank=True
+    )
+
+    def clean(self):
+        """Validate the rule configuration."""
+        super().clean()
+
+        # Validate the Jinja templates syntax
+        try:
+            env = Environment()
+            for template_field in ['zone_template', 'name_template', 'value_template']:
+                template = getattr(self, template_field)
+                env.parse(template)
+        except Exception as e:
+            raise ValidationError({
+                'template': f"Invalid Jinja2 template syntax in {template_field}: {str(e)}"
+            })
+
+        # Validate MX preference is set if record type is MX
+        if self.record_type == 'MX' and self.mx_preference is None:
+            raise ValidationError({
+                'mx_preference': "Preference is required for MX records"
+            })
+
+    def __str__(self):
+        """String representation of the rule."""
+        return f"{self.name} ({self.get_record_type_display()})"
+
+    def render_template(self, template_field, obj):
+        """
+        Render a template field with the given object as context.
+        """
+        template = getattr(self, template_field)
+        context = {'object': obj}
+        try:
+            from nautobot.core.utils.data import render_jinja2
+            return render_jinja2(template, context)
+        except Exception as e:
+            raise ValueError(f"Failed to render {template_field}: {str(e)}")
+
+    def render_zone_template(self, obj):
+        """Render the zone template for a given object."""
+        return self.render_template('zone_template', obj)
+
+    def render_name_template(self, obj):
+        """Render the name template for a given object."""
+        return self.render_template('name_template', obj)
+
+    def render_value_template(self, obj):
+        """Render the value template for a given object."""
+        return self.render_template('value_template', obj)

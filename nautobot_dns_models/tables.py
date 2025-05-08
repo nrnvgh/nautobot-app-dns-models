@@ -313,3 +313,40 @@ class PTRRecordModelTable(DNSRecordsTable):
             "ttl",
             "actions",
         )
+
+
+class DNSRuleTable(BaseTable):
+    """Table for DNS Rules list view."""
+
+    pk = ToggleColumn()
+    name = tables.Column(linkify=True)
+    content_type = tables.Column()
+    enabled = tables.BooleanColumn()
+    record_type = tables.Column()
+    actions = ButtonsColumn(
+        models.DNSRule,
+        buttons=("changelog", "edit", "delete"),
+    )
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+        model = models.DNSRule
+        fields = (
+            "pk",
+            "name",
+            "content_type",
+            "enabled",
+            "priority",
+            "record_type",
+            "description",
+            "actions",
+        )
+        default_columns = (
+            "pk",
+            "name",
+            "content_type",
+            "enabled",
+            "priority",
+            "record_type",
+            "actions",
+        )

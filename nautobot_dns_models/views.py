@@ -8,8 +8,10 @@ from nautobot.apps.ui import (
     ObjectsTablePanel,
     SectionChoices,
     StatsPanel,
+    ObjectTextPanel,
 )
 from nautobot.core.ui import object_detail
+from nautobot.core.templatetags import helpers
 
 from nautobot_dns_models.api.serializers import (
     AAAARecordModelSerializer,
@@ -20,6 +22,7 @@ from nautobot_dns_models.api.serializers import (
     NSRecordModelSerializer,
     PTRRecordModelSerializer,
     TXTRecordModelSerializer,
+    DNSRuleSerializer,
 )
 from nautobot_dns_models.filters import (
     AAAARecordModelFilterSet,
@@ -30,6 +33,7 @@ from nautobot_dns_models.filters import (
     NSRecordModelFilterSet,
     PTRRecordModelFilterSet,
     TXTRecordModelFilterSet,
+    DNSRuleFilterSet,
 )
 from nautobot_dns_models.forms import (
     AAAARecordModelBulkEditForm,
@@ -56,12 +60,16 @@ from nautobot_dns_models.forms import (
     TXTRecordModelBulkEditForm,
     TXTRecordModelFilterForm,
     TXTRecordModelForm,
+    DNSRuleBulkEditForm,
+    DNSRuleFilterForm,
+    DNSRuleForm,
 )
 from nautobot_dns_models.models import (
     AAAARecordModel,
     ARecordModel,
     CNAMERecordModel,
     DNSZoneModel,
+    DNSRule,
     MXRecordModel,
     NSRecordModel,
     PTRRecordModel,
@@ -76,6 +84,7 @@ from nautobot_dns_models.tables import (
     NSRecordModelTable,
     PTRRecordModelTable,
     TXTRecordModelTable,
+    DNSRuleTable,
 )
 
 
@@ -384,5 +393,50 @@ class PTRRecordModelUIViewSet(views.NautobotUIViewSet):
                 section=SectionChoices.LEFT_HALF,
                 fields="__all__",
             )
+        ]
+    )
+
+
+class DNSRuleUIViewSet(views.NautobotUIViewSet):
+    """DNS Rule UI ViewSet."""
+
+    form_class = DNSRuleForm
+    bulk_update_form_class = DNSRuleBulkEditForm
+    filterset_class = DNSRuleFilterSet
+    filterset_form_class = DNSRuleFilterForm
+    serializer_class = DNSRuleSerializer
+    lookup_field = "pk"
+    queryset = DNSRule.objects.all()
+    table_class = DNSRuleTable
+    object_detail_content = ObjectDetailContent(
+        panels=[
+            ObjectFieldsPanel(
+                weight=100,
+                section=SectionChoices.LEFT_HALF,
+                fields=[
+                    "name",
+                    "content_type",
+                    "enabled",
+                    "priority",
+                    "record_type",
+                    "description",
+                ]
+            ),
+            ObjectFieldsPanel(
+                weight=100,
+                section=SectionChoices.RIGHT_HALF,
+                fields=[
+                    "zone_template",
+                    "name_template",
+                    "value_template",
+                    "ttl",
+                    #"mx_preference",
+                ],
+                value_transforms = {
+                    "zone_template": [helpers.pre_tag],
+                    "name_template": [helpers.pre_tag],
+                    "value_template": [helpers.pre_tag],
+                }
+            ),
         ]
     )

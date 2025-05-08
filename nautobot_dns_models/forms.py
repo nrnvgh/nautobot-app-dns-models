@@ -7,6 +7,9 @@ from nautobot.apps.forms import (
     TagsBulkEditFormMixin,
 )
 from nautobot.extras.forms import NautobotFilterForm
+from jinja2 import Environment, TemplateSyntaxError
+from django.contrib.contenttypes.models import ContentType
+from django.db.models import Q
 
 from nautobot_dns_models import models
 
@@ -351,3 +354,114 @@ class PTRRecordModelFilterForm(NautobotFilterForm):
         "comment",
         "description",
     ]
+
+
+class DNSRuleForm(NautobotModelForm):
+    """DNS Rule creation/edit form."""
+
+    class Meta:
+        """Meta attributes."""
+        model = models.DNSRule
+        fields = [
+            'name',
+            'description',
+            'enabled',
+            'content_type',
+            'priority',
+            'record_type',
+            'zone_template',
+            'name_template',
+            'value_template',
+            'ttl',
+            'mx_preference',
+        ]
+        widgets = {
+            'zone_template': forms.Textarea(attrs={'rows': 3}),
+            'name_template': forms.Textarea(attrs={'rows': 3}),
+            'value_template': forms.Textarea(attrs={'rows': 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Update content types to include ipam.ipaddresstointerface
+        self.fields['content_type'].queryset = ContentType.objects.filter(
+            Q(app_label='dcim', model__in=['device', 'interface']) |
+            Q(app_label='ipam', model__in=['ipaddresstointerface'])
+        ).order_by('app_label', 'model')
+
+    def clean(self):
+        """Validate the DNS rule form."""
+        cleaned_data = super().clean()
+        if not cleaned_data:
+            return cleaned_data
+
+        # Validate templates syntax
+        env = Environment()
+        for field in ['zone_template', 'name_template', 'value_template']:
+            template = cleaned_data.get(field)
+            if template:
+                try:
+                    env.parse(template)
+                except TemplateSyntaxError as e:
+                    self.add_error(field, f"Invalid Jinja2 template syntax: {str(e)}")
+
+        # Validate MX preference is set when record type is MX
+        record_type = cleaned_data.get('record_type')
+        if record_type == 'MX' and not cleaned_data.get('mx_preference'):
+            self.add_error('mx_preference', "MX preference is required for MX records")
+
+        return cleaned_data
+
+
+class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
+    """DNS Rule bulk edit form."""
+
+    pk = forms.ModelMultipleChoiceField(
+        queryset=models.DNSRule.objects.all(),
+        widget=forms.MultipleHiddenInput
+    )
+    enabled = forms.NullBooleanField(required=False)
+    priority = forms.IntegerField(required=False)
+    ttl = forms.IntegerField(required=False)
+    description = forms.CharField(required=False)
+
+    class Meta:
+        """Meta attributes."""
+        nullable_fields = [
+            'description',
+        ]
+
+
+class DNSRuleFilterForm(NautobotFilterForm):
+    """Filter form for DNS Rules."""
+
+    model = models.DNSRule
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        help_text="Search within Name and Description",
+    )
+    name = forms.CharField(required=False)
+    content_type = forms.ModelChoiceField(
+        queryset=ContentType.objects.filter(
+            app_label='dcim',
+            model__in=['device', 'interface']
+        ).order_by('model'),
+        required=False
+    )
+    record_type = forms.ChoiceField(
+        choices=[('', '---------')] + models.DNSRule._meta.get_field('record_type').choices,
+        required=False
+    )
+    enabled = forms.NullBooleanField(required=False)
+
+    class Meta:
+        """Meta attributes."""
+        fields = [
+            'q',
+            'name',
+            'content_type',
+            'record_type',
+            'enabled',
+        ]
