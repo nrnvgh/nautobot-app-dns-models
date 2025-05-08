@@ -306,7 +306,6 @@ class TestInterfaceIPChanges(TestCase):
             zone=self.zone,
             address__ip_version=6
         )
-        print(f"AAAA record: {aaaa_record.address=}, vs {self.ipv6=}")
         self.assertEqual(aaaa_record.address, self.ipv6)
         
         # 2. Change IPv4 while keeping IPv6
