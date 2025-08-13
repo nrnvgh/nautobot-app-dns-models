@@ -547,7 +547,7 @@ class DNSRule(PrimaryModel):
     record_type = models.CharField(max_length=10, choices=RECORD_TYPE_CHOICES, help_text="Type of DNS record to create")
     name_template = models.TextField(help_text="Jinja2 template for record name")
 
-    value_template = models.TextField(blank=True, help_text="Jinja2 template for the primary record value")
+    value_template = models.TextField(help_text="Jinja2 template for the primary record value")
 
     # Additional fields for complex record types
 
