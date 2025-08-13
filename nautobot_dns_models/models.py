@@ -507,3 +507,93 @@ class SRVRecord(DNSRecord):
         unique_together = [["name", "target", "port", "zone"]]
         verbose_name = "SRV Record"
         verbose_name_plural = "SRV Records"
+
+
+# DNS Record type choices for DNSRule
+RECORD_TYPE_CHOICES = [
+    ("A", "A Record"),
+    ("AAAA", "AAAA Record"),
+    ("CNAME", "CNAME Record"),
+    ("MX", "MX Record"),
+    ("NS", "NS Record"),
+    ("PTR", "PTR Record"),
+    ("SRV", "SRV Record"),
+    ("TXT", "TXT Record"),
+]
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class DNSRule(PrimaryModel):
+    """Model for DNS record auto-creation rules."""
+
+    name = models.CharField(max_length=100, unique=True, help_text="Name of the DNS rule")
+    description = models.CharField(max_length=CHARFIELD_MAX_LENGTH, blank=True, help_text="Description of the DNS rule")
+    enabled = models.BooleanField(default=True, help_text="Whether this rule is enabled")
+    content_type = models.ForeignKey(
+        ContentType, on_delete=models.CASCADE, help_text="Content type that triggers this rule"
+    )
+    priority = models.IntegerField(default=100, help_text="Rule priority (lower values = higher priority)")
+
+    # Templates
+    zone_template = models.TextField(help_text="Jinja2 template for DNS zone name")
+    record_type = models.CharField(max_length=10, choices=RECORD_TYPE_CHOICES, help_text="Type of DNS record to create")
+    name_template = models.TextField(help_text="Jinja2 template for record name")
+
+    value_template = models.TextField(blank=True, help_text="Jinja2 template for the primary record value")
+
+    # Additional fields for complex record types
+
+    # MX Record templates
+    preference_template = models.TextField(blank=True, help_text="MX preference value")
+
+    # SRV Record templates
+    priority_template = models.TextField(blank=True, help_text="SRV priority value")
+    weight_template = models.TextField(blank=True, help_text="SRV weight value")
+    port_template = models.TextField(blank=True, help_text="SRV port number")
+
+    class Meta:
+        """Meta attributes for DNSRule."""
+
+        ordering = ["priority", "name"]
+        verbose_name = "DNS Rule"
+        verbose_name_plural = "DNS Rules"
+
+    def __str__(self):
+        """String representation of DNSRule."""
+        return self.name
+
+
+class DNSRuleRecord(BaseModel):
+    """Links source objects to DNS records created by rules."""
+
+    rule = models.ForeignKey(DNSRule, on_delete=models.CASCADE, help_text="DNS rule that created this record")
+    content_type = models.ForeignKey(
+        ContentType, on_delete=models.CASCADE, help_text="Content type of the source object"
+    )
+    object_id = models.UUIDField(db_index=True, help_text="ID of the source object")
+    source_object = GenericForeignKey("content_type", "object_id")
+
+    dns_record_content_type = models.ForeignKey(
+        ContentType, on_delete=models.CASCADE, related_name="rule_records", help_text="Content type of the DNS record"
+    )
+    dns_record_object_id = models.UUIDField(db_index=True, help_text="ID of the DNS record")
+    dns_record = GenericForeignKey("dns_record_content_type", "dns_record_object_id")
+
+    class Meta:
+        """Meta attributes for DNSRuleRecord."""
+
+        unique_together = [["rule", "content_type", "object_id", "dns_record_content_type", "dns_record_object_id"]]
+        verbose_name = "DNS Rule Record"
+        verbose_name_plural = "DNS Rule Records"
+
+    def __str__(self):
+        """String representation of DNSRuleRecord."""
+        return f"{self.rule.name} -> {self.dns_record}"
