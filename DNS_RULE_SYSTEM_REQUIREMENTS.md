@@ -173,6 +173,11 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Manual Record Deletion Handling**: Clean up orphaned DNSRuleRecord entries
 - [ ] **UI Record Indicators**: Add visual indicators for auto-created vs manual records
 - [ ] **Plugin Documentation**: Update plugin documentation with DNS Rules information and any future config options
+- [ ] **Rule Deletion Strategy**: Determine how to handle DNS records and DNSRuleRecords when a rule is deleted
+- [ ] **Auto-Created Record Tagging**: Design how to mark auto-created DNS records (tags, status fields, etc.) and whether tag names should be configurable
+- [ ] **IP Removal Handling**: Investigate better ways to handle IP removal than catching template exceptions - explore pre-validation approaches
+- [ ] **Signal Optimization**: Optimize signal handling to only trigger for content types that have configured DNS rules
+- [ ] **Content Type Restrictions**: Determine if DNS rules should be limited to specific content types and define the allowed list. should that list be hardcoded or user-defined?
 
 #### 4.2.3 Future Enhancements
 - [ ] **Priority Configuration Methods**: Evaluate template vs increment-based priority configuration
