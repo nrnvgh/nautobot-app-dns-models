@@ -159,6 +159,24 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [x] DNSRule viewsets
 - [x] API URL routing
 
+#### 4.1.6 Documentation (Partial) 🔄
+- [x] DNS Rule model documentation (dnsrule.md)
+- [x] DNS Rule Record model documentation (dnsrulerecord.md)
+- [x] MkDocs navigation integration
+- [ ] User guide updates with DNS Rules usage examples
+- [ ] Configuration option documentation
+- [ ] API documentation updates
+
+#### 4.1.7 Model Testing (Partial) 🔄
+- [x] Basic DNSRule model tests
+- [x] Per-record-type test coverage (A, AAAA, CNAME, TXT, PTR, NS, MX, SRV)
+- [x] DNSRuleRecord model tests
+- [x] Required field validation tests
+- [ ] Jinja template rendering tests
+- [ ] Signal integration tests
+- [ ] Rule engine functionality tests
+- [ ] Edge case and error handling tests
+
 ### 4.2 Pending Work Items
 
 #### 4.2.1 High Priority
@@ -172,7 +190,6 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **IP Address Lookup**: Solve A/AAAA record IP address field handling with VRF considerations
 - [ ] **Manual Record Deletion Handling**: Clean up orphaned DNSRuleRecord entries
 - [ ] **UI Record Indicators**: Add visual indicators for auto-created vs manual records
-- [ ] **Plugin Documentation**: Update plugin documentation with DNS Rules information and any future config options
 - [ ] **Rule Deletion Strategy**: Determine how to handle DNS records and DNSRuleRecords when a rule is deleted
 - [ ] **Auto-Created Record Tagging**: Design how to mark auto-created DNS records (tags, status fields, etc.) and whether tag names should be configurable
 - [ ] **IP Removal Handling**: Investigate better ways to handle IP removal than catching template exceptions - explore pre-validation approaches
@@ -185,6 +202,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Custom/Computed Fields Testing**: Ensure tests include Jinja rules using custom fields, computed fields, and config context data
 - [ ] **External Data Validation**: Ensure validation of template-rendered data with limited control (MX priority, SRV weights, port numbers, etc.)
 - [ ] **DNS Rule Validation Conflicts**: Understand behavior when DNS rules generate records that violate existing DNS record model validation
+- [ ] **Record-Type-Specific Field Validation**: Implement validation to make record-type-specific template fields required (MX preference_template, SRV priority/weight/port templates) per DNS RFC compliance
 
 #### 4.2.3 Future Enhancements
 - [ ] **Priority Configuration Methods**: Evaluate template vs increment-based priority configuration
