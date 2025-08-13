@@ -172,6 +172,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **IP Address Lookup**: Solve A/AAAA record IP address field handling with VRF considerations
 - [ ] **Manual Record Deletion Handling**: Clean up orphaned DNSRuleRecord entries
 - [ ] **UI Record Indicators**: Add visual indicators for auto-created vs manual records
+- [ ] **Plugin Documentation**: Update plugin documentation with DNS Rules information and any future config options
 
 #### 4.2.3 Future Enhancements
 - [ ] **Priority Configuration Methods**: Evaluate template vs increment-based priority configuration
