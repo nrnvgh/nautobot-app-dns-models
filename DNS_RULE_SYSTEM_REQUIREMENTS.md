@@ -162,7 +162,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 ### 4.2 Pending Work Items
 
 #### 4.2.1 High Priority
-- [ ] **JavaScript Implementation**: Complete dynamic form field visibility based on record type selection
+- [x] **JavaScript Implementation**: Complete dynamic form field visibility based on record type selection
 - [ ] **Interface IP Handling**: Investigate special handling for A records from Interface objects with multiple IPs
 - [ ] **Test Case Development**: Create comprehensive test cases for interface IP assignments
 - [ ] **Template Exception Testing**: Verify _render_template catches correct exception types
@@ -178,6 +178,13 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **IP Removal Handling**: Investigate better ways to handle IP removal than catching template exceptions - explore pre-validation approaches
 - [ ] **Signal Optimization**: Optimize signal handling to only trigger for content types that have configured DNS rules
 - [ ] **Content Type Restrictions**: Determine if DNS rules should be limited to specific content types and define the allowed list. should that list be hardcoded or user-defined?
+- [ ] **IP DNS Name Field Sync**: Determine if IPAddress 'dns_name' field should be updated when A records are auto-created, make configurable, and consider validation
+- [ ] **A Record UUID UI Guidance**: Add UI helper text indicating A record values should be IP UUIDs, or implement IP lookup by address + VRF/tenant
+- [ ] **Jinja QuerySet Testing**: Ensure tests include Jinja rules using all(), first(), and filter(key=value) QuerySet methods
+- [ ] **DNS Zone Association**: Determine where to associate DNS zones (location?) and use that relationship for testing
+- [ ] **Custom/Computed Fields Testing**: Ensure tests include Jinja rules using custom fields, computed fields, and config context data
+- [ ] **External Data Validation**: Ensure validation of template-rendered data with limited control (MX priority, SRV weights, port numbers, etc.)
+- [ ] **DNS Rule Validation Conflicts**: Understand behavior when DNS rules generate records that violate existing DNS record model validation
 
 #### 4.2.3 Future Enhancements
 - [ ] **Priority Configuration Methods**: Evaluate template vs increment-based priority configuration
