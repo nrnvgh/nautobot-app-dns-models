@@ -9,7 +9,7 @@ This document defines the requirements for implementing a Jinja-based DNS record
 The DNS Rule System provides automated DNS record management triggered by object lifecycle events in Nautobot, supporting all DNS record types (A, AAAA, CNAME, MX, NS, PTR, SRV, TXT) with user-defined Jinja2 templates.
 
 ### 1.3 Branch Information
-- **Development Branch**: `u/nrnvgh-107-jinja-based-dns-record-updates`
+- **Development Branch**: [`u/nrnvgh-107-jinja-based-dns-record-updates`](https://github.com/nrnvgh/nautobot-app-dns-models/tree/u/nrnvgh-107-jinja-based-dns-record-updates)
 - **Target Nautobot Version**: 2.4+
 
 ## 2. Functional Requirements
