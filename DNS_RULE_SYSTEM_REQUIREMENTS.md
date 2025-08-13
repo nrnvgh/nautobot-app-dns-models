@@ -195,8 +195,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 ### 5.3 Maintainability
 - **NFR-007**: Code SHALL follow Nautobot plugin development patterns
 - **NFR-008**: All functions SHALL have appropriate logging
-- **NFR-009**: Code SHALL use consistent double-quote style
-- **NFR-010**: No blank lines SHALL contain whitespace
+- **NFR-009**: Code SHALL pass ruff linting and formatting checks
 
 ### 5.4 Security
 - **NFR-011**: Template rendering SHALL use Nautobot's secure Jinja2 implementation
