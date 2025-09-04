@@ -183,7 +183,8 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [x] **JavaScript Implementation**: Complete dynamic form field visibility based on record type selection
 - [ ] **Interface IP Handling**: Investigate special handling for A records from Interface objects with multiple IPs
 - [ ] **Test Case Development**: Create comprehensive test cases for interface IP assignments
-- [ ] **Template Exception Testing**: Verify _render_template catches correct exception types
+- [ ] **Template Exception Testing**: Verify _render_template catches correct exception types. We also need to ensure that exceptions are handled graceful and in keeping with Least Surprise. If a template fails to render (and therefore the DNS entry isn't created), should we allow the parent action to take place?
+- [ ] **Multiple Template Error Display**: Add test to ensure that template syntax errors for multiple templates in a given rule are all shown in the UI simultaneously
 
 #### 4.2.2 Medium Priority
 - [ ] **Rule Scoping System**: Design tenant/location/tag-based rule filtering
@@ -194,22 +195,37 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Auto-Created Record Tagging**: Design how to mark auto-created DNS records (tags, status fields, etc.) and whether tag names should be configurable
 - [ ] **IP Removal Handling**: Investigate better ways to handle IP removal than catching template exceptions - explore pre-validation approaches
 - [ ] **Signal Optimization**: Optimize signal handling to only trigger for content types that have configured DNS rules
+- [ ] **Signal Coverage for 1.0 Release**: Implement signal receivers for VirtualMachine, VMInterface (1.0 priority), with Service/VLAN/Cluster as maybe 1.0. Consider Location, Rack/RackGroup for post-1.0
+- [ ] **Device Rename Cascade Handling**: Address how device renames affect interface record naming templates (vital for 1.0)
+- [ ] **Prefix Signal Evaluation**: Determine if Prefix objects need signal handling based on common template usage patterns
 - [ ] **Content Type Restrictions**: Determine if DNS rules should be limited to specific content types and define the allowed list. should that list be hardcoded or user-defined?
 - [ ] **IP DNS Name Field Sync**: Determine if IPAddress 'dns_name' field should be updated when A records are auto-created, make configurable, and consider validation
 - [ ] **A Record UUID UI Guidance**: Add UI helper text indicating A record values should be IP UUIDs, or implement IP lookup by address + VRF/tenant
 - [ ] **Jinja QuerySet Testing**: Ensure tests include Jinja rules using all(), first(), and filter(key=value) QuerySet methods
 - [ ] **DNS Zone Association**: Determine where to associate DNS zones (location?) and use that relationship for testing
 - [ ] **Custom/Computed Fields Testing**: Ensure tests include Jinja rules using custom fields, computed fields, and config context data
+- [ ] **IP Deletion Record Cleanup Testing**: Create test cases to ensure that when an IP is deleted from an interface, any corresponding DNS records created by rules are also deleted (critical for proper cleanup)
+- [ ] **Interface A Record Removal Testing**: Test that A records are automatically deleted when IP addresses are removed from interfaces via M2M signal handling
+- [ ] **Device Primary IP Change Testing**: Test that Device DNS records are properly updated/deleted when primary IP fields are cleared due to interface IP removal
+- [ ] **AAAA Record Removal Testing**: Test that AAAA (IPv6) records are automatically deleted when IPv6 addresses are removed from interfaces
+- [ ] **Multiple IP Interface Testing**: Test interface IP removal scenarios where interface has multiple IPs (remove one, others remain)
+- [ ] **DNSRuleRecord Cleanup Testing**: Test that DNSRuleRecord tracking entries are properly cleaned up when DNS records are deleted due to template failures
 - [ ] **External Data Validation**: Ensure validation of template-rendered data with limited control (MX priority, SRV weights, port numbers, etc.)
 - [ ] **DNS Rule Validation Conflicts**: Understand behavior when DNS rules generate records that violate existing DNS record model validation
 - [ ] **Record-Type-Specific Field Validation**: Implement validation to make record-type-specific template fields required (MX preference_template, SRV priority/weight/port templates) per DNS RFC compliance
 
-#### 4.2.3 Future Enhancements
+#### 4.2.3 Explicitly Deferred for Initial Release
+- [ ] **Tenant Signal Handling**: Excluded due to massive cascade potential (could affect thousands of records)
+- [ ] **VRF Signal Handling**: Excluded due to large-scale impact on IP addressing and related records
+- [ ] **IPAddress Signal Handling**: Skipped for 1.0 as most IP-related changes are covered by Device/Interface/VM signals; may warrant revisiting if direct IPAddress rule targeting or IP-specific metadata usage emerges
+
+#### 4.2.4 Future Enhancements
 - [ ] **Priority Configuration Methods**: Evaluate template vs increment-based priority configuration
 - [ ] **Model File Organization**: Consider splitting models.py into records.py and rules.py
 - [ ] **DNS Lowercase Config**: Add configuration option to force DNS records to lowercase
 - [ ] **Character Transform Config**: Add DNS character validation and transformation options
 - [ ] **Template Field Naming**: Revisit field naming conventions (value_template vs content_template)
+- [ ] **Custom Relationship DNS Rules**: Investigate scenarios where IPs have custom relationships (e.g., IP-to-Circuit) - determine if Circuit-based rules can leverage these relationships or if IP-based rules are needed for such cases
 
 ## 5. Non-Functional Requirements
 
