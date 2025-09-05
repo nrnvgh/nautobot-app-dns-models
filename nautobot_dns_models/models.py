@@ -6,6 +6,12 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from nautobot.apps.models import PrimaryModel, extras_features
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
+from nautobot.apps.utils import validate_jinja2
+from jinja2 import TemplateError, TemplateSyntaxError
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def dns_wire_label_length(label):
@@ -462,6 +468,67 @@ class DNSRule(PrimaryModel):
     def __str__(self):
         """String representation of DNSRule."""
         return self.name
+
+    def clean(self):
+        """Validate DNS rule templates and configuration."""
+        super().clean()
+
+        errors = {}
+
+        # Validate template syntax using Nautobot's render_jinja2
+        template_fields = [
+            ("zone_template", self.zone_template),
+            ("name_template", self.name_template),
+            ("value_template", self.value_template),
+        ]
+
+        # Add record-type-specific templates
+        if self.record_type == "MX" and self.preference_template:
+            template_fields.append(("preference_template", self.preference_template))
+        elif self.record_type == "SRV":
+            if self.priority_template:
+                template_fields.append(("priority_template", self.priority_template))
+            if self.weight_template:
+                template_fields.append(("weight_template", self.weight_template))
+            if self.port_template:
+                template_fields.append(("port_template", self.port_template))
+
+        # Validate each template's syntax
+        for field_name, template_content in template_fields:
+            if template_content:
+                try:
+                    validate_jinja2(template_content)
+                except TemplateSyntaxError as exc:
+                    errors[field_name] = f"Template syntax error on line {exc.lineno}: {exc.message}"
+                except TemplateError as exc:
+                    errors[field_name] = f"Template error: {exc}"
+                except Exception as exc:
+                    # System-level exceptions (very rare) - memory, recursion, encoding issues
+                    errors[field_name] = f"Template validation failed: {exc}"
+
+        # Validate record-type-specific requirements
+        if self.record_type == "MX" and not self.preference_template:
+            errors["preference_template"] = "MX records require a preference template"
+        elif self.record_type == "SRV":
+            required_srv_fields = ["priority_template", "weight_template", "port_template"]
+            for field in required_srv_fields:
+                if not getattr(self, field):
+                    errors[field] = f"SRV records require a {field.replace('_template', '')} template"
+
+        # Validate content type exists
+        # NOTE: In a perfect world, there would be a mixin of some sort which would
+        # NOTE: handle this. For example, Tag, LocationType, Role, etc.
+        if self.content_type_id:
+            try:
+                content_type = self.content_type
+                model_class = content_type.model_class()
+                if not model_class:
+                    errors["content_type"] = "Selected content type does not exist"
+            except Exception:
+                errors["content_type"] = "Invalid content type"
+
+        if errors:
+            raise ValidationError(errors)
 
 
 class DNSRuleRecord(BaseModel):
