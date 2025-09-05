@@ -187,7 +187,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Multiple Template Error Display**: Add test to ensure that template syntax errors for multiple templates in a given rule are all shown in the UI simultaneously
 
 #### 4.2.2 Medium Priority
-- [ ] **Rule Scoping System**: Design tenant/location/tag-based rule filtering
+- [ ] **Rule Scoping System**: Design tenant/location/tag-based rule filtering. Should also support global rules.
 - [ ] **IP Address Lookup**: Solve A/AAAA record IP address field handling with VRF considerations
 - [ ] **Manual Record Deletion Handling**: Clean up orphaned DNSRuleRecord entries
 - [ ] **UI Record Indicators**: Add visual indicators for auto-created vs manual records
