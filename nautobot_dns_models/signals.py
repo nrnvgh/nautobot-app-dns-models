@@ -84,11 +84,6 @@ def handle_m2m_changed(sender, instance, action, pk_set, **kwargs):
     # Only process post_* actions (after the change is committed)
     if not action.startswith("post_"):
         return
-        
-    # Don't process our own DNS models
-    if hasattr(instance, "_meta") and instance._meta.app_label == APP_LABEL:
-        logger.debug(f"Skipping DNS rule processing for DNS model {instance._meta.model_name}")
-        return
 
     logger.debug(f"M2M change detected: {action} on {instance} (sender: {sender.__name__})")
     
