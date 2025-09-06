@@ -1,10 +1,12 @@
 """DNS Rule Processing Engine for Nautobot DNS Models."""
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
+#
+# TODO Use TemplateSyntaxError instead of TemplateError? it required a line number argument.
 from jinja2 import TemplateError
 
 from nautobot.core.utils.data import render_jinja2
@@ -66,25 +68,32 @@ class DNSRuleEngine:
             content_type=source_content_type,
             object_id=str(source_obj.pk)
         )
+        logger.debug(f"DNS record lookup for {source_obj} (pk={source_obj.pk}, name='{getattr(source_obj, 'name', 'N/A')}'): found {existing_records.count()} existing records")
         
         if created or existing_records.count() == 0:
             # Create new DNS records for new objects OR objects with no existing records
-            logger.error(f"Taking CREATE path for {source_obj} (created={created}, existing_records={existing_records.count()})")
+            if created:
+                logger.error(f"Taking CREATE path for {source_obj} (created={created}, existing_records={existing_records.count()})") 
+            else:
+                logger.debug(f"UPDATE scenario with no existing records - this may indicate first-time DNS processing for {source_obj}")
             for rule in rules:
                 try:
                     result = self.create_dns_record_from_rule(rule, source_obj)
                     if result is None:
                         logger.debug(f"Skipped creating DNS record from rule {rule.name} for {source_obj} (template rendering failed)")
                 except ValidationError as e:
-                    logger.error(f"[1] ValidationError while creating DNS record from rule {rule.name} for {source_obj}: {e}")
+                    logger.error(f"ValidationError while creating DNS record from rule {rule.name} for {source_obj}: {e}")
+                    # Re-raise ValidationError to allow proper error handling upstream
+                    raise
                 except Exception as e:
-                    logger.error(f"[1] Failed to create DNS record from rule {rule.name} for {source_obj}: {e} (type={type(e)})")
+                    logger.error(f"Failed to create DNS record from rule {rule.name} for {source_obj}: {e} (type={type(e)})")
+                    raise
         else:
             # Update existing DNS records for modified objects
-            logger.error(f"Taking UPDATE path for {source_obj} (existing_records={existing_records.count()})")
+            logger.debug(f"Taking UPDATE path for {source_obj} (existing_records={existing_records.count()})")
             self.update_dns_records_for_object(source_obj)
 
-    def create_dns_record_from_rule(self, rule: DNSRule, source_obj: Any) -> Optional[Any]:
+    def create_dns_record_from_rule(self, rule: DNSRule, source_obj: Any) -> Any | None:
         """
         Create a DNS record based on a rule and source object.
 
@@ -95,6 +104,7 @@ class DNSRuleEngine:
         Returns:
             The created DNS record, or None if creation failed
         """
+        logger.debug(f"create_dns_record_from_rule: {rule} / {source_obj}")
         try:
             # Prepare Jinja context
             context = {"obj": source_obj}
