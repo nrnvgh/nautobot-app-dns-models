@@ -546,6 +546,7 @@ class DNSRule(PrimaryModel):
     content_type = models.ForeignKey(
         ContentType, on_delete=models.CASCADE, help_text="Content type that triggers this rule"
     )
+    # XXX Do we actually need this?
     priority = models.IntegerField(default=100, help_text="Rule priority (lower values = higher priority)")
 
     # Templates
