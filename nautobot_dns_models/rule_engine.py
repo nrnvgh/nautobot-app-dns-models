@@ -56,6 +56,10 @@ class DNSRuleEngine:
         
         logger.debug(f"Processing {source_obj} (type: {content_type}) - found {rules.count()} rules")
         
+        if rules.count() == 0:
+            logger.error(f"No DNS rules found for {content_type} - skipping DNS record processing for {source_obj}")
+            return
+
         # Check if this object already has DNS records
         source_content_type = ContentType.objects.get_for_model(source_obj)
         existing_records = DNSRuleRecord.objects.filter(
