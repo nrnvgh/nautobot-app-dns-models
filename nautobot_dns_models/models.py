@@ -1,6 +1,7 @@
 """Models for Nautobot DNS Models."""
 
 from constance import config as constance_config
+from django.contrib.contenttypes.fields import GenericForeignKey
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -408,3 +409,424 @@ class SRVRecordModel(DNSRecordModel):  # pylint: disable=too-many-ancestors
         unique_together = [["name", "target", "port", "zone"]]
         verbose_name = "SRV Record"
         verbose_name_plural = "SRV Records"
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class DNSRule(PrimaryModel):
+    """
+    GUI-based DNS Rule for generating DNS records from network objects.
+
+    Unlike Jinja-based rules, this uses a component-based approach where
+    users build rules through a visual interface using drag-and-drop components.
+    """
+
+    name = models.CharField(max_length=100, unique=True, help_text="Unique name for this DNS rule")
+    description = models.CharField(max_length=200, blank=True, help_text="Optional description of what this rule does")
+    enabled = models.BooleanField(default=True, help_text="Whether this rule is active")
+
+    content_type = models.ForeignKey(
+        to="contenttypes.ContentType",
+        on_delete=models.CASCADE,
+        help_text="Type of object this rule applies to (e.g., Device, Interface)",
+    )
+
+    record_type = models.ForeignKey(
+        to="contenttypes.ContentType",
+        on_delete=models.CASCADE,
+        related_name="dns_rules_for_record_type",
+        limit_choices_to=models.Q(app_label="nautobot_dns_models") &
+                         models.Q(model__endswith="recordmodel") &
+                         ~models.Q(model="dnsrecordmodel"),  # Exclude abstract base
+        help_text="Type of DNS record this rule creates",
+    )
+
+    # Zone selection approach - no Jinja templates!
+    zone_source = models.CharField(
+        max_length=20,
+        choices=[
+            ("fixed", "Fixed Zone"),
+            ("field_reference", "Model Field Path"),
+            ("custom_field", "Custom Field"),
+        ],
+        default="fixed",
+        help_text="How to determine the DNS zone for generated records"
+    )
+
+    zone_fixed = models.ForeignKey(
+        to="DNSZoneModel",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="Fixed DNS zone (when zone_source='fixed')"
+    )
+
+    zone_field_path = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Model field path like 'device.location.zone' (when zone_source='field_reference')"
+    )
+
+    zone_custom_field = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Custom field name like 'dns_zone' (when zone_source='custom_field')"
+    )
+
+    class Meta:
+        """Meta attributes for DNSRule."""
+
+        ordering = ["name"]
+        verbose_name = "DNS Rule"
+        verbose_name_plural = "DNS Rules"
+
+    def clean(self):
+        """Validate zone configuration based on zone_source."""
+        super().clean()
+
+        if self.zone_source == "fixed" and not self.zone_fixed:
+            raise ValidationError({"zone_fixed": "Fixed zone is required when zone_source is 'fixed'"})
+
+        if self.zone_source == "field_reference" and not self.zone_field_path:
+            raise ValidationError({"zone_field_path": "Field path is required when zone_source is 'field_reference'"})
+
+        if self.zone_source == "custom_field" and not self.zone_custom_field:
+            raise ValidationError({"zone_custom_field": "Custom field name is required when zone_source is 'custom_field'"})
+
+    def get_zone_for_object(self, source_obj):
+        """
+        Resolve the DNS zone for a given source object based on zone_source configuration.
+
+        Args:
+            source_obj: The object being processed (Device, Interface, etc.)
+
+        Returns:
+            DNSZoneModel instance or None if not found
+        """
+        if self.zone_source == "fixed":
+            return self.zone_fixed
+
+        elif self.zone_source == "field_reference":
+            # Navigate field path like "device.location.zone"
+            try:
+                current_obj = source_obj
+                for field_name in self.zone_field_path.split('.'):
+                    current_obj = getattr(current_obj, field_name)
+
+                # Ensure we got a DNSZoneModel
+                if isinstance(current_obj, DNSZoneModel):
+                    return current_obj
+                elif hasattr(current_obj, 'name'):  # Zone name string
+                    return DNSZoneModel.objects.get(name=str(current_obj))
+
+            except (AttributeError, DNSZoneModel.DoesNotExist):
+                return None
+
+        elif self.zone_source == "custom_field":
+            # Get custom field value
+            try:
+                cf_value = source_obj.cf.get(self.zone_custom_field)
+                if cf_value:
+                    if isinstance(cf_value, DNSZoneModel):
+                        return cf_value
+                    else:  # Assume zone name string
+                        return DNSZoneModel.objects.get(name=str(cf_value))
+            except (AttributeError, DNSZoneModel.DoesNotExist):
+                return None
+
+        return None
+
+    def __str__(self):
+        """String representation of DNS rule."""
+        record_name = self.record_type.model_class()._meta.verbose_name if self.record_type else "Unknown Record"
+
+        # Include zone info
+        if self.zone_source == "fixed" and self.zone_fixed:
+            zone_info = f"→ {self.zone_fixed.name}"
+        elif self.zone_source == "field_reference" and self.zone_field_path:
+            zone_info = f"→ {self.zone_field_path}"
+        elif self.zone_source == "custom_field" and self.zone_custom_field:
+            zone_info = f"→ cf[{self.zone_custom_field}]"
+        else:
+            zone_info = ""
+
+        return f"{self.name} ({record_name} for {self.content_type.model} {zone_info})"
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class DNSRuleComponent(PrimaryModel):
+    """
+    Individual component within a DNS rule for GUI-based rule building.
+
+    Components represent the building blocks that users drag and drop
+    to construct DNS record names and values. Each component can be:
+    - A field reference (e.g., "device.name", "interface.ip_addresses.first")
+    - A literal text value (e.g., ".", "-", "example.com")
+    - Optionally transformed by functions (e.g., normalize, replace slashes)
+    """
+
+    rule = models.ForeignKey(
+        to="DNSRule",
+        on_delete=models.CASCADE,
+        related_name="components",
+        help_text="DNS rule this component belongs to"
+    )
+
+    order = models.PositiveIntegerField(
+        help_text="Position of this component within the rule (for building the final value)"
+    )
+
+    target_field = models.CharField(
+        max_length=20,
+        choices=[
+            ("name", "Record Name"),
+            ("value", "Record Value"),
+            ("preference", "MX Preference"),
+            ("priority", "SRV Priority"),
+            ("weight", "SRV Weight"),
+            ("port", "SRV Port"),
+            ("text", "TXT Text"),
+        ],
+        help_text="Which DNS record field this component contributes to"
+    )
+
+    component_type = models.CharField(
+        max_length=20,
+        choices=[
+            ("field_reference", "Field Reference"),
+            ("literal", "Literal Text"),
+        ],
+        help_text="Type of component - field reference or static text"
+    )
+
+    # For field_reference components
+    field_path = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Model field path like 'device.name' or 'ip_addresses.first' (when component_type='field_reference')"
+    )
+
+    # For literal components
+    literal_value = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Static text value (when component_type='literal')"
+    )
+
+    # Optional transform function - choices populated dynamically from jinja_filters
+    transform_function = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Optional transform to apply to the component value"
+    )
+
+    class Meta:
+        """Meta attributes for DNSRuleComponent."""
+
+        ordering = ["rule", "order"]
+        verbose_name = "DNS Rule Component"
+        verbose_name_plural = "DNS Rule Components"
+        unique_together = [["rule", "order"]]
+
+    @classmethod
+    def get_transform_choices(cls):
+        """Get available transform function choices dynamically from the transform registry."""
+        from .transform_registry import get_transform_choices
+        return get_transform_choices()
+
+    def clean(self):
+        """Validate component configuration based on component_type."""
+        super().clean()
+
+        if self.component_type == "field_reference" and not self.field_path:
+            raise ValidationError({"field_path": "Field path is required when component_type is 'field_reference'"})
+
+        if self.component_type == "literal" and not self.literal_value:
+            raise ValidationError({"literal_value": "Literal value is required when component_type is 'literal'"})
+
+    def get_value_for_object(self, source_obj):
+        """
+        Get the resolved value of this component for a given source object.
+
+        Args:
+            source_obj: The object being processed (Device, Interface, etc.)
+
+        Returns:
+            String value for this component
+        """
+        if self.component_type == "literal":
+            value = self.literal_value
+
+        elif self.component_type == "field_reference":
+            try:
+                # Navigate field path like "device.name" or "ip_addresses.first"
+                current_obj = source_obj
+                for field_name in self.field_path.split('.'):
+                    if field_name == "first":
+                        # Handle .first() for querysets/managers
+                        if hasattr(current_obj, 'first'):
+                            current_obj = current_obj.first()
+                        else:
+                            current_obj = None
+                            break
+                    else:
+                        current_obj = getattr(current_obj, field_name)
+
+                value = str(current_obj) if current_obj is not None else ""
+
+            except AttributeError:
+                value = ""
+        else:
+            value = ""
+
+        # Apply transform function if specified
+        if self.transform_function and value:
+            value = self._apply_transform(value)
+
+        return value
+
+    def _apply_transform(self, value):
+        """Apply the specified transform function to a value using the dynamic transform system."""
+        from .transform_registry import apply_transform
+        return apply_transform(self.transform_function, value)
+
+    def get_transform_display_name(self):
+        """Get the display name for the current transform function."""
+        if not self.transform_function:
+            return None
+
+        from .transform_registry import get_transform_info
+        transform_info = get_transform_info(self.transform_function)
+        return transform_info['display_name'] if transform_info else self.transform_function
+
+    def __str__(self):
+        """String representation of DNS rule component."""
+        if self.component_type == "field_reference":
+            base = f"{self.field_path}"
+        else:
+            base = f"'{self.literal_value}'"
+
+        if self.transform_function:
+            display_name = self.get_transform_display_name()
+            base += f" | {display_name}"
+
+        return f"{self.rule.name}[{self.order}]: {base} → {self.get_target_field_display()}"
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class DNSRuleRecord(PrimaryModel):
+    """
+    Tracking record linking DNS rules to the DNS records they generated.
+
+    This model tracks which GUI-based rules generated which DNS records
+    from which source objects, enabling:
+    - Cleanup when rules change
+    - Cascade deletion when source objects are removed
+    - Audit trail of rule-generated records
+    - Bulk operations on rule-generated records
+    """
+
+    rule = models.ForeignKey(
+        to="DNSRule",
+        on_delete=models.CASCADE,
+        related_name="generated_records",
+        help_text="DNS rule that generated this record"
+    )
+
+    # Generic foreign key to source object (Device, Interface, etc.)
+    source_content_type = models.ForeignKey(
+        to="contenttypes.ContentType",
+        on_delete=models.CASCADE,
+        related_name="dns_rule_records_as_source",
+        help_text="Content type of the source object that triggered rule processing"
+    )
+
+    source_object_id = models.UUIDField(
+        db_index=True,
+        help_text="ID of the source object that triggered rule processing"
+    )
+
+    source_object = GenericForeignKey(
+        "source_content_type",
+        "source_object_id"
+    )
+
+    # Generic foreign key to generated DNS record (ARecordModel, CNAMERecordModel, etc.)
+    # Note: ContentType comes from rule.record_type - no duplication needed
+    dns_record_object_id = models.UUIDField(
+        db_index=True,
+        help_text="ID of the generated DNS record"
+    )
+
+    @property
+    def dns_record_content_type(self):
+        """Get DNS record content type from the associated rule."""
+        return self.rule.record_type if self.rule else None
+
+    @property
+    def dns_record_object(self):
+        """Get the actual DNS record object using the rule's record type."""
+        if self.rule and self.rule.record_type and self.dns_record_object_id:
+            try:
+                model_class = self.rule.record_type.model_class()
+                if model_class:
+                    return model_class.objects.get(id=self.dns_record_object_id)
+            except Exception:
+                pass
+        return None
+
+    class Meta:
+        """Meta attributes for DNSRuleRecord."""
+
+        ordering = ["rule", "source_content_type", "source_object_id"]
+        verbose_name = "DNS Rule Record"
+        verbose_name_plural = "DNS Rule Records"
+        unique_together = [
+            ["rule", "source_content_type", "source_object_id", "dns_record_object_id"]
+        ]
+
+    @property
+    def source_object_name(self):
+        """Get display name of the source object."""
+        try:
+            return str(self.source_object) if self.source_object else f"{self.source_content_type.model}:{self.source_object_id}"
+        except Exception:
+            return f"{self.source_content_type.model}:{self.source_object_id}"
+
+    @property
+    def dns_record_name(self):
+        """Get display name of the DNS record."""
+        dns_record = self.dns_record_object
+        if dns_record:
+            return str(dns_record)
+        elif self.dns_record_content_type:
+            return f"{self.dns_record_content_type.model}:{self.dns_record_object_id}"
+        else:
+            return f"record:{self.dns_record_object_id}"
+
+    def __str__(self):
+        """String representation of DNS rule record."""
+        return f"{self.rule.name}: {self.source_object_name} → {self.dns_record_name}"

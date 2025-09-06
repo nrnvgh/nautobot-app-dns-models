@@ -79,7 +79,18 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
         "MXRecordModel",
         "SRVRecordModel",
         "TXTRecordModel",
+        "DNSRule",
+        "DNSRuleComponent",
+        "DNSRuleRecord",
     ]
+
+    def ready(self):
+        """Perform initialization once the app registry is ready."""
+        super().ready()
+
+        # Import transforms module to register @dns_transform decorated functions
+        # This ensures all transform functions are available in the registry
+        from . import transforms  # noqa: F401
 
 
 config = NautobotDnsModelsConfig  # pylint:disable=invalid-name
