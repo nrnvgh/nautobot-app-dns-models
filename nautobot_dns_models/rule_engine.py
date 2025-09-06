@@ -109,13 +109,10 @@ class DNSRuleEngine:
             # Prepare Jinja context
             context = {"obj": source_obj}
 
-            # Render templates - if any fail, return None (don't create record)
-            try:
-                zone_name = self._render_template(rule.zone_template, context, "zone_template")
-                record_name = self._render_template(rule.name_template, context, "name_template")
-            except Exception as template_error:
-                logger.debug(f"Template rendering failed for rule {rule.name} on {source_obj}: {template_error}")
-                return None
+            # Render templates
+            zone_name = self._render_template(rule.zone_template, context, "zone_template")
+            record_name = self._render_template(rule.name_template, context, "name_template")
+            logger.debug(f"create_dns_record_from_rule: {zone_name} / {record_name}")
 
             # Get the DNS zone
             try:
@@ -136,12 +133,8 @@ class DNSRuleEngine:
                 "zone": zone,
             }
 
-            # Add record-type specific fields - if this fails, return None
-            try:
-                self._add_record_type_fields(rule, context, record_data)
-            except Exception as template_error:
-                logger.debug(f"Record-specific template rendering failed for rule {rule.name} on {source_obj}: {template_error}")
-                return None
+            # Add record-type specific fields
+            self._add_record_type_fields(rule, context, record_data)
 
             # Create the DNS record
             dns_record = record_class.objects.create(**record_data)
@@ -273,19 +266,33 @@ class DNSRuleEngine:
 
         Raises:
             TemplateError: If template rendering fails
+
+        Note:
+            Unlike ComputedFields which have fallback values, DNS records require
+            precise values. Template failures result in DNS record creation failure
+            rather than creating records with invalid/empty data.
         """
         try:
             result = render_jinja2(template_str, context)
+            logger.error(f"Template (({template_str})) rendered to result: {result}")
             
-            # Check if the result looks like a template error
-            if result and "{{ no such element:" in result:
-                logger.error(f"Template rendering failed for {field_name}: {result}")
-                raise TemplateError(f"Template rendering failed for {field_name}: {result}")
+            # Check for falsy results (None, empty string, etc.)
+            # render_jinja2 returns empty string for undefined variables/attributes
+            if not result:
+                logger.warning(f"[1] Template rendered to falsy result for {field_name}: '{template_str}' with context keys: {list(context.keys())}")
+                raise TemplateError(f"[1] Template rendered empty for {field_name}: '{template_str}'")
+
+            # Check for template error strings that render_jinja2 sometimes returns
+            # Pattern: "{{ no such element: None['id'] }}" when accessing attributes on None
+            if "{{ no such element:" in result:
+                logger.warning(f"[2] Template (({template_str})) rendered to error string for {field_name}: {result}")
+                raise TemplateError(f"[2] Template error for {field_name}: {result}")
             
             return result
-        except TemplateError as e:
-            logger.error(f"Caught exception: Template rendering failed for {field_name}: {e}")
-            raise TemplateError(f"Failed to render {field_name}: {e}") from e
+        except Exception as exc:
+            # Following Nautobot core pattern: broad exception handling with logging
+            logger.warning(f"[3] Template rendering failed for {field_name}: {exc}")
+            raise TemplateError(f"[3] Failed to render {field_name}: {exc}") from exc
 
     def _add_record_type_fields(self, rule: DNSRule, context: Dict[str, Any], record_data: Dict[str, Any]) -> None:
         """
