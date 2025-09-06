@@ -4,16 +4,11 @@ import logging
 
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
-from django.apps import apps
 from nautobot.dcim.models import Device, Interface
 
 from nautobot_dns_models.rule_engine import dns_rule_engine
 
 logger = logging.getLogger(__name__)
-
-# Get our app's label dynamically from the current module
-# This should be safe since signals are imported in ready() after Django initialization
-APP_LABEL = apps.get_containing_app_config(__name__).label
 
 
 @receiver(pre_save, sender=Device)
@@ -56,11 +51,6 @@ def handle_interface_save(sender, instance, created, **kwargs):
         created: Boolean indicating if this was a new Interface
         **kwargs: Additional signal arguments
     """
-    # Don't process our own DNS models to avoid recursion
-    if sender._meta.app_label == APP_LABEL:
-        logger.debug(f"Skipping DNS rule processing for DNS model {sender.__name__}")
-        return
-
     logger.debug(f"handle_interface_save: {instance} / {created=}")
 
     try:
@@ -89,11 +79,6 @@ def handle_device_save(sender, instance, created, **kwargs):
         created: Boolean indicating if this was a new Device
         **kwargs: Additional signal arguments
     """
-    # Don't process our own DNS models to avoid recursion
-    if sender._meta.app_label == APP_LABEL:
-        logger.debug(f"Skipping DNS rule processing for DNS model {sender.__name__}")
-        return
-
     logger.debug(f"handle_device_save: {instance} / {created=}")
     
     try:
@@ -140,10 +125,7 @@ def handle_object_delete(sender, instance, **kwargs):
         instance: The actual instance that was deleted
         **kwargs: Additional signal arguments
     """
-    # Don't process our own DNS models
-    if sender._meta.app_label == APP_LABEL:
-        logger.debug(f"Skipping DNS record cleanup for DNS model {sender.__name__}")
-        return
+    logger.debug(f"handle_object_delete: {sender} / {instance}")
 
     try:
         dns_rule_engine.delete_dns_records_for_object(instance)
