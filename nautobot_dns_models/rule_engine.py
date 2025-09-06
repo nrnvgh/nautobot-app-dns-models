@@ -56,24 +56,28 @@ class DNSRuleEngine:
         content_type = ContentType.objects.get_for_model(source_obj)
         rules = DNSRule.objects.filter(content_type=content_type, enabled=True).order_by("priority")
         
-        logger.debug(f"Processing {source_obj} (type: {content_type}) - found {rules.count()} rules")
+        # Cache rule count to avoid duplicate COUNT() queries
+        rules_count = rules.count()
+        logger.debug(f"Processing {source_obj} (type: {content_type}) - found {rules_count} rules")
         
-        if rules.count() == 0:
-            logger.error(f"No DNS rules found for {content_type} - skipping DNS record processing for {source_obj}")
+        if rules_count == 0:
+            logger.debug(f"No DNS rules found for {content_type} - skipping DNS record processing for {source_obj}")
             return
 
-        # Check if this object already has DNS records
-        source_content_type = ContentType.objects.get_for_model(source_obj)
+        # Check if this object already has DNS records (reuse content_type from above)
         existing_records = DNSRuleRecord.objects.filter(
-            content_type=source_content_type,
+            content_type=content_type,
             object_id=str(source_obj.pk)
         )
-        logger.debug(f"DNS record lookup for {source_obj} (pk={source_obj.pk}, name='{getattr(source_obj, 'name', 'N/A')}'): found {existing_records.count()} existing records")
+
+        # Check existing record count once (serves both logging and conditional logic)
+        existing_count = existing_records.count()
+        logger.debug(f"DNS record lookup for {source_obj} (pk={source_obj.pk}, name='{getattr(source_obj, 'name', 'N/A')}'): found {existing_count} existing records")
         
-        if created or existing_records.count() == 0:
+        if created or existing_count == 0:
             # Create new DNS records for new objects OR objects with no existing records
             if created:
-                logger.error(f"Taking CREATE path for {source_obj} (created={created}, existing_records={existing_records.count()})") 
+                logger.error(f"Taking CREATE path for {source_obj} (created={created}, existing_records={existing_count})")
             else:
                 logger.debug(f"UPDATE scenario with no existing records - this may indicate first-time DNS processing for {source_obj}")
             for rule in rules:
@@ -90,7 +94,7 @@ class DNSRuleEngine:
                     raise
         else:
             # Update existing DNS records for modified objects
-            logger.debug(f"Taking UPDATE path for {source_obj} (existing_records={existing_records.count()})")
+            logger.debug(f"Taking UPDATE path for {source_obj} (existing_records={existing_count})")
             self.update_dns_records_for_object(source_obj)
 
     def create_dns_record_from_rule(self, rule: DNSRule, source_obj: Any) -> Any | None:
