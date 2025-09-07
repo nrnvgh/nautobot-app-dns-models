@@ -145,6 +145,7 @@ class SRVRecordModelSerializer(NautobotModelSerializer):  # pylint: disable=too-
 # GUI Rule Builder Serializers
 # =============================================================================
 
+
 class DNSRuleSerializer(NautobotModelSerializer):  # pylint: disable=too-many-ancestors
     """DNSRule Serializer."""
 

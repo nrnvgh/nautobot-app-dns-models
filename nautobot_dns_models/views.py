@@ -449,6 +449,7 @@ class SRVRecordModelUIViewSet(views.NautobotUIViewSet):
 # GUI Rule Builder ViewSets
 # =============================================================================
 
+
 class DNSRuleUIViewSet(views.NautobotUIViewSet):
     """DNSRule UI ViewSet."""
 
@@ -471,5 +472,5 @@ class DNSRuleRecordUIViewSet(views.NautobotUIViewSet):
     filterset_class = DNSRuleRecordFilterSet
     filterset_form_class = DNSRuleRecordFilterForm
     serializer_class = DNSRuleRecordSerializer
-    
+
     # Note: No create/edit forms - these are read-only tracking records

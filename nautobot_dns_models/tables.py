@@ -358,6 +358,7 @@ class SRVRecordModelTable(DNSRecordsTable):
 # GUI Rule Builder Tables
 # =============================================================================
 
+
 class DNSRuleTable(BaseTable):
     """Table for DNS Rule list view."""
 

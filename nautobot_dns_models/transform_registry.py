@@ -27,6 +27,7 @@ def dns_transform(name=None, display_name=None, description=None):
         def interface_normalize(value):
             return value.lower().replace("/", "").replace("-", "")
     """
+
     def decorator(func):
         transform_name = name or func.__name__
         transform_display = display_name or transform_name.replace("_", " ").title()
@@ -34,10 +35,10 @@ def dns_transform(name=None, display_name=None, description=None):
 
         # Register the transform
         _DNS_TRANSFORMS[transform_name] = {
-            'function': func,
-            'display_name': transform_display,
-            'description': transform_desc,
-            'name': transform_name
+            "function": func,
+            "display_name": transform_display,
+            "description": transform_desc,
+            "name": transform_name,
         }
 
         @wraps(func)
@@ -45,6 +46,7 @@ def dns_transform(name=None, display_name=None, description=None):
             return func(*args, **kwargs)
 
         return wrapper
+
     return decorator
 
 
@@ -58,7 +60,7 @@ def get_transform_choices():
     choices = [("", "No Transform")]
 
     for name, info in _DNS_TRANSFORMS.items():
-        choices.append((name, info['display_name']))
+        choices.append((name, info["display_name"]))
 
     return choices
 
@@ -74,7 +76,7 @@ def get_transform_function(name):
         callable: The transform function, or None if not found
     """
     transform_info = _DNS_TRANSFORMS.get(name)
-    return transform_info['function'] if transform_info else None
+    return transform_info["function"] if transform_info else None
 
 
 def get_transform_info(name):
