@@ -57,6 +57,14 @@
     width: 100% !important;
 }
 
+/* Match text input height to Select2 dropdown height */
+.component-row input[type="text"].form-control {
+    height: 34px !important;
+    padding: 6px 12px !important;
+    line-height: 1.42857143 !important;
+    box-sizing: border-box !important;
+}
+
 /* Panel styling to match Nautobot */  
 .panel-heading {
     border-radius: 10px 10px 0 0 !important;
