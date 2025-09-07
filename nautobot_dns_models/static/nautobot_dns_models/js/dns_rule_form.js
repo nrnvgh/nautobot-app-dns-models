@@ -1,7 +1,8 @@
 /**
- * DNS Rule Form - Dynamic Zone Field Visibility
- * Shows/hides zone fields based on selected zone_source
- * Uses standard Django field IDs - no custom CSS classes needed
+ * DNS Rule Form - Dynamic Field Management
+ * - Zone field visibility based on zone_source selection
+ * - Component management (add/delete/reorder)
+ * Uses standard Django field IDs and formset management
  */
 
 document.addEventListener("DOMContentLoaded", function() {

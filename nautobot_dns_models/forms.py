@@ -3,6 +3,7 @@
 from django import forms
 from django.contrib.contenttypes.models import ContentType
 from django.db import models as django_models
+from django.forms import inlineformset_factory
 from nautobot.apps.forms import (
     NautobotBulkEditForm,
     NautobotModelForm,
@@ -13,6 +14,12 @@ from nautobot.core.forms import add_blank_choice
 from nautobot.extras.forms import NautobotFilterForm
 
 from nautobot_dns_models import models
+
+# Force import of transforms at module level to ensure they're registered
+try:
+    from nautobot_dns_models import transforms  # noqa: F401
+except ImportError:
+    pass  # Handle cases where transforms might not be available yet
 
 
 class DNSZoneModelForm(NautobotModelForm):
@@ -407,6 +414,62 @@ class SRVRecordModelFilterForm(NautobotFilterForm):
 # =============================================================================
 
 
+class DNSRuleComponentForm(forms.ModelForm):
+    """Form for individual DNS rule components."""
+    
+    class Meta:
+        """Meta attributes."""
+        
+        model = models.DNSRuleComponent
+        fields = ["target_field", "component_type", "field_path", "literal_value", "transform_function", "order"]
+        widgets = {
+            "target_field": StaticSelect2(),
+            "component_type": StaticSelect2(),
+            "field_path": forms.TextInput(attrs={
+                "class": "form-control", 
+                "placeholder": "device.name"
+            }),
+            "literal_value": forms.TextInput(attrs={
+                "class": "form-control", 
+                "placeholder": "static text"
+            }),
+            "transform_function": StaticSelect2(),
+            "order": forms.NumberInput(attrs={"class": "form-control", "style": "display: none;"}),
+        }
+    
+    def __init__(self, *args, **kwargs):
+        """Initialize component form with proper choices."""
+        super().__init__(*args, **kwargs)
+        
+        # Set target field choices
+        self.fields["target_field"].choices = add_blank_choice([
+            ("name", "Name"),
+            ("value", "Value"),
+        ])
+        
+        # Set component type choices  
+        self.fields["component_type"].choices = add_blank_choice([
+            ("field_reference", "Field Reference"),
+            ("literal", "Literal Value"),
+        ])
+        
+        # Set transform function choices
+        transform_choices = models.DNSRuleComponent.get_transform_choices()
+        self.fields["transform_function"].choices = add_blank_choice(transform_choices)
+
+
+# Create the inline formset for DNS rule components
+DNSRuleComponentFormSet = inlineformset_factory(
+    models.DNSRule,
+    models.DNSRuleComponent,
+    form=DNSRuleComponentForm,
+    fields=["target_field", "component_type", "field_path", "literal_value", "transform_function", "order"],
+    extra=1,  # Start with one empty form
+    can_delete=True,
+    can_order=False,  # We'll handle ordering with JavaScript
+)
+
+
 class DNSRuleForm(NautobotModelForm):
     """DNSRule creation/edit form."""
 
@@ -483,7 +546,7 @@ class DNSRuleForm(NautobotModelForm):
 
     class Media:
         """Form media for JavaScript functionality."""
-
+        
         js = ("nautobot_dns_models/js/dns_rule_form.js",)
 
     def __init__(self, *args, **kwargs):

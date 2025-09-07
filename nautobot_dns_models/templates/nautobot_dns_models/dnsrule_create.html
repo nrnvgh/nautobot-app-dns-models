@@ -1,0 +1,594 @@
+{% extends "generic/object_create.html" %}
+
+{% block form %}
+    {{ block.super }}
+    
+    {% if component_formset %}
+    <!-- DNS Rule Components Management Section -->
+    <div class="panel panel-default">
+        <div class="panel-heading">
+                <strong>DNS Rule Components</strong>
+                <div class="pull-right">
+                <button type="button" class="btn btn-success btn-xs" id="add-component-btn" style="background: #169f32; border-color: #169f32;">
+                    <i class="mdi mdi-plus-thick"></i> Add Component
+                    </button>
+                </div>
+                <div class="clearfix"></div>
+        </div>
+        
+            <div id="component-formset">
+            {{ component_formset.management_form }}
+                
+                <div class="table-responsive">
+                    <table class="table table-hover table-headings" style="table-layout: fixed;">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;"></th>
+                            <th>Target Field</th>
+                            <th>Component Type</th>
+                                <th>Value</th>
+                            <th>Transform</th>
+                                <th style="width: 60px;">Actions</th>
+                            </tr>
+                        </thead>
+                    <tbody id="component-rows">
+                        {% for form in component_formset %}
+                            <tr class="component-row" data-form-index="{{ forloop.counter0 }}">
+                                {{ form.non_field_errors }}
+                                {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+                                
+                                        <td class="text-center">
+                                            <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+                                        </td>
+                                <td>{{ form.target_field }}</td>
+                                <td>{{ form.component_type }}</td>
+                            <td>
+                                <div class="value-input-container">
+                                    {{ form.field_path }}
+                                    <div style="display: none;">{{ form.literal_value }}</div>
+                                            </div>
+                                        </td>
+                                <td>{{ form.transform_function }}</td>
+                                        <td class="text-center">
+                                            <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
+                                        <i class="mdi mdi-trash-can-outline"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Empty form template using Django's actual empty form -->
+    <table id="empty-form-template" style="display: none;">
+        <tbody>
+            <tr class="component-row" data-form-index="__prefix__">
+            <td class="text-center">
+                <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+            </td>
+                <td>
+                    {{ component_formset.empty_form.target_field }}
+            </td>
+                <td>
+                    {{ component_formset.empty_form.component_type }}
+            </td>
+            <td>
+                    <div class="value-input-container">
+                        {{ component_formset.empty_form.field_path }}
+                        <div style="display: none;">{{ component_formset.empty_form.literal_value }}</div>
+                </div>
+            </td>
+                <td>
+                    {{ component_formset.empty_form.transform_function }}
+            </td>
+            <td class="text-center">
+                <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
+                        <i class="mdi mdi-trash-can-outline"></i>
+                </button>
+                    <!-- Hidden formset fields in a hidden cell -->
+                    <div style="display: none;">
+                        {% for hidden in component_formset.empty_form.hidden_fields %}
+                            {{ hidden }}
+                        {% endfor %}
+                    </div>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+    {% endif %}
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            
+            // Initialize existing component rows
+            initializeExistingRows();
+            
+            // Add component button functionality
+            const addButton = document.getElementById('add-component-btn');
+            if (addButton) {
+                addButton.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    addComponentRow();
+                });
+            }
+            
+            function initializeExistingRows() {
+                // Initialize Select2 and field visibility for existing rows
+                document.querySelectorAll('.component-row').forEach(function(row) {
+                    // Initialize Select2 on all dropdowns in existing rows
+                    $(row).find('select').each(function() {
+                        if (!$(this).hasClass('select2-hidden-accessible')) {
+                            $(this).select2({
+                                width: '100%',  // Ensure full width
+                                theme: 'default',
+                                placeholder: $(this).attr('data-placeholder') || 'Select...'
+                            });
+                        }
+                    });
+                    
+                    const componentTypeSelect = row.querySelector('[name$="-component_type"]');
+                    if (componentTypeSelect) {
+                        // Set up change handler for Select2 widgets
+                        $(componentTypeSelect).on('change', function() {
+                            updateFieldVisibility(row);
+                        });
+                        // Initialize visibility
+                        updateFieldVisibility(row);
+                    }
+                    
+                    // Set up delete button
+                    const deleteBtn = row.querySelector('.delete-component-btn');
+                    if (deleteBtn) {
+                        deleteBtn.addEventListener('click', function(e) {
+                            e.preventDefault();
+                            deleteComponentRow(row);
+                        });
+                    }
+                    
+                    // Setup drag and drop
+                    setupDragAndDrop(row);
+                });
+            }
+            
+            
+            function getTransformOptionsHTML() {
+                // Dynamically get transform options from first row (Django-rendered with registry)
+                const firstRowTransform = document.querySelector('#component-rows tr:first-child select[name$="-transform_function"]');
+                
+                // Copy all options from Django-rendered dropdown
+                let optionsHTML = '';
+                for (let i = 0; i < firstRowTransform.options.length; i++) {
+                    const option = firstRowTransform.options[i];
+                    optionsHTML += `<option value="${option.value}">${option.text}</option>`;
+                }
+                return optionsHTML;
+            }
+            
+            function addComponentRow() {
+                
+                // Get current form count
+                const totalFormsInput = document.querySelector('input[name="components-TOTAL_FORMS"]');
+                if (!totalFormsInput) {
+                    console.error('Could not find TOTAL_FORMS input');
+                    return;
+                }
+                
+                const formCount = parseInt(totalFormsInput.value);
+                
+                const tbody = document.getElementById('component-rows');
+                const template = document.getElementById('empty-form-template');
+                
+                if (!tbody || !template) {
+                    console.error('Missing tbody or template');
+                    return;
+                }
+                
+                // Get the template tbody and clone its content
+                const templateTbody = template.querySelector('tbody');
+                if (!templateTbody) {
+                    console.error('No tbody in template');
+                    return;
+                }
+                
+                // Create a clean new row with basic HTML (not cloned Django Select2 structure)
+                const newRow = document.createElement('tr');
+                newRow.className = 'component-row';
+                newRow.setAttribute('data-form-index', formCount);
+                
+                // Build clean HTML structure
+                newRow.innerHTML = `
+                    <td class="text-center">
+                        <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+                    </td>
+                    <td>
+                        <select name="components-${formCount}-target_field" class="form-control">
+                            <option value="">---------</option>
+                            <option value="name">Name</option>
+                            <option value="value">Value</option>
+                        </select>
+                    </td>
+                    <td>
+                        <select name="components-${formCount}-component_type" class="form-control">
+                            <option value="">---------</option>
+                            <option value="field_reference">Field Reference</option>
+                            <option value="literal">Literal Value</option>
+                        </select>
+                    </td>
+                    <td>
+                        <div class="value-input-container">
+                            <input type="text" name="components-${formCount}-field_path" class="form-control" placeholder="device.name" />
+                            <div style="display: none;">
+                                <input type="text" name="components-${formCount}-literal_value" class="form-control" placeholder="static text" />
+                            </div>
+    </div>
+                    </td>
+                    <td>
+                        <select name="components-${formCount}-transform_function" class="form-control">
+                            ${getTransformOptionsHTML()}
+                        </select>
+                    </td>
+                    <td class="text-center">
+                        <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
+                            <i class="mdi mdi-trash-can-outline"></i>
+                        </button>
+                        <input type="hidden" name="components-${formCount}-order" value="${formCount + 1}" />
+                        <input type="hidden" name="components-${formCount}-id" value="" />
+                        <input type="hidden" name="components-${formCount}-DELETE" value="false" />
+                    </td>
+                `;
+                
+                // Hide the row during initialization to prevent visual flash
+                newRow.style.visibility = 'hidden';
+                
+                // Add to the actual tbody
+                tbody.appendChild(newRow);
+                
+                // Update form count
+                totalFormsInput.value = formCount + 1;
+                
+                // Initialize the new row immediately
+                setTimeout(function() {
+                    // Initialize clean Select2 on fresh HTML elements
+                    $(newRow).find('select').each(function() {
+                        const $select = $(this);
+                        
+                        // Initialize Select2 to match Django's StaticSelect2 styling exactly
+                        const isTransform = $select.attr('name').includes('transform_function');
+                        
+                        $select.select2({
+                            theme: 'bootstrap',
+                            width: '100%',
+                            dropdownAutoWidth: false,
+                            // Force transform dropdowns to always open downward
+                            dropdownPosition: isTransform ? 'below' : 'auto',
+                            placeholder: {
+                                id: '',
+                                text: '---------',
+                                disabled: true
+                            },
+                            templateSelection: function(state) {
+                                // Match Django's placeholder styling
+                                if (!state.id) {
+                                    return $('<span style="color: #999;">' + state.text + '</span>');
+                                }
+                                return state.text;
+                            }
+                        });
+                    });
+                    
+                    // Show the row after Select2 is fully initialized
+                    newRow.style.visibility = 'visible';
+                    
+                    // Component type change handler  
+                    const componentTypeSelect = newRow.querySelector('[name$="-component_type"]');
+                    if (componentTypeSelect) {
+                        $(componentTypeSelect).on('change', function() {
+                            updateFieldVisibility(newRow);
+                        });
+                        updateFieldVisibility(newRow);
+                    }
+                    
+                    // Delete button handler
+                    const deleteBtn = newRow.querySelector('.delete-component-btn');
+                    if (deleteBtn) {
+                        deleteBtn.addEventListener('click', function(e) {
+                            e.preventDefault();
+                            deleteComponentRow(newRow);
+                        });
+                    }
+                    
+                    // Drag and drop
+                    setupDragAndDrop(newRow);
+                    
+                }, 200);
+            }
+            
+            function setupDragAndDrop(row) {
+                row.draggable = true;
+                row.addEventListener('dragstart', handleDragStart);
+                row.addEventListener('dragover', handleDragOver);
+                row.addEventListener('dragleave', handleDragLeave);
+                row.addEventListener('drop', handleDrop);
+                row.addEventListener('dragend', handleDragEnd);
+            }
+            
+            let draggedRow = null;
+            
+            function handleDragStart(e) {
+                draggedRow = this;
+                this.classList.add('dragging');
+            }
+            
+            function handleDragOver(e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                this.classList.add('drag-over');
+            }
+            
+            function handleDragLeave(e) {
+                // Only remove drag-over if we're actually leaving the element
+                // (not just moving to a child element)
+                if (!this.contains(e.relatedTarget)) {
+                    this.classList.remove('drag-over');
+                }
+            }
+            
+            function handleDrop(e) {
+                e.preventDefault();
+                
+                // Clear all drag-over classes first
+                document.querySelectorAll('.component-row').forEach(row => {
+                    row.classList.remove('drag-over');
+                });
+                
+                if (draggedRow && draggedRow !== this) {
+                    const tbody = this.closest('tbody');
+                    const allRows = Array.from(tbody.querySelectorAll('.component-row'));
+                    const draggedIndex = allRows.indexOf(draggedRow);
+                    const targetIndex = allRows.indexOf(this);
+                    
+                    
+                    if (draggedIndex < targetIndex) {
+                        tbody.insertBefore(draggedRow, this.nextSibling);
+                    } else {
+                        tbody.insertBefore(draggedRow, this);
+                    }
+                    
+                    updateOrderValues();
+                }
+            }
+            
+            function handleDragEnd(e) {
+                document.querySelectorAll('.component-row').forEach(row => {
+                    row.classList.remove('dragging', 'drag-over');
+                });
+                draggedRow = null;
+            }
+            
+            function updateOrderValues() {
+                const rows = document.querySelectorAll('#component-rows .component-row');
+                rows.forEach((row, index) => {
+                    const orderField = row.querySelector('input[name$="-order"]');
+                    if (orderField) {
+                        orderField.value = index + 1;
+                    }
+                });
+            }
+            
+            function updateFieldVisibility(row) {
+                const componentTypeSelect = row.querySelector('[name$="-component_type"]');
+                const valueContainer = row.querySelector('.value-input-container');
+                const fieldPathInput = valueContainer?.querySelector('input[name$="-field_path"]');
+                const literalValueInput = valueContainer?.querySelector('input[name$="-literal_value"]');
+                const transformSelect = row.querySelector('[name$="-transform_function"]');
+                
+                if (!componentTypeSelect || !valueContainer || !fieldPathInput) {
+                    return;
+                }
+                
+                const componentType = componentTypeSelect.value;
+                
+                if (componentType === 'field_reference') {
+                    // Show field_path, update name attribute for proper saving  
+                    fieldPathInput.style.display = 'block';
+                    fieldPathInput.placeholder = 'device.name';
+                    fieldPathInput.name = fieldPathInput.name.replace('literal_value', 'field_path');
+                    if (literalValueInput) {
+                        literalValueInput.style.display = 'none';
+                        literalValueInput.name = literalValueInput.name.replace('field_path', 'literal_value');
+                    }
+                    if (transformSelect) {
+                        transformSelect.disabled = false;
+                        transformSelect.style.opacity = '1';
+                    }
+                } else if (componentType === 'literal') {
+                    // Show field_path but save as literal_value
+                    fieldPathInput.style.display = 'block';
+                    fieldPathInput.placeholder = 'static text';
+                    fieldPathInput.name = fieldPathInput.name.replace('field_path', 'literal_value');
+                    if (literalValueInput) {
+                        literalValueInput.style.display = 'none';
+                        literalValueInput.name = literalValueInput.name.replace('literal_value', 'field_path');
+                    }
+                    if (transformSelect) {
+                        transformSelect.disabled = true;
+                        transformSelect.value = '';
+                        transformSelect.style.opacity = '0.5';
+                    }
+                } else {
+                    // Default state
+                    fieldPathInput.style.display = 'block';
+                    fieldPathInput.placeholder = 'device.name';
+                    fieldPathInput.name = fieldPathInput.name.replace('literal_value', 'field_path');
+                    if (literalValueInput) {
+                        literalValueInput.style.display = 'none';
+                        literalValueInput.name = literalValueInput.name.replace('field_path', 'literal_value');
+                    }
+                    if (transformSelect) {
+                        transformSelect.disabled = false;
+                        transformSelect.style.opacity = '1';
+                    }
+                }
+            }
+            
+            function deleteComponentRow(row) {
+                
+                // Check if this is a saved component (has an ID field with value)
+                const idInput = row.querySelector('[name$="-id"]');
+                const deleteInput = row.querySelector('[name$="-DELETE"]');
+                
+                if (idInput && idInput.value && deleteInput) {
+                    // Mark for deletion instead of removing
+                    deleteInput.value = 'true';
+                    row.style.display = 'none';
+                } else {
+                    // Remove completely for new components
+                    row.remove();
+                    
+                    // Update form count
+                    const totalFormsInput = document.querySelector('input[name="components-TOTAL_FORMS"]');
+                    if (totalFormsInput) {
+                        totalFormsInput.value = parseInt(totalFormsInput.value) - 1;
+                    }
+                }
+            }
+        });
+    </script>
+    
+    <style>
+        .drag-handle { 
+            cursor: move; 
+            color: #6c757d; 
+            font-size: 14px; 
+            user-select: none;
+            text-align: center;
+        }
+        .drag-handle:hover { 
+            color: #007bff; 
+        }
+        
+        /* Drag and drop visual feedback */
+        .component-row.dragging { 
+            opacity: 0.5; 
+            background-color: #f0f0f0 !important;
+        }
+        .component-row.drag-over { 
+            background-color: #e8f5e8 !important; 
+            border-top: 2px solid #169f32;
+        }
+        
+        /* Make entire row draggable */
+        .component-row {
+            cursor: move;
+        }
+        .component-row:hover {
+            background-color: #f8f9fa;
+        }
+        
+        /* Force consistent Select2 widths */
+        #component-rows .select2-container {
+            width: 100% !important;
+        }
+        
+        #component-rows .select2-selection {
+            width: 100% !important;
+        }
+        
+        /* Ensure consistent value input container sizing */
+        .value-input-container {
+            width: 100%;
+        }
+        
+        .value-input-container input {
+            width: 100% !important;
+            box-sizing: border-box;
+        }
+        
+        /* Ensure consistent form control sizing */
+        .component-row .form-control {
+            width: 100% !important;
+        }
+        
+        /* Panel styling to match Nautobot */  
+        .panel-heading {
+            border-radius: 10px 10px 0 0 !important;
+        }
+        
+        /* Force consistent dropdown direction */
+        .select2-container .select2-dropdown {
+            z-index: 9999 !important;
+        }
+        
+        /* Force all component dropdowns to open downward */
+        .force-dropdown-below.select2-dropdown--above {
+            display: none !important;
+        }
+        
+        /* Ensure component table dropdowns never go upward */
+        #component-rows .select2-container--open .select2-dropdown--above {
+            display: none !important;
+        }
+        
+        #component-rows .select2-container--open .select2-dropdown--below {
+            display: block !important;
+        }
+        
+        /* Additional positioning fix */
+        #component-rows .select2-dropdown {
+            top: 100% !important;
+            bottom: auto !important;
+        }
+        
+        /* Force ALL transform dropdowns to open downward - including Django-rendered ones */
+        select[name*="transform_function"] + .select2-container .select2-dropdown--above {
+            display: none !important;
+        }
+        
+        select[name*="transform_function"] + .select2-container .select2-dropdown--below {
+            display: block !important;
+        }
+        
+        select[name*="transform_function"] + .select2-container .select2-dropdown {
+            top: 100% !important;
+            bottom: auto !important;
+        }
+        
+        /* Force ALL Select2 containers in component table to position below */
+        #component-rows .select2-container {
+            position: relative !important;
+        }
+        
+        #component-rows .select2-dropdown {
+            position: absolute !important;
+            top: 100% !important;
+            bottom: auto !important;
+            margin-top: 1px !important;
+        }
+        
+        /* Additional override for first row specifically */
+        #component-rows tr:first-child select[name*="transform_function"] + .select2-container .select2-dropdown {
+            top: 100% !important;
+            bottom: auto !important;
+        }
+        
+        /* Nuclear option - force ALL Select2 dropdowns in this component table downward */
+        [id^="component-formset"] .select2-dropdown--above,
+        [id="component-formset"] .select2-dropdown--above {
+            display: none !important;
+            visibility: hidden !important;
+        }
+        
+        /* Make sure first row transform specifically opens down */
+        select[id*="components-0-transform_function"] + .select2-container .select2-dropdown--above {
+            display: none !important;
+        }
+        
+        select[id*="components-0-transform_function"] + .select2-container .select2-dropdown {
+            top: 100% !important;
+            bottom: auto !important;
+        }
+    </style>
+{% endblock %}
