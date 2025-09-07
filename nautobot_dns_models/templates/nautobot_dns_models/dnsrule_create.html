@@ -3,117 +3,153 @@
 {% load static %}
 {% load helpers %}
 
-{% block extra_styles}
-{{ block.super}}
-<link rel="stylesheet" type="text/css" href="{% static 'nautobot_dns_models/css/rule_component.css' %}" />
-{% endblock extra_styles}
+{% block extra_styles %}
+{{ block.super }}
+
+    <link rel="stylesheet" type="text/css" href="{% static 'nautobot_dns_models/css/rule_component.css' %}" />
+
+{% endblock extra_styles %}
 
 {% block form %}
-    {{ block.super }}
-    
+    <!-- Render form fields manually for better layout control -->
+
+    <!-- Basic DNS Rule Information -->
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <strong>DNS Rule Information</strong>
+        </div>
+        <div class="panel-body">
+            {% render_field form.name %}
+            {% render_field form.enabled %}
+            {% render_field form.content_type %}
+            {% render_field form.record_type %}
+            {% render_field form.description %}
+        </div>
+    </div>
+
+    <!-- Zone Configuration -->
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <strong>Zone Configuration</strong>
+        </div>
+        <div class="panel-body">
+            {% render_field form.zone_source %}
+            {% render_field form.zone_fixed %}
+            {% render_field form.zone_field_path %}
+            {% render_field form.zone_custom_field %}
+        </div>
+    </div>
+
     {% if component_formset %}
     <!-- DNS Rule Components Management Section -->
     <div class="panel panel-default">
         <div class="panel-heading">
-                <strong>DNS Rule Components</strong>
-                <div class="pull-right">
+            <strong>DNS Rule Components</strong>
+            <div class="pull-right">
                 <button type="button" class="btn btn-success btn-xs" id="add-component-btn" style="background: #169f32; border-color: #169f32;">
                     <i class="mdi mdi-plus-thick"></i> Add Component
-                    </button>
-                </div>
-                <div class="clearfix"></div>
+                </button>
+            </div>
+            <div class="clearfix"></div>
         </div>
-        
-            <div id="component-formset">
-            {{ component_formset.management_form }}
-                
-                <div class="table-responsive">
-                    <table class="table table-hover table-headings" style="table-layout: fixed;">
-                        <thead>
-                            <tr>
-                                <th style="width: 40px;"></th>
-                            <th>Target Field</th>
-                            <th>Component Type</th>
-                                <th>Value</th>
-                            <th>Transform</th>
-                                <th style="width: 60px;">Actions</th>
-                            </tr>
-                        </thead>
-                    <tbody id="component-rows">
-                        {% for form in component_formset %}
-                            <tr class="component-row" data-form-index="{{ forloop.counter0 }}">
-                                {{ form.non_field_errors }}
-                                {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
-                                
-                                        <td class="text-center">
-                                            <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
-                                        </td>
-                                <td>{{ form.target_field }}</td>
-                                <td>{{ form.component_type }}</td>
-                            <td>
-                                <div class="value-input-container">
-                                    {{ form.field_path }}
-                                    <div style="display: none;">{{ form.literal_value }}</div>
-                                            </div>
-                                        </td>
-                                <td>{{ form.transform_function }}</td>
-                                        <td class="text-center">
-                                            <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
-                                        <i class="mdi mdi-trash-can-outline"></i>
-                                            </button>
-                                        </td>
-                                    </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+
+        <div id="component-formset">
+        {{ component_formset.management_form }}
+
+            <div class="table-responsive">
+            <table class="table table-hover table-headings" style="table-layout: fixed;">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"></th>
+                        <th>Target Field</th>
+                        <th>Component Type</th>
+                        <th>Value</th>
+                        <th>Transform</th>
+                        <th style="width: 60px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="component-rows">
+                {% for form in component_formset %}
+                    <tr class="component-row" data-form-index="{{ forloop.counter0 }}">
+                        {{ form.non_field_errors }}
+                        {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+
+                        <td class="text-center">
+                            <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+                        </td>
+                        <td>{{ form.target_field }}</td>
+                        <td>{{ form.component_type }}</td>
+                        <td>
+                            <div class="value-input-container">
+                                {{ form.field_path }}
+                                <div style="display: none;">{{ form.literal_value }}</div>
+                            </div>
+                        </td>
+                        <td>{{ form.transform_function }}</td>
+                        <td class="text-center">
+                            <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
+                                <i class="mdi mdi-trash-can-outline"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
-    
+
     <!-- Empty form template using Django's actual empty form -->
     <table id="empty-form-template" style="display: none;">
         <tbody>
             <tr class="component-row" data-form-index="__prefix__">
-            <td class="text-center">
-                <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
-            </td>
+                <td class="text-center">
+                    <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+                </td>
                 <td>
                     {{ component_formset.empty_form.target_field }}
-            </td>
+                </td>
                 <td>
                     {{ component_formset.empty_form.component_type }}
-            </td>
-            <td>
+                </td>
+                <td>
                     <div class="value-input-container">
                         {{ component_formset.empty_form.field_path }}
                         <div style="display: none;">{{ component_formset.empty_form.literal_value }}</div>
-                </div>
-            </td>
+                    </div>
+                </td>
                 <td>
                     {{ component_formset.empty_form.transform_function }}
-            </td>
-            <td class="text-center">
-                <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
+                </td>
+                <td class="text-center">
+                    <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
                         <i class="mdi mdi-trash-can-outline"></i>
-                </button>
+                    </button>
                     <!-- Hidden formset fields in a hidden cell -->
                     <div style="display: none;">
                         {% for hidden in component_formset.empty_form.hidden_fields %}
                             {{ hidden }}
                         {% endfor %}
                     </div>
-            </td>
-        </tr>
+                </td>
+            </tr>
         </tbody>
     </table>
     {% endif %}
-    
-    <script>
+
+    {% include "inc/extras_features_edit_form_fields.html" %}
+
+
+{% endblock form %}
+
+{% block javascript %}
+{{ block.super}}
+    <script type="text/javascript">
         document.addEventListener('DOMContentLoaded', function() {
-            
+
             // Initialize existing component rows
             initializeExistingRows();
-            
+
             // Add component button functionality
             const addButton = document.getElementById('add-component-btn');
             if (addButton) {
@@ -122,7 +158,7 @@
                     addComponentRow();
                 });
             }
-            
+
             function initializeExistingRows() {
                 // Initialize Select2 and field visibility for existing rows
                 document.querySelectorAll('.component-row').forEach(function(row) {
@@ -136,7 +172,7 @@
                             });
                         }
                     });
-                    
+
                     const componentTypeSelect = row.querySelector('[name$="-component_type"]');
                     if (componentTypeSelect) {
                         // Set up change handler for Select2 widgets
@@ -146,7 +182,7 @@
                         // Initialize visibility
                         updateFieldVisibility(row);
                     }
-                    
+
                     // Set up delete button
                     const deleteBtn = row.querySelector('.delete-component-btn');
                     if (deleteBtn) {
@@ -155,17 +191,17 @@
                             deleteComponentRow(row);
                         });
                     }
-                    
+
                     // Setup drag and drop
                     setupDragAndDrop(row);
                 });
             }
-            
-            
+
+
             function getTransformOptionsHTML() {
                 // Dynamically get transform options from first row (Django-rendered with registry)
                 const firstRowTransform = document.querySelector('#component-rows tr:first-child select[name$="-transform_function"]');
-                
+
                 // Copy all options from Django-rendered dropdown
                 let optionsHTML = '';
                 for (let i = 0; i < firstRowTransform.options.length; i++) {
@@ -174,38 +210,38 @@
                 }
                 return optionsHTML;
             }
-            
+
             function addComponentRow() {
-                
+
                 // Get current form count
                 const totalFormsInput = document.querySelector('input[name="components-TOTAL_FORMS"]');
                 if (!totalFormsInput) {
                     console.error('Could not find TOTAL_FORMS input');
                     return;
                 }
-                
+
                 const formCount = parseInt(totalFormsInput.value);
-                
+
                 const tbody = document.getElementById('component-rows');
                 const template = document.getElementById('empty-form-template');
-                
+
                 if (!tbody || !template) {
                     console.error('Missing tbody or template');
                     return;
                 }
-                
+
                 // Get the template tbody and clone its content
                 const templateTbody = template.querySelector('tbody');
                 if (!templateTbody) {
                     console.error('No tbody in template');
                     return;
                 }
-                
+
                 // Create a clean new row with basic HTML (not cloned Django Select2 structure)
                 const newRow = document.createElement('tr');
                 newRow.className = 'component-row';
                 newRow.setAttribute('data-form-index', formCount);
-                
+
                 // Build clean HTML structure
                 newRow.innerHTML = `
                     <td class="text-center">
@@ -231,7 +267,7 @@
                             <div style="display: none;">
                                 <input type="text" name="components-${formCount}-literal_value" class="form-control" placeholder="static text" />
                             </div>
-    </div>
+                        </div>
                     </td>
                     <td>
                         <select name="components-${formCount}-transform_function" class="form-control">
@@ -247,25 +283,25 @@
                         <input type="hidden" name="components-${formCount}-DELETE" value="false" />
                     </td>
                 `;
-                
+
                 // Hide the row during initialization to prevent visual flash
                 newRow.style.visibility = 'hidden';
-                
+
                 // Add to the actual tbody
                 tbody.appendChild(newRow);
-                
+
                 // Update form count
                 totalFormsInput.value = formCount + 1;
-                
+
                 // Initialize the new row immediately
                 setTimeout(function() {
                     // Initialize clean Select2 on fresh HTML elements
                     $(newRow).find('select').each(function() {
                         const $select = $(this);
-                        
+
                         // Initialize Select2 to match Django's StaticSelect2 styling exactly
                         const isTransform = $select.attr('name').includes('transform_function');
-                        
+
                         $select.select2({
                             theme: 'bootstrap',
                             width: '100%',
@@ -286,11 +322,11 @@
                             }
                         });
                     });
-                    
+
                     // Show the row after Select2 is fully initialized
                     newRow.style.visibility = 'visible';
-                    
-                    // Component type change handler  
+
+                    // Component type change handler
                     const componentTypeSelect = newRow.querySelector('[name$="-component_type"]');
                     if (componentTypeSelect) {
                         $(componentTypeSelect).on('change', function() {
@@ -298,7 +334,7 @@
                         });
                         updateFieldVisibility(newRow);
                     }
-                    
+
                     // Delete button handler
                     const deleteBtn = newRow.querySelector('.delete-component-btn');
                     if (deleteBtn) {
@@ -307,13 +343,13 @@
                             deleteComponentRow(newRow);
                         });
                     }
-                    
+
                     // Drag and drop
                     setupDragAndDrop(newRow);
-                    
+
                 }, 200);
             }
-            
+
             function setupDragAndDrop(row) {
                 row.draggable = true;
                 row.addEventListener('dragstart', handleDragStart);
@@ -322,20 +358,20 @@
                 row.addEventListener('drop', handleDrop);
                 row.addEventListener('dragend', handleDragEnd);
             }
-            
+
             let draggedRow = null;
-            
+
             function handleDragStart(e) {
                 draggedRow = this;
                 this.classList.add('dragging');
             }
-            
+
             function handleDragOver(e) {
                 e.preventDefault();
                 e.dataTransfer.dropEffect = 'move';
                 this.classList.add('drag-over');
             }
-            
+
             function handleDragLeave(e) {
                 // Only remove drag-over if we're actually leaving the element
                 // (not just moving to a child element)
@@ -343,39 +379,39 @@
                     this.classList.remove('drag-over');
                 }
             }
-            
+
             function handleDrop(e) {
                 e.preventDefault();
-                
+
                 // Clear all drag-over classes first
                 document.querySelectorAll('.component-row').forEach(row => {
                     row.classList.remove('drag-over');
                 });
-                
+
                 if (draggedRow && draggedRow !== this) {
                     const tbody = this.closest('tbody');
                     const allRows = Array.from(tbody.querySelectorAll('.component-row'));
                     const draggedIndex = allRows.indexOf(draggedRow);
                     const targetIndex = allRows.indexOf(this);
-                    
-                    
+
+
                     if (draggedIndex < targetIndex) {
                         tbody.insertBefore(draggedRow, this.nextSibling);
                     } else {
                         tbody.insertBefore(draggedRow, this);
                     }
-                    
+
                     updateOrderValues();
                 }
             }
-            
+
             function handleDragEnd(e) {
                 document.querySelectorAll('.component-row').forEach(row => {
                     row.classList.remove('dragging', 'drag-over');
                 });
                 draggedRow = null;
             }
-            
+
             function updateOrderValues() {
                 const rows = document.querySelectorAll('#component-rows .component-row');
                 rows.forEach((row, index) => {
@@ -385,22 +421,22 @@
                     }
                 });
             }
-            
+
             function updateFieldVisibility(row) {
                 const componentTypeSelect = row.querySelector('[name$="-component_type"]');
                 const valueContainer = row.querySelector('.value-input-container');
                 const fieldPathInput = valueContainer?.querySelector('input[name$="-field_path"]');
                 const literalValueInput = valueContainer?.querySelector('input[name$="-literal_value"]');
                 const transformSelect = row.querySelector('[name$="-transform_function"]');
-                
+
                 if (!componentTypeSelect || !valueContainer || !fieldPathInput) {
                     return;
                 }
-                
+
                 const componentType = componentTypeSelect.value;
-                
+
                 if (componentType === 'field_reference') {
-                    // Show field_path, update name attribute for proper saving  
+                    // Show field_path, update name attribute for proper saving
                     fieldPathInput.style.display = 'block';
                     fieldPathInput.placeholder = 'device.name';
                     fieldPathInput.name = fieldPathInput.name.replace('literal_value', 'field_path');
@@ -441,13 +477,13 @@
                     }
                 }
             }
-            
+
             function deleteComponentRow(row) {
-                
+
                 // Check if this is a saved component (has an ID field with value)
                 const idInput = row.querySelector('[name$="-id"]');
                 const deleteInput = row.querySelector('[name$="-DELETE"]');
-                
+
                 if (idInput && idInput.value && deleteInput) {
                     // Mark for deletion instead of removing
                     deleteInput.value = 'true';
@@ -455,7 +491,7 @@
                 } else {
                     // Remove completely for new components
                     row.remove();
-                    
+
                     // Update form count
                     const totalFormsInput = document.querySelector('input[name="components-TOTAL_FORMS"]');
                     if (totalFormsInput) {
@@ -465,4 +501,4 @@
             }
         });
     </script>
-    
+{% endblock javascript %}
