@@ -20,6 +20,10 @@ router.register("txt-records", views.TXTRecordModelUIViewSet)
 router.register("ptr-records", views.PTRRecordModelUIViewSet)
 router.register("srv-records", views.SRVRecordModelUIViewSet)
 
+# GUI Rule Builder Models
+router.register("dns-rules", views.DNSRuleUIViewSet)
+router.register("dns-rule-records", views.DNSRuleRecordUIViewSet)
+
 urlpatterns = [
     path("docs/", RedirectView.as_view(url=static("nautobot_dns_models/docs/index.html")), name="docs"),
     # Paths for buttons used in DNS zone viewset

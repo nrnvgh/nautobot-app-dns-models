@@ -139,3 +139,31 @@ class SRVRecordModelSerializer(NautobotModelSerializer):  # pylint: disable=too-
 
         # Option for disabling write for certain fields:
         # read_only_fields = []
+
+
+# =============================================================================
+# GUI Rule Builder Serializers
+# =============================================================================
+
+class DNSRuleSerializer(NautobotModelSerializer):  # pylint: disable=too-many-ancestors
+    """DNSRule Serializer."""
+
+    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:dnsrule-detail")
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRule
+        fields = "__all__"
+
+
+class DNSRuleRecordSerializer(NautobotModelSerializer):  # pylint: disable=too-many-ancestors
+    """DNSRuleRecord Serializer."""
+
+    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:dnsrulerecord-detail")
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRuleRecord
+        fields = "__all__"

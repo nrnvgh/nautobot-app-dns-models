@@ -13,7 +13,23 @@ items = [
                 permissions=["nautobot_dns_models.add_dnszonemodel"],
             ),
         ),
-    )
+    ),
+    NavMenuItem(
+        link="plugins:nautobot_dns_models:dnsrule_list",
+        name="DNS Rules",
+        permissions=["nautobot_dns_models.view_dnsrule"],
+        buttons=(
+            NavMenuAddButton(
+                link="plugins:nautobot_dns_models:dnsrule_add",
+                permissions=["nautobot_dns_models.add_dnsrule"],
+            ),
+        ),
+    ),
+    NavMenuItem(
+        link="plugins:nautobot_dns_models:dnsrulerecord_list",
+        name="DNS Rule Records",
+        permissions=["nautobot_dns_models.view_dnsrulerecord"],
+    ),
 ]
 
 menu_items = (

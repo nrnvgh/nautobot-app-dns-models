@@ -352,3 +352,60 @@ class SRVRecordModelTable(DNSRecordsTable):
             "zone",
             "actions",
         )
+
+
+# =============================================================================
+# GUI Rule Builder Tables
+# =============================================================================
+
+class DNSRuleTable(BaseTable):
+    """Table for DNS Rule list view."""
+
+    pk = ToggleColumn()
+    name = tables.Column(linkify=True)
+    content_type = tables.Column(verbose_name="Applies To")
+    record_type = tables.Column(verbose_name="Creates")
+    enabled = tables.BooleanColumn()
+    zone_source = tables.Column(verbose_name="Zone Source")
+    actions = ButtonsColumn(
+        models.DNSRule,
+        buttons=("changelog", "edit", "delete"),
+    )
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.DNSRule
+        fields = (
+            "pk",
+            "name",
+            "description",
+            "enabled",
+            "content_type",
+            "record_type",
+            "zone_source",
+            "actions",
+        )
+
+
+class DNSRuleRecordTable(BaseTable):
+    """Table for DNS Rule Record tracking list view (read-only)."""
+
+    pk = ToggleColumn()
+    rule = tables.LinkColumn()
+    source_object_name = tables.Column(verbose_name="Source Object")
+    dns_record_name = tables.Column(verbose_name="Generated DNS Record")
+    created = tables.DateTimeColumn()
+    # No actions column - these are read-only tracking records
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.DNSRuleRecord
+        fields = (
+            "pk",
+            "rule",
+            "source_object_name",
+            "dns_record_name",
+            "created",
+        )

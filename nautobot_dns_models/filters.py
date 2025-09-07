@@ -93,3 +93,27 @@ class SRVRecordModelFilterSet(NautobotFilterSet):
 
         model = models.SRVRecordModel
         fields = "__all__"
+
+
+# =============================================================================
+# GUI Rule Builder Filters
+# =============================================================================
+
+class DNSRuleFilterSet(NautobotFilterSet):
+    """Filter for DNSRule."""
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.DNSRule
+        fields = "__all__"
+
+
+class DNSRuleRecordFilterSet(NautobotFilterSet):
+    """Filter for DNSRuleRecord."""
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.DNSRuleRecord
+        fields = "__all__"

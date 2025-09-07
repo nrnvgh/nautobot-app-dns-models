@@ -15,6 +15,8 @@ from nautobot_dns_models.api.serializers import (
     AAAARecordModelSerializer,
     ARecordModelSerializer,
     CNAMERecordModelSerializer,
+    DNSRuleRecordSerializer,
+    DNSRuleSerializer,
     DNSZoneModelSerializer,
     MXRecordModelSerializer,
     NSRecordModelSerializer,
@@ -26,6 +28,8 @@ from nautobot_dns_models.filters import (
     AAAARecordModelFilterSet,
     ARecordModelFilterSet,
     CNAMERecordModelFilterSet,
+    DNSRuleFilterSet,
+    DNSRuleRecordFilterSet,
     DNSZoneModelFilterSet,
     MXRecordModelFilterSet,
     NSRecordModelFilterSet,
@@ -43,6 +47,10 @@ from nautobot_dns_models.forms import (
     CNAMERecordModelBulkEditForm,
     CNAMERecordModelFilterForm,
     CNAMERecordModelForm,
+    DNSRuleBulkEditForm,
+    DNSRuleFilterForm,
+    DNSRuleForm,
+    DNSRuleRecordFilterForm,
     DNSZoneModelBulkEditForm,
     DNSZoneModelFilterForm,
     DNSZoneModelForm,
@@ -66,6 +74,8 @@ from nautobot_dns_models.models import (
     AAAARecordModel,
     ARecordModel,
     CNAMERecordModel,
+    DNSRule,
+    DNSRuleRecord,
     DNSZoneModel,
     MXRecordModel,
     NSRecordModel,
@@ -77,6 +87,8 @@ from nautobot_dns_models.tables import (
     AAAARecordModelTable,
     ARecordModelTable,
     CNAMERecordModelTable,
+    DNSRuleRecordTable,
+    DNSRuleTable,
     DNSZoneModelTable,
     MXRecordModelTable,
     NSRecordModelTable,
@@ -431,3 +443,33 @@ class SRVRecordModelUIViewSet(views.NautobotUIViewSet):
             )
         ]
     )
+
+
+# =============================================================================
+# GUI Rule Builder ViewSets
+# =============================================================================
+
+class DNSRuleUIViewSet(views.NautobotUIViewSet):
+    """DNSRule UI ViewSet."""
+
+    queryset = DNSRule.objects.all()
+    lookup_field = "pk"
+    table_class = DNSRuleTable
+    filterset_class = DNSRuleFilterSet
+    filterset_form_class = DNSRuleFilterForm
+    form_class = DNSRuleForm
+    bulk_update_form_class = DNSRuleBulkEditForm
+    serializer_class = DNSRuleSerializer
+
+
+class DNSRuleRecordUIViewSet(views.NautobotUIViewSet):
+    """DNSRuleRecord UI ViewSet (read-only tracking records)."""
+
+    queryset = DNSRuleRecord.objects.all()
+    lookup_field = "pk"
+    table_class = DNSRuleRecordTable
+    filterset_class = DNSRuleRecordFilterSet
+    filterset_form_class = DNSRuleRecordFilterForm
+    serializer_class = DNSRuleRecordSerializer
+    
+    # Note: No create/edit forms - these are read-only tracking records
