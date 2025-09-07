@@ -456,7 +456,7 @@ class SRVRecordModelUIViewSet(views.NautobotUIViewSet):
 
 class DNSRuleUIViewSet(views.NautobotUIViewSet):
     """DNSRule UI ViewSet."""
-    
+
     queryset = DNSRule.objects.all()
     lookup_field = "pk"
     table_class = DNSRuleTable
@@ -465,7 +465,7 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
     form_class = DNSRuleForm
     bulk_update_form_class = DNSRuleBulkEditForm
     serializer_class = DNSRuleSerializer
-    
+
     # UI Component Framework detail page configuration
     object_detail_content = ObjectDetailContent(
         panels=[
@@ -473,18 +473,18 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
             ObjectFieldsPanel(
                 weight=100,
                 section=SectionChoices.LEFT_HALF,
-                label="DNS Rule Information", 
+                label="DNS Rule Information",
                 fields=[
                     "name",
                     "status",
-                    "enabled", 
+                    "enabled",
                     "content_type",
                     "record_type",
                     "description",
                 ],
                 # Use default field rendering - no custom transforms
             ),
-            
+
             # Left side - Zone Configuration (all fields for now)
             ObjectFieldsPanel(
                 weight=200,
@@ -492,12 +492,12 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
                 label="Zone Configuration",
                 fields=[
                     "zone_source",
-                    "zone_fixed", 
+                    "zone_fixed",
                     "zone_field_path",
                     "zone_custom_field",
                 ],
             ),
-            
+
             # Left side - Rule Components Table (positioned above tags)
             ObjectsTablePanel(
                 weight=250,  # Lower weight to appear above tags
@@ -509,43 +509,43 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
             ),
         ]
     )
-        
+
     def get_extra_context(self, request, instance):
         """Add component formset to template context - following Nautobot pattern."""
         context = super().get_extra_context(request, instance)
-        
+
         # Components table is handled automatically by UI Component Framework via table_attribute
-        
+
         if self.action in ("create", "update"):
             # Only create formset if we have a real model instance
             if not hasattr(instance, 'pk') or not isinstance(instance, models.Model):
                 # instance is likely a redirect response or not a model, skip formset creation
                 print(f"DEBUG: Skipping formset creation, instance type: {type(instance)}")
                 return context
-                
+
             # Initialize formset following Nautobot pattern
             formset_kwargs = {"instance": instance if instance.pk else None}
             if request.POST:
                 formset_kwargs["data"] = request.POST
                 formset_kwargs["files"] = request.FILES
-            
+
             # Import transforms first to ensure they're registered before formset creation
             from nautobot_dns_models import transforms  # noqa: F401
             from nautobot_dns_models.forms import DNSRuleComponentFormSet
-            
+
             # Follow exact Nautobot pattern from CustomFieldUIViewSet
             if request.POST:
                 context["component_formset"] = DNSRuleComponentFormSet(data=request.POST, instance=instance, prefix="components")
             else:
                 context["component_formset"] = DNSRuleComponentFormSet(instance=instance, prefix="components")
-            
+
             # Force update transform choices on all forms including the empty form
             component_formset = context["component_formset"]
             from nautobot_dns_models.models import DNSRuleComponent
             from nautobot.core.forms import add_blank_choice
-            
+
             transform_choices = add_blank_choice(DNSRuleComponent.get_transform_choices())
-            
+
             # Update choices on all forms including the empty form
             for form in component_formset.forms:
                 if 'transform_function' in form.fields:
@@ -553,24 +553,24 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
                     # Also update the widget's choices if it has them
                     if hasattr(form.fields['transform_function'].widget, 'choices'):
                         form.fields['transform_function'].widget.choices = transform_choices
-            
+
             # Also update empty form
             if 'transform_function' in component_formset.empty_form.fields:
                 component_formset.empty_form.fields['transform_function'].choices = transform_choices
                 if hasattr(component_formset.empty_form.fields['transform_function'].widget, 'choices'):
                     component_formset.empty_form.fields['transform_function'].widget.choices = transform_choices
-                
+
         return context
-        
+
     def form_save(self, form, **kwargs):
         """Handle formset saving after main form save - following exact Nautobot pattern."""
         # Save the main object first
         obj = super().form_save(form, **kwargs)
-        
+
         # Process the formset for components (exact pattern from CustomFieldUIViewSet)
         ctx = self.get_extra_context(self.request, obj)
         component_formset = ctx.get("component_formset")
-        
+
         if component_formset:
             if component_formset.is_valid():
                 component_formset.save()
@@ -578,7 +578,7 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
                 raise ValidationError(component_formset.errors)
 
         return obj
-        
+
     def get_template_names(self):
         """Use custom template for create/edit forms."""
         if self.action in ['create', 'update', 'edit', 'add']:
