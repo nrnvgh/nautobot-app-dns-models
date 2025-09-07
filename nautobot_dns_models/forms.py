@@ -13,13 +13,7 @@ from nautobot.apps.forms import (
 from nautobot.core.forms import add_blank_choice
 from nautobot.extras.forms import NautobotFilterForm
 
-from nautobot_dns_models import models
-
-# Force import of transforms at module level to ensure they're registered
-try:
-    from nautobot_dns_models import transforms  # noqa: F401
-except ImportError:
-    pass  # Handle cases where transforms might not be available yet
+from nautobot_dns_models import models, transforms
 
 
 class DNSZoneModelForm(NautobotModelForm):
