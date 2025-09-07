@@ -9,13 +9,15 @@ from .transform_registry import dns_transform
 # =============================================================================
 
 
-@dns_transform(
-    name="normalize",
-    display_name="Normalize Interface",
-    description="Convert interface names to lowercase alphanumeric (removes /, -, spaces)",
-)
-def interface_normalize(value):
-    """Normalize interface names for DNS compatibility."""
+@dns_transform
+def lower(value):
+    """Convert text to lowercase."""
+    return str(value).lower() if value else ""
+
+
+@dns_transform
+def normalize(value):
+    """Convert interface names to lowercase alphanumeric (removes /, -, spaces)."""
     if not value:
         return ""
 
@@ -29,13 +31,9 @@ def interface_normalize(value):
     return normalized
 
 
-@dns_transform(
-    name="remove_interface_prefix",
-    display_name="Remove Interface Prefix",
-    description="Remove common interface prefixes (ethernet, eth, ge-, etc.)",
-)
+@dns_transform
 def remove_interface_prefix(value):
-    """Remove common interface prefixes."""
+    """Remove common interface prefixes (ethernet, eth, ge-, etc.)."""
     if not value:
         return ""
 
@@ -49,55 +47,21 @@ def remove_interface_prefix(value):
     return str(value)
 
 
-@dns_transform(
-    name="vlan_extract",
-    display_name="Extract VLAN ID",
-    description="Extract VLAN ID number from interface names (e.g., 'Vlan100' -> '100')",
-)
-def vlan_extract(value):
-    """Extract VLAN ID from interface names."""
-    if not value:
-        return ""
-
-    match = re.search(r"vlan(\d+)", str(value), re.IGNORECASE)
-    return match.group(1) if match else str(value)
-
-
-@dns_transform(
-    name="replace_slashes",
-    display_name="Replace / with -",
-    description="Replace forward slashes with hyphens for DNS compatibility",
-)
-def replace_slashes(value):
-    """Replace forward slashes with hyphens."""
-    return str(value).replace("/", "-") if value else ""
-
-
-@dns_transform(name="lower", display_name="Lowercase", description="Convert text to lowercase")
-def to_lowercase(value):
-    """Convert text to lowercase."""
-    return str(value).lower() if value else ""
-
-
-@dns_transform(name="upper", display_name="Uppercase", description="Convert text to uppercase")
-def to_uppercase(value):
-    """Convert text to uppercase."""
-    return str(value).upper() if value else ""
-
-
-@dns_transform(name="remove_spaces", display_name="Remove Spaces", description="Remove all whitespace from text")
+@dns_transform
 def remove_spaces(value):
     """Remove all whitespace from text."""
     return str(value).replace(" ", "") if value else ""
 
 
-@dns_transform(
-    name="truncate_domain",
-    display_name="Truncate Domain",
-    description="Remove domain suffix from FQDN (e.g., 'host.example.com' -> 'host')",
-)
+@dns_transform
+def replace_slashes(value):
+    """Replace forward slashes with hyphens for DNS compatibility."""
+    return str(value).replace("/", "-") if value else ""
+
+
+@dns_transform
 def truncate_domain(value):
-    """Remove domain suffix from FQDN."""
+    """Remove domain suffix from FQDN (e.g., 'host.example.com' -> 'host')."""
     if not value:
         return ""
 
@@ -105,14 +69,30 @@ def truncate_domain(value):
     return parts[0] if parts else ""
 
 
+@dns_transform
+def upper(value):
+    """Convert text to uppercase."""
+    return str(value).upper() if value else ""
+
+
+@dns_transform
+def vlan_extract(value):
+    """Extract VLAN ID number from interface names (e.g., 'Vlan100' -> '100')."""
+    if not value:
+        return ""
+
+    match = re.search(r"vlan(\d+)", str(value), re.IGNORECASE)
+    return match.group(1) if match else str(value)
+
+
 # Export the transform functions for backward compatibility
 __all__ = [
-    "interface_normalize",
+    "lower",
+    "normalize",
     "remove_interface_prefix",
-    "vlan_extract",
-    "replace_slashes",
-    "to_lowercase",
-    "to_uppercase",
     "remove_spaces",
+    "replace_slashes",
     "truncate_domain",
+    "upper",
+    "vlan_extract",
 ]

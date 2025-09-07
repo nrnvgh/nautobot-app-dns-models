@@ -9,45 +9,43 @@ logger = logging.getLogger(__name__)
 _DNS_TRANSFORMS = {}
 
 
-def dns_transform(name=None, display_name=None, description=None):
+def dns_transform(func):
     """
     Decorator to register functions as available DNS record transforms.
-
-    Args:
-        name (str): Internal name for the transform (defaults to function name)
-        display_name (str): Human-readable name for UI display
-        description (str): Description of what the transform does
+    
+    Automatically derives name, display_name, and description from the function:
+    - name: function.__name__ 
+    - display_name: function_name.replace("_", " ").title()
+    - description: function.__doc__
 
     Usage:
-        @dns_transform(
-            name="normalize",
-            display_name="Normalize Interface",
-            description="Convert interface names to lowercase alphanumeric"
-        )
+        @dns_transform
         def interface_normalize(value):
+            '''Convert interface names to lowercase alphanumeric.'''
             return value.lower().replace("/", "").replace("-", "")
+            
+        # Results in:
+        # name: "interface_normalize"
+        # display_name: "Interface Normalize" 
+        # description: "Convert interface names to lowercase alphanumeric."
     """
+    transform_name = func.__name__
+    transform_display = transform_name.replace("_", " ").title()
+    transform_desc = func.__doc__ or f"Apply {transform_display} transformation"
 
-    def decorator(func):
-        transform_name = name or func.__name__
-        transform_display = display_name or transform_name.replace("_", " ").title()
-        transform_desc = description or func.__doc__ or f"Apply {transform_display} transformation"
+    # Register the transform
+    _DNS_TRANSFORMS[transform_name] = {
+        "function": func,
+        "display_name": transform_display,
+        "description": transform_desc,
+        "name": transform_name,
+    }
 
-        # Register the transform
-        _DNS_TRANSFORMS[transform_name] = {
-            "function": func,
-            "display_name": transform_display,
-            "description": transform_desc,
-            "name": transform_name,
-        }
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
 
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
+    return wrapper
 
 
 def get_transform_choices():
