@@ -5,9 +5,7 @@
 
 {% block extra_styles %}
 {{ block.super }}
-
     <link rel="stylesheet" type="text/css" href="{% static 'nautobot_dns_models/css/rule_component.css' %}" />
-
 {% endblock extra_styles %}
 
 {% block form %}
@@ -44,52 +42,53 @@
     <!-- DNS Rule Components Management Section -->
     <div class="panel panel-default">
         <div class="panel-heading">
-                <strong>DNS Rule Components</strong>
-                <div class="pull-right">
+            <strong>DNS Rule Components</strong>
+            <div class="pull-right">
                 <button type="button" class="btn btn-success btn-xs" id="add-component-btn" style="background: #169f32; border-color: #169f32;">
                     <i class="mdi mdi-plus-thick"></i> Add Component
-                    </button>
-                </div>
-                <div class="clearfix"></div>
+                </button>
+            </div>
+            <div class="clearfix"></div>
         </div>
-
+        <div class="panel-body">
             <div id="component-formset">
-        {{ component_formset.management_form }}
-                
+                {{ component_formset.management_form }}
+
                 <div class="table-responsive">
-            <table class="table table-hover table-headings" style="table-layout: fixed;">
+                    <table class="table table-hover table-headings" style="table-layout: fixed;">
                         <thead>
                             <tr>
                                 <th style="width: 40px;"></th>
-                        <th>Target Field</th>
-                        <th>Component Type</th>
+                                <th>Target Field</th>
+                                <th>Component Type</th>
                                 <th>Value</th>
-                        <th>Transform</th>
+                                <th>Transform</th>
                                 <th style="width: 60px;">Actions</th>
                             </tr>
                         </thead>
-                <tbody id="component-rows">
-                {% for form in component_formset %}
-                    <tr class="component-row" data-form-index="{{ forloop.counter0 }}">
-                        {{ form.non_field_errors }}
-                        {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+                        <tbody id="component-rows">
+                        {% for form in component_formset %}
+                            <tr class="component-row" data-form-index="{{ forloop.counter0 }}">
+                                {{ form.non_field_errors }}
+                                {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
 
-                                        <td class="text-center">
-                                            <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
-                                        </td>
-                        <td>{{ form.target_field }}</td>
-                        <td>{{ form.component_type }}</td>
-                        <td>{{ form.value }}</td>
-                        <td>{{ form.transform_function }}</td>
-                                        <td class="text-center">
-                                            <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
-                                <i class="mdi mdi-trash-can-outline"></i>
-                                            </button>
-                                        </td>
-                                    </tr>
-                            {% endfor %}
+                                <td class="text-center">
+                                    <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+                                </td>
+                                <td>{{ form.target_field }}</td>
+                                <td>{{ form.component_type }}</td>
+                                <td>{{ form.value }}</td>
+                                <td>{{ form.transform_function }}</td>
+                                <td class="text-center">
+                                    <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
+                                        <i class="mdi mdi-trash-can-outline"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        {% endfor %}
                         </tbody>
                     </table>
+                </div>
             </div>
         </div>
     </div>
@@ -98,9 +97,9 @@
     <table id="empty-form-template" style="display: none;">
         <tbody>
             <tr class="component-row" data-form-index="__prefix__">
-            <td class="text-center">
-                <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
-            </td>
+                <td class="text-center">
+                    <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+                </td>
                 <td>
                     {{ component_formset.empty_form.target_field }}
                 </td>
@@ -130,7 +129,6 @@
     {% endif %}
 
     {% include "inc/extras_features_edit_form_fields.html" %}
-
 
 {% endblock form %}
 
