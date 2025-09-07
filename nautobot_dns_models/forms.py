@@ -3,7 +3,7 @@
 from django import forms
 from django.contrib.contenttypes.models import ContentType
 from django.db import models as django_models
-from django.forms import inlineformset_factory
+from django.forms import inlineformset_factory, BaseInlineFormSet
 from nautobot.apps.forms import (
     NautobotBulkEditForm,
     NautobotModelForm,
@@ -415,25 +415,25 @@ class DNSRuleComponentForm(forms.ModelForm):
         """Meta attributes."""
         
         model = models.DNSRuleComponent
-        fields = ["target_field", "component_type", "field_path", "literal_value", "transform_function", "order"]
+        fields = ["target_field", "component_type", "value", "transform_function", "order"]
         widgets = {
             "target_field": StaticSelect2(),
             "component_type": StaticSelect2(),
-            "field_path": forms.TextInput(attrs={
+            "value": forms.TextInput(attrs={
                 "class": "form-control", 
-                "placeholder": "device.name"
-            }),
-            "literal_value": forms.TextInput(attrs={
-                "class": "form-control", 
-                "placeholder": "static text"
+                "placeholder": "Enter value based on component type"
             }),
             "transform_function": StaticSelect2(),
-            "order": forms.NumberInput(attrs={"class": "form-control", "style": "display: none;"}),
+            "order": forms.HiddenInput(),
         }
     
     def __init__(self, *args, **kwargs):
         """Initialize component form with proper choices."""
         super().__init__(*args, **kwargs)
+        
+        # Make fields not required so we can handle empty forms ourselves
+        self.fields["target_field"].required = False
+        self.fields["component_type"].required = False
         
         # Set target field choices
         self.fields["target_field"].choices = add_blank_choice([
@@ -450,6 +450,62 @@ class DNSRuleComponentForm(forms.ModelForm):
         # Set transform function choices
         transform_choices = models.DNSRuleComponent.get_transform_choices()
         self.fields["transform_function"].choices = add_blank_choice(transform_choices)
+    
+    def clean(self):
+        """Custom validation to handle completely empty forms."""
+        cleaned_data = super().clean()
+        
+        # Check if this is a completely empty form
+        target_field = cleaned_data.get('target_field')
+        component_type = cleaned_data.get('component_type')
+        value = cleaned_data.get('value')
+        
+        # If all main fields are empty, mark this form for deletion
+        all_empty = (
+            not target_field and 
+            not component_type and 
+            not value
+        )
+        
+        if all_empty:
+            # Mark this form instance for deletion by setting a flag
+            self._empty_form = True
+            # Clear any validation errors since we're deleting this form
+            self._errors.clear()
+        else:
+            # For non-empty forms, validate that required fields are present
+            if not target_field:
+                raise forms.ValidationError({'target_field': 'This field is required.'})
+            if not component_type:
+                raise forms.ValidationError({'component_type': 'This field is required.'})
+            if not value:
+                raise forms.ValidationError({'value': 'Value is required for all components.'})
+            
+        return cleaned_data
+    
+    # has_changed() uses default behavior - don't override
+
+
+class BaseDNSRuleComponentFormSet(BaseInlineFormSet):
+    """Minimal custom formset that only handles save filtering."""
+    
+    def save(self, commit=True):
+        """Override save to skip empty forms."""
+        # Don't save forms marked as empty by the form's clean() method
+        instances = []
+        for form in self.forms:
+            if form.cleaned_data and not form.cleaned_data.get('DELETE', False):
+                # Skip forms marked as empty
+                if hasattr(form, '_empty_form') and form._empty_form:
+                    continue
+                # Only save forms with actual data
+                if form.cleaned_data.get('target_field') or form.cleaned_data.get('component_type') or form.cleaned_data.get('value'):
+                    if form.has_changed():
+                        instances.append(form.save(commit=commit))
+        
+        # Handle deletions
+        self.save_m2m = getattr(self, 'save_m2m', lambda: None)
+        return instances
 
 
 # Create the inline formset for DNS rule components
@@ -457,7 +513,8 @@ DNSRuleComponentFormSet = inlineformset_factory(
     models.DNSRule,
     models.DNSRuleComponent,
     form=DNSRuleComponentForm,
-    fields=["target_field", "component_type", "field_path", "literal_value", "transform_function", "order"],
+    formset=BaseDNSRuleComponentFormSet,
+    fields=["target_field", "component_type", "value", "transform_function", "order"],
     extra=1,  # Start with one empty form
     can_delete=True,
     can_order=False,  # We'll handle ordering with JavaScript
@@ -480,11 +537,15 @@ class DNSRuleForm(NautobotModelForm):
         help_text="Type of object this rule applies to (Device, Interface, VM, VM Interface)",
     )
 
-    record_type = forms.ChoiceField(
-        choices=[],  # Will be populated in __init__ with verbose names
+    record_type = forms.ModelChoiceField(
+        queryset=ContentType.objects.filter(
+            app_label="nautobot_dns_models", 
+            model__endswith="recordmodel"
+        ).order_by("model"),
         widget=StaticSelect2(),
-        label="Creates",
+        label="Creates", 
         help_text="Type of DNS record this rule creates",
+        empty_label="---------",
     )
 
     zone_fixed = forms.ModelChoiceField(
@@ -547,9 +608,9 @@ class DNSRuleForm(NautobotModelForm):
         """Initialize form with record type choices using verbose names and logical ordering."""
         super().__init__(*args, **kwargs)
 
-        # Generate record type choices with verbose names and proper DNS ordering
+        # Set up custom ordering and display for record types
         content_types = ContentType.objects.filter(app_label="nautobot_dns_models", model__endswith="recordmodel")
-
+        
         # Define preferred ordering for DNS records
         preferred_order = [
             "arecordmodel",  # A Record
@@ -565,17 +626,13 @@ class DNSRuleForm(NautobotModelForm):
         # Sort content types by preferred order
         content_types_list = list(content_types)
         content_types_list.sort(key=lambda ct: preferred_order.index(ct.model) if ct.model in preferred_order else 999)
-
-        # Generate choices with verbose names
-        record_type_choices = []
-        for ct in content_types_list:
-            model_class = ct.model_class()
-            if model_class:
-                verbose_name = model_class._meta.verbose_name
-                record_type_choices.append((ct.id, verbose_name))
-
-        # Add blank choice at the top for better UX
-        self.fields["record_type"].choices = add_blank_choice(record_type_choices)
+        
+        # Update the queryset to use our preferred ordering
+        self.fields["record_type"].queryset = ContentType.objects.filter(
+            id__in=[ct.id for ct in content_types_list]
+        ).extra(
+            select={'ordering': f"CASE {' '.join([f'WHEN id={ct.id} THEN {i}' for i, ct in enumerate(content_types_list)])} ELSE 999 END"}
+        ).order_by('ordering')
 
 
 class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):

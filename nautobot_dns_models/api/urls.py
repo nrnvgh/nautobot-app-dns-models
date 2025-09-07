@@ -16,5 +16,9 @@ router.register("txt-records", views.TXTRecordModelViewSet)
 router.register("ptr-records", views.PTRRecordModelViewSet)
 router.register("srv-records", views.SRVRecordModelViewSet)
 
+# GUI Rule Builder API endpoints
+router.register("dns-rules", views.DNSRuleViewSet)
+router.register("dns-rule-records", views.DNSRuleRecordViewSet)
+
 app_name = "nautobot_dns_models-api"
 urlpatterns = router.urls

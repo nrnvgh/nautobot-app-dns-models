@@ -44,68 +44,63 @@
     <!-- DNS Rule Components Management Section -->
     <div class="panel panel-default">
         <div class="panel-heading">
-            <strong>DNS Rule Components</strong>
-            <div class="pull-right">
+                <strong>DNS Rule Components</strong>
+                <div class="pull-right">
                 <button type="button" class="btn btn-success btn-xs" id="add-component-btn" style="background: #169f32; border-color: #169f32;">
                     <i class="mdi mdi-plus-thick"></i> Add Component
-                </button>
-            </div>
-            <div class="clearfix"></div>
+                    </button>
+                </div>
+                <div class="clearfix"></div>
         </div>
 
-        <div id="component-formset">
+            <div id="component-formset">
         {{ component_formset.management_form }}
-
-            <div class="table-responsive">
+                
+                <div class="table-responsive">
             <table class="table table-hover table-headings" style="table-layout: fixed;">
-                <thead>
-                    <tr>
-                        <th style="width: 40px;"></th>
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;"></th>
                         <th>Target Field</th>
                         <th>Component Type</th>
-                        <th>Value</th>
+                                <th>Value</th>
                         <th>Transform</th>
-                        <th style="width: 60px;">Actions</th>
-                    </tr>
-                </thead>
+                                <th style="width: 60px;">Actions</th>
+                            </tr>
+                        </thead>
                 <tbody id="component-rows">
                 {% for form in component_formset %}
                     <tr class="component-row" data-form-index="{{ forloop.counter0 }}">
                         {{ form.non_field_errors }}
                         {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
 
-                        <td class="text-center">
-                            <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
-                        </td>
+                                        <td class="text-center">
+                                            <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+                                        </td>
                         <td>{{ form.target_field }}</td>
                         <td>{{ form.component_type }}</td>
-                        <td>
-                            <div class="value-input-container">
-                                {{ form.field_path }}
-                                <div style="display: none;">{{ form.literal_value }}</div>
-                            </div>
-                        </td>
+                        <td>{{ form.value }}</td>
                         <td>{{ form.transform_function }}</td>
-                        <td class="text-center">
-                            <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
+                                        <td class="text-center">
+                                            <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
                                 <i class="mdi mdi-trash-can-outline"></i>
-                            </button>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
+                                            </button>
+                                        </td>
+                                    </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
             </div>
         </div>
     </div>
-
+    
     <!-- Empty form template using Django's actual empty form -->
     <table id="empty-form-template" style="display: none;">
         <tbody>
             <tr class="component-row" data-form-index="__prefix__">
-                <td class="text-center">
-                    <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
-                </td>
+            <td class="text-center">
+                <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+            </td>
                 <td>
                     {{ component_formset.empty_form.target_field }}
                 </td>
@@ -113,10 +108,7 @@
                     {{ component_formset.empty_form.component_type }}
                 </td>
                 <td>
-                    <div class="value-input-container">
-                        {{ component_formset.empty_form.field_path }}
-                        <div style="display: none;">{{ component_formset.empty_form.literal_value }}</div>
-                    </div>
+                    {{ component_formset.empty_form.value }}
                 </td>
                 <td>
                     {{ component_formset.empty_form.transform_function }}
@@ -158,6 +150,8 @@
                     addComponentRow();
                 });
             }
+            
+            // Empty form cleanup is handled server-side via custom formset validation
 
             function initializeExistingRows() {
                 // Initialize Select2 and field visibility for existing rows
@@ -175,12 +169,12 @@
 
                     const componentTypeSelect = row.querySelector('[name$="-component_type"]');
                     if (componentTypeSelect) {
-                        // Set up change handler for Select2 widgets
+                        // Set up change handler for Select2 widgets to update placeholder
                         $(componentTypeSelect).on('change', function() {
-                            updateFieldVisibility(row);
+                            updateValuePlaceholder(row);
                         });
-                        // Initialize visibility
-                        updateFieldVisibility(row);
+                        // Initialize placeholder
+                        updateValuePlaceholder(row);
                     }
 
                     // Set up delete button
@@ -195,17 +189,26 @@
                     // Setup drag and drop
                     setupDragAndDrop(row);
                 });
+                
+                // Ensure all rows have proper order values
+                updateOrderValues();
             }
 
 
             function getTransformOptionsHTML() {
-                // Dynamically get transform options from first row (Django-rendered with registry)
-                const firstRowTransform = document.querySelector('#component-rows tr:first-child select[name$="-transform_function"]');
+                // Try to get transform options from existing row first, then empty form template
+                let transformSelect = document.querySelector('#component-rows tr:first-child select[name$="-transform_function"]') ||
+                                    document.querySelector('#empty-form-template select[name$="-transform_function"]');
+
+                if (!transformSelect) {
+                    console.warn('Could not find transform dropdown to copy options from');
+                    return '<option value="">---------</option>';
+                }
 
                 // Copy all options from Django-rendered dropdown
                 let optionsHTML = '';
-                for (let i = 0; i < firstRowTransform.options.length; i++) {
-                    const option = firstRowTransform.options[i];
+                for (let i = 0; i < transformSelect.options.length; i++) {
+                    const option = transformSelect.options[i];
                     optionsHTML += `<option value="${option.value}">${option.text}</option>`;
                 }
                 return optionsHTML;
@@ -249,39 +252,34 @@
                     </td>
                     <td>
                         <select name="components-${formCount}-target_field" class="form-control">
-                            <option value="">---------</option>
-                            <option value="name">Name</option>
-                            <option value="value">Value</option>
-                        </select>
-                    </td>
-                    <td>
+                    <option value="">---------</option>
+                    <option value="name">Name</option>
+                    <option value="value">Value</option>
+                </select>
+            </td>
+            <td>
                         <select name="components-${formCount}-component_type" class="form-control">
-                            <option value="">---------</option>
-                            <option value="field_reference">Field Reference</option>
-                            <option value="literal">Literal Value</option>
-                        </select>
-                    </td>
+                    <option value="">---------</option>
+                    <option value="field_reference">Field Reference</option>
+                    <option value="literal">Literal Value</option>
+                </select>
+            </td>
                     <td>
-                        <div class="value-input-container">
-                            <input type="text" name="components-${formCount}-field_path" class="form-control" placeholder="device.name" />
-                            <div style="display: none;">
-                                <input type="text" name="components-${formCount}-literal_value" class="form-control" placeholder="static text" />
-                            </div>
-                        </div>
-                    </td>
+                        <input type="text" name="components-${formCount}-value" class="form-control" placeholder="Enter value based on component type" />
+            </td>
                     <td>
                         <select name="components-${formCount}-transform_function" class="form-control">
                             ${getTransformOptionsHTML()}
-                        </select>
-                    </td>
-                    <td class="text-center">
-                        <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
+                </select>
+            </td>
+            <td class="text-center">
+                <button type="button" class="btn btn-danger btn-xs delete-component-btn" title="Delete component">
                             <i class="mdi mdi-trash-can-outline"></i>
-                        </button>
+                </button>
                         <input type="hidden" name="components-${formCount}-order" value="${formCount + 1}" />
                         <input type="hidden" name="components-${formCount}-id" value="" />
                         <input type="hidden" name="components-${formCount}-DELETE" value="false" />
-                    </td>
+            </td>
                 `;
 
                 // Hide the row during initialization to prevent visual flash
@@ -330,9 +328,9 @@
                     const componentTypeSelect = newRow.querySelector('[name$="-component_type"]');
                     if (componentTypeSelect) {
                         $(componentTypeSelect).on('change', function() {
-                            updateFieldVisibility(newRow);
+                            updateValuePlaceholder(newRow);
                         });
-                        updateFieldVisibility(newRow);
+                        updateValuePlaceholder(newRow);
                     }
 
                     // Delete button handler
@@ -422,55 +420,32 @@
                 });
             }
 
-            function updateFieldVisibility(row) {
+            function updateValuePlaceholder(row) {
                 const componentTypeSelect = row.querySelector('[name$="-component_type"]');
-                const valueContainer = row.querySelector('.value-input-container');
-                const fieldPathInput = valueContainer?.querySelector('input[name$="-field_path"]');
-                const literalValueInput = valueContainer?.querySelector('input[name$="-literal_value"]');
+                const valueInput = row.querySelector('[name$="-value"]');
                 const transformSelect = row.querySelector('[name$="-transform_function"]');
 
-                if (!componentTypeSelect || !valueContainer || !fieldPathInput) {
+                if (!componentTypeSelect || !valueInput) {
                     return;
                 }
 
                 const componentType = componentTypeSelect.value;
 
                 if (componentType === 'field_reference') {
-                    // Show field_path, update name attribute for proper saving
-                    fieldPathInput.style.display = 'block';
-                    fieldPathInput.placeholder = 'device.name';
-                    fieldPathInput.name = fieldPathInput.name.replace('literal_value', 'field_path');
-                    if (literalValueInput) {
-                        literalValueInput.style.display = 'none';
-                        literalValueInput.name = literalValueInput.name.replace('field_path', 'literal_value');
-                    }
+                    valueInput.placeholder = 'device.name';
                     if (transformSelect) {
                         transformSelect.disabled = false;
                         transformSelect.style.opacity = '1';
                     }
                 } else if (componentType === 'literal') {
-                    // Show field_path but save as literal_value
-                    fieldPathInput.style.display = 'block';
-                    fieldPathInput.placeholder = 'static text';
-                    fieldPathInput.name = fieldPathInput.name.replace('field_path', 'literal_value');
-                    if (literalValueInput) {
-                        literalValueInput.style.display = 'none';
-                        literalValueInput.name = literalValueInput.name.replace('literal_value', 'field_path');
-                    }
+                    valueInput.placeholder = 'static text';
                     if (transformSelect) {
                         transformSelect.disabled = true;
                         transformSelect.value = '';
                         transformSelect.style.opacity = '0.5';
                     }
                 } else {
-                    // Default state
-                    fieldPathInput.style.display = 'block';
-                    fieldPathInput.placeholder = 'device.name';
-                    fieldPathInput.name = fieldPathInput.name.replace('literal_value', 'field_path');
-                    if (literalValueInput) {
-                        literalValueInput.style.display = 'none';
-                        literalValueInput.name = literalValueInput.name.replace('field_path', 'literal_value');
-                    }
+                    valueInput.placeholder = 'Enter value based on component type';
                     if (transformSelect) {
                         transformSelect.disabled = false;
                         transformSelect.style.opacity = '1';
@@ -499,6 +474,8 @@
                     }
                 }
             }
+            
+            // cleanupEmptyRows() function removed - empty form handling is now done server-side
         });
     </script>
 {% endblock javascript %}

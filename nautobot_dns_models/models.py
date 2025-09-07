@@ -614,16 +614,11 @@ class DNSRuleComponent(PrimaryModel):
         help_text="Type of component - field reference or static text",
     )
 
-    # For field_reference components
-    field_path = models.CharField(
+    # Single value field - interpretation depends on component_type
+    value = models.CharField(
         max_length=200,
         blank=True,
-        help_text="Model field path like 'device.name' or 'ip_addresses.first' (when component_type='field_reference')",
-    )
-
-    # For literal components
-    literal_value = models.CharField(
-        max_length=200, blank=True, help_text="Static text value (when component_type='literal')"
+        help_text="The value for this component. For field references, use dotted notation (e.g., 'device.name'). For literals, use static text.",
     )
 
     # Optional transform function - choices populated dynamically from jinja_filters
@@ -650,11 +645,11 @@ class DNSRuleComponent(PrimaryModel):
         """Validate component configuration based on component_type."""
         super().clean()
 
-        if self.component_type == "field_reference" and not self.field_path:
-            raise ValidationError({"field_path": "Field path is required when component_type is 'field_reference'"})
+        if self.component_type == "field_reference" and not self.value:
+            raise ValidationError({"value": "Value is required for field reference components"})
 
-        if self.component_type == "literal" and not self.literal_value:
-            raise ValidationError({"literal_value": "Literal value is required when component_type is 'literal'"})
+        if self.component_type == "literal" and not self.value:
+            raise ValidationError({"value": "Value is required for literal components"})
 
     def get_value_for_object(self, source_obj):
         """
@@ -667,13 +662,13 @@ class DNSRuleComponent(PrimaryModel):
             String value for this component
         """
         if self.component_type == "literal":
-            value = self.literal_value
+            value = self.value
 
         elif self.component_type == "field_reference":
             try:
                 # Navigate field path like "device.name" or "ip_addresses.first"
                 current_obj = source_obj
-                for field_name in self.field_path.split("."):
+                for field_name in self.value.split("."):
                     if field_name == "first":
                         # Handle .first() for querysets/managers
                         if hasattr(current_obj, "first"):
@@ -716,9 +711,9 @@ class DNSRuleComponent(PrimaryModel):
     def __str__(self):
         """String representation of DNS rule component."""
         if self.component_type == "field_reference":
-            base = f"{self.field_path}"
+            base = f"{self.value}"
         else:
-            base = f"'{self.literal_value}'"
+            base = f"'{self.value}'"
 
         if self.transform_function:
             display_name = self.get_transform_display_name()

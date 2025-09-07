@@ -1,6 +1,7 @@
 """DNS Plugin Views."""
 
 from django.core.exceptions import ValidationError
+from django.db import models
 from nautobot.apps import views
 from nautobot.apps.ui import (
     ButtonColorChoices,
@@ -468,6 +469,12 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
         context = super().get_extra_context(request, instance)
         
         if self.action in ("create", "update"):
+            # Only create formset if we have a real model instance
+            if not hasattr(instance, 'pk') or not isinstance(instance, models.Model):
+                # instance is likely a redirect response or not a model, skip formset creation
+                print(f"DEBUG: Skipping formset creation, instance type: {type(instance)}")
+                return context
+                
             # Initialize formset following Nautobot pattern
             formset_kwargs = {"instance": instance if instance.pk else None}
             if request.POST:
@@ -478,19 +485,20 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
             from nautobot_dns_models import transforms  # noqa: F401
             from nautobot_dns_models.forms import DNSRuleComponentFormSet
             
-            # Create formset with proper form initialization
-            component_formset = DNSRuleComponentFormSet(
-                prefix="components",
-                **formset_kwargs
-            )
+            # Follow exact Nautobot pattern from CustomFieldUIViewSet
+            if request.POST:
+                context["component_formset"] = DNSRuleComponentFormSet(data=request.POST, instance=instance, prefix="components")
+            else:
+                context["component_formset"] = DNSRuleComponentFormSet(instance=instance, prefix="components")
             
-            # Force update transform choices on the widget level
+            # Force update transform choices on all forms including the empty form
+            component_formset = context["component_formset"]
             from nautobot_dns_models.models import DNSRuleComponent
             from nautobot.core.forms import add_blank_choice
             
             transform_choices = add_blank_choice(DNSRuleComponent.get_transform_choices())
             
-            # Update choices on all forms including the first one
+            # Update choices on all forms including the empty form
             for form in component_formset.forms:
                 if 'transform_function' in form.fields:
                     form.fields['transform_function'].choices = transform_choices
@@ -503,45 +511,24 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
                 component_formset.empty_form.fields['transform_function'].choices = transform_choices
                 if hasattr(component_formset.empty_form.fields['transform_function'].widget, 'choices'):
                     component_formset.empty_form.fields['transform_function'].widget.choices = transform_choices
-            
-            context["component_formset"] = component_formset
                 
         return context
         
-    def perform_create(self, serializer):
-        """Handle formset saving on create - following Nautobot pattern."""
+    def form_save(self, form, **kwargs):
+        """Handle formset saving after main form save - following exact Nautobot pattern."""
         # Save the main object first
-        obj = serializer.save()
+        obj = super().form_save(form, **kwargs)
         
-        # Get the context to access our formset
-        context = self.get_extra_context(self.request, obj)
-        component_formset = context.get("component_formset")
+        # Process the formset for components (exact pattern from CustomFieldUIViewSet)
+        ctx = self.get_extra_context(self.request, obj)
+        component_formset = ctx.get("component_formset")
         
         if component_formset:
-            if not component_formset.is_valid():
-                raise ValidationError("Errors in component formset")
-            
-            # Set the instance on the formset and save
-            component_formset.instance = obj
-            component_formset.save()
-        
-        return obj
-        
-    def perform_update(self, serializer):
-        """Handle formset saving on update - following Nautobot pattern."""
-        # Save the main object first
-        obj = serializer.save()
-        
-        # Get the context to access our formset  
-        context = self.get_extra_context(self.request, obj)
-        component_formset = context.get("component_formset")
-        
-        if component_formset:
-            if not component_formset.is_valid():
-                raise ValidationError("Errors in component formset")
-            
-            component_formset.save()
-        
+            if component_formset.is_valid():
+                component_formset.save()
+            else:
+                raise ValidationError(component_formset.errors)
+
         return obj
         
     def get_template_names(self):

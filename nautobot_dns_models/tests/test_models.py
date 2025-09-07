@@ -742,21 +742,21 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             order=1,
             target_field="name",
             component_type="field_reference",
-            field_path="device.name",
+            value="device.name",
         )
         DNSRuleComponent.objects.create(
             rule=cls.rule,
             order=2,
             target_field="name",
             component_type="literal",
-            literal_value=".example.com",
+            value=".example.com",
         )
         DNSRuleComponent.objects.create(
             rule=cls.rule,
             order=3,
             target_field="value",
             component_type="field_reference",
-            field_path="ip_addresses.first",
+            value="ip_addresses.first",
             transform_function="normalize",
         )
 
@@ -776,7 +776,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             order=1,
             target_field="name",
             component_type="field_reference",
-            field_path="device.name",
+            value="device.name",
             transform_function="normalize",
         )
 
@@ -784,7 +784,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
         self.assertEqual(component.order, 1)
         self.assertEqual(component.target_field, "name")
         self.assertEqual(component.component_type, "field_reference")
-        self.assertEqual(component.field_path, "device.name")
+        self.assertEqual(component.value, "device.name")
         self.assertEqual(component.transform_function, "normalize")
 
     def test_create_literal_component(self):
@@ -803,7 +803,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             order=1,
             target_field="name",
             component_type="literal",
-            literal_value=".example.com",
+            value=".example.com",
         )
 
         self.assertEqual(component.component_type, "literal")

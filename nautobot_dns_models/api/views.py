@@ -6,6 +6,8 @@ from nautobot_dns_models.api.serializers import (
     AAAARecordModelSerializer,
     ARecordModelSerializer,
     CNAMERecordModelSerializer,
+    DNSRuleRecordSerializer,
+    DNSRuleSerializer,
     DNSZoneModelSerializer,
     MXRecordModelSerializer,
     NSRecordModelSerializer,
@@ -17,6 +19,8 @@ from nautobot_dns_models.filters import (
     AAAARecordModelFilterSet,
     ARecordModelFilterSet,
     CNAMERecordModelFilterSet,
+    DNSRuleFilterSet,
+    DNSRuleRecordFilterSet,
     DNSZoneModelFilterSet,
     MXRecordModelFilterSet,
     NSRecordModelFilterSet,
@@ -28,6 +32,8 @@ from nautobot_dns_models.models import (
     AAAARecordModel,
     ARecordModel,
     CNAMERecordModel,
+    DNSRule,
+    DNSRuleRecord,
     DNSZoneModel,
     MXRecordModel,
     NSRecordModel,
@@ -125,5 +131,30 @@ class SRVRecordModelViewSet(NautobotModelViewSet):  # pylint: disable=too-many-a
     queryset = SRVRecordModel.objects.all()
     serializer_class = SRVRecordModelSerializer
     filterset_class = SRVRecordModelFilterSet
+
+    lookup_field = "pk"
+
+
+# =============================================================================
+# GUI Rule Builder API ViewSets
+# =============================================================================
+
+
+class DNSRuleViewSet(NautobotModelViewSet):  # pylint: disable=too-many-ancestors
+    """DNSRule API ViewSet."""
+
+    queryset = DNSRule.objects.all()
+    serializer_class = DNSRuleSerializer
+    filterset_class = DNSRuleFilterSet
+
+    lookup_field = "pk"
+
+
+class DNSRuleRecordViewSet(NautobotModelViewSet):  # pylint: disable=too-many-ancestors  
+    """DNSRuleRecord API ViewSet."""
+
+    queryset = DNSRuleRecord.objects.all()
+    serializer_class = DNSRuleRecordSerializer
+    filterset_class = DNSRuleRecordFilterSet
 
     lookup_field = "pk"
