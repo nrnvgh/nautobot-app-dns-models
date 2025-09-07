@@ -442,9 +442,9 @@ class DNSRule(PrimaryModel):
         to="contenttypes.ContentType",
         on_delete=models.CASCADE,
         related_name="dns_rules_for_record_type",
-        limit_choices_to=models.Q(app_label="nautobot_dns_models") &
-                         models.Q(model__endswith="recordmodel") &
-                         ~models.Q(model="dnsrecordmodel"),  # Exclude abstract base
+        limit_choices_to=models.Q(app_label="nautobot_dns_models")
+        & models.Q(model__endswith="recordmodel")
+        & ~models.Q(model="dnsrecordmodel"),  # Exclude abstract base
         help_text="Type of DNS record this rule creates",
     )
 
@@ -457,7 +457,7 @@ class DNSRule(PrimaryModel):
             ("custom_field", "Custom Field"),
         ],
         default="fixed",
-        help_text="How to determine the DNS zone for generated records"
+        help_text="How to determine the DNS zone for generated records",
     )
 
     zone_fixed = models.ForeignKey(
@@ -465,19 +465,17 @@ class DNSRule(PrimaryModel):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        help_text="Fixed DNS zone (when zone_source='fixed')"
+        help_text="Fixed DNS zone (when zone_source='fixed')",
     )
 
     zone_field_path = models.CharField(
         max_length=200,
         blank=True,
-        help_text="Model field path like 'device.location.zone' (when zone_source='field_reference')"
+        help_text="Model field path like 'device.location.zone' (when zone_source='field_reference')",
     )
 
     zone_custom_field = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Custom field name like 'dns_zone' (when zone_source='custom_field')"
+        max_length=100, blank=True, help_text="Custom field name like 'dns_zone' (when zone_source='custom_field')"
     )
 
     class Meta:
@@ -498,7 +496,9 @@ class DNSRule(PrimaryModel):
             raise ValidationError({"zone_field_path": "Field path is required when zone_source is 'field_reference'"})
 
         if self.zone_source == "custom_field" and not self.zone_custom_field:
-            raise ValidationError({"zone_custom_field": "Custom field name is required when zone_source is 'custom_field'"})
+            raise ValidationError(
+                {"zone_custom_field": "Custom field name is required when zone_source is 'custom_field'"}
+            )
 
     def get_zone_for_object(self, source_obj):
         """
@@ -517,13 +517,13 @@ class DNSRule(PrimaryModel):
             # Navigate field path like "device.location.zone"
             try:
                 current_obj = source_obj
-                for field_name in self.zone_field_path.split('.'):
+                for field_name in self.zone_field_path.split("."):
                     current_obj = getattr(current_obj, field_name)
 
                 # Ensure we got a DNSZoneModel
                 if isinstance(current_obj, DNSZoneModel):
                     return current_obj
-                elif hasattr(current_obj, 'name'):  # Zone name string
+                elif hasattr(current_obj, "name"):  # Zone name string
                     return DNSZoneModel.objects.get(name=str(current_obj))
 
             except (AttributeError, DNSZoneModel.DoesNotExist):
@@ -584,7 +584,7 @@ class DNSRuleComponent(PrimaryModel):
         to="DNSRule",
         on_delete=models.CASCADE,
         related_name="components",
-        help_text="DNS rule this component belongs to"
+        help_text="DNS rule this component belongs to",
     )
 
     order = models.PositiveIntegerField(
@@ -602,7 +602,7 @@ class DNSRuleComponent(PrimaryModel):
             ("port", "SRV Port"),
             ("text", "TXT Text"),
         ],
-        help_text="Which DNS record field this component contributes to"
+        help_text="Which DNS record field this component contributes to",
     )
 
     component_type = models.CharField(
@@ -611,28 +611,24 @@ class DNSRuleComponent(PrimaryModel):
             ("field_reference", "Field Reference"),
             ("literal", "Literal Text"),
         ],
-        help_text="Type of component - field reference or static text"
+        help_text="Type of component - field reference or static text",
     )
 
     # For field_reference components
     field_path = models.CharField(
         max_length=200,
         blank=True,
-        help_text="Model field path like 'device.name' or 'ip_addresses.first' (when component_type='field_reference')"
+        help_text="Model field path like 'device.name' or 'ip_addresses.first' (when component_type='field_reference')",
     )
 
     # For literal components
     literal_value = models.CharField(
-        max_length=200,
-        blank=True,
-        help_text="Static text value (when component_type='literal')"
+        max_length=200, blank=True, help_text="Static text value (when component_type='literal')"
     )
 
     # Optional transform function - choices populated dynamically from jinja_filters
     transform_function = models.CharField(
-        max_length=50,
-        blank=True,
-        help_text="Optional transform to apply to the component value"
+        max_length=50, blank=True, help_text="Optional transform to apply to the component value"
     )
 
     class Meta:
@@ -647,6 +643,7 @@ class DNSRuleComponent(PrimaryModel):
     def get_transform_choices(cls):
         """Get available transform function choices dynamically from the transform registry."""
         from .transform_registry import get_transform_choices
+
         return get_transform_choices()
 
     def clean(self):
@@ -676,10 +673,10 @@ class DNSRuleComponent(PrimaryModel):
             try:
                 # Navigate field path like "device.name" or "ip_addresses.first"
                 current_obj = source_obj
-                for field_name in self.field_path.split('.'):
+                for field_name in self.field_path.split("."):
                     if field_name == "first":
                         # Handle .first() for querysets/managers
-                        if hasattr(current_obj, 'first'):
+                        if hasattr(current_obj, "first"):
                             current_obj = current_obj.first()
                         else:
                             current_obj = None
@@ -703,6 +700,7 @@ class DNSRuleComponent(PrimaryModel):
     def _apply_transform(self, value):
         """Apply the specified transform function to a value using the dynamic transform system."""
         from .transform_registry import apply_transform
+
         return apply_transform(self.transform_function, value)
 
     def get_transform_display_name(self):
@@ -711,8 +709,9 @@ class DNSRuleComponent(PrimaryModel):
             return None
 
         from .transform_registry import get_transform_info
+
         transform_info = get_transform_info(self.transform_function)
-        return transform_info['display_name'] if transform_info else self.transform_function
+        return transform_info["display_name"] if transform_info else self.transform_function
 
     def __str__(self):
         """String representation of DNS rule component."""
@@ -753,7 +752,7 @@ class DNSRuleRecord(PrimaryModel):
         to="DNSRule",
         on_delete=models.CASCADE,
         related_name="generated_records",
-        help_text="DNS rule that generated this record"
+        help_text="DNS rule that generated this record",
     )
 
     # Generic foreign key to source object (Device, Interface, etc.)
@@ -761,25 +760,18 @@ class DNSRuleRecord(PrimaryModel):
         to="contenttypes.ContentType",
         on_delete=models.CASCADE,
         related_name="dns_rule_records_as_source",
-        help_text="Content type of the source object that triggered rule processing"
+        help_text="Content type of the source object that triggered rule processing",
     )
 
     source_object_id = models.UUIDField(
-        db_index=True,
-        help_text="ID of the source object that triggered rule processing"
+        db_index=True, help_text="ID of the source object that triggered rule processing"
     )
 
-    source_object = GenericForeignKey(
-        "source_content_type",
-        "source_object_id"
-    )
+    source_object = GenericForeignKey("source_content_type", "source_object_id")
 
     # Generic foreign key to generated DNS record (ARecordModel, CNAMERecordModel, etc.)
     # Note: ContentType comes from rule.record_type - no duplication needed
-    dns_record_object_id = models.UUIDField(
-        db_index=True,
-        help_text="ID of the generated DNS record"
-    )
+    dns_record_object_id = models.UUIDField(db_index=True, help_text="ID of the generated DNS record")
 
     @property
     def dns_record_content_type(self):
@@ -804,15 +796,17 @@ class DNSRuleRecord(PrimaryModel):
         ordering = ["rule", "source_content_type", "source_object_id"]
         verbose_name = "DNS Rule Record"
         verbose_name_plural = "DNS Rule Records"
-        unique_together = [
-            ["rule", "source_content_type", "source_object_id", "dns_record_object_id"]
-        ]
+        unique_together = [["rule", "source_content_type", "source_object_id", "dns_record_object_id"]]
 
     @property
     def source_object_name(self):
         """Get display name of the source object."""
         try:
-            return str(self.source_object) if self.source_object else f"{self.source_content_type.model}:{self.source_object_id}"
+            return (
+                str(self.source_object)
+                if self.source_object
+                else f"{self.source_content_type.model}:{self.source_object_id}"
+            )
         except Exception:
             return f"{self.source_content_type.model}:{self.source_object_id}"
 
