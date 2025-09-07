@@ -4,14 +4,15 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from nautobot.apps import views
 from nautobot.apps.ui import (
-    ButtonColorChoices,
     ObjectDetailContent,
     ObjectFieldsPanel,
     ObjectsTablePanel,
     SectionChoices,
     StatsPanel,
+    ButtonColorChoices,
+    DropdownButton,
+    Button,
 )
-from nautobot.core.ui import object_detail
 
 from nautobot_dns_models.api.serializers import (
     AAAARecordModelSerializer,
@@ -89,6 +90,7 @@ from nautobot_dns_models.tables import (
     AAAARecordModelTable,
     ARecordModelTable,
     CNAMERecordModelTable,
+    DNSRuleComponentTable,
     DNSRuleRecordTable,
     DNSRuleTable,
     DNSZoneModelTable,
@@ -210,56 +212,56 @@ class DNSZoneModelUIViewSet(views.NautobotUIViewSet):
             ),
         ],
         extra_buttons=[
-            object_detail.DropdownButton(
+            DropdownButton(
                 weight=100,
                 color=ButtonColorChoices.BLUE,
                 label="Add Records",
                 icon="mdi-plus-thick",
                 required_permissions=["nautobot_dns_models.change_dnszonemodel"],
                 children=(
-                    object_detail.Button(
+                    Button(
                         weight=100,
                         link_name="plugins:nautobot_dns_models:zone_a_records_add",
                         label="A Record",
                         required_permissions=["nautobot_dns_models.add_arecordmodel"],
                     ),
-                    object_detail.Button(
+                    Button(
                         weight=200,
                         link_name="plugins:nautobot_dns_models:zone_aaaa_records_add",
                         label="AAAA Record",
                         required_permissions=["nautobot_dns_models.add_aaaarecordmodel"],
                     ),
-                    object_detail.Button(
+                    Button(
                         weight=300,
                         link_name="plugins:nautobot_dns_models:zone_cname_records_add",
                         label="CNAME Record",
                         required_permissions=["nautobot_dns_models.add_cnamerecordmodel"],
                     ),
-                    object_detail.Button(
+                    Button(
                         weight=400,
                         link_name="plugins:nautobot_dns_models:zone_mx_records_add",
                         label="MX Record",
                         required_permissions=["nautobot_dns_models.add_mxrecordmodel"],
                     ),
-                    object_detail.Button(
+                    Button(
                         weight=500,
                         link_name="plugins:nautobot_dns_models:zone_ns_records_add",
                         label="NS Record",
                         required_permissions=["nautobot_dns_models.add_nsrecordmodel"],
                     ),
-                    object_detail.Button(
+                    Button(
                         weight=600,
                         link_name="plugins:nautobot_dns_models:zone_ptr_records_add",
                         label="PTR Record",
                         required_permissions=["nautobot_dns_models.add_ptrrecordmodel"],
                     ),
-                    object_detail.Button(
+                    Button(
                         weight=700,
                         link_name="plugins:nautobot_dns_models:zone_srv_records_add",
                         label="SRV Record",
                         required_permissions=["nautobot_dns_models.add_srvrecordmodel"],
                     ),
-                    object_detail.Button(
+                    Button(
                         weight=800,
                         link_name="plugins:nautobot_dns_models:zone_txt_records_add",
                         label="TXT Record",
@@ -463,10 +465,56 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
     form_class = DNSRuleForm
     bulk_update_form_class = DNSRuleBulkEditForm
     serializer_class = DNSRuleSerializer
+    
+    # UI Component Framework detail page configuration
+    object_detail_content = ObjectDetailContent(
+        panels=[
+            # Left side - Basic Rule Information
+            ObjectFieldsPanel(
+                weight=100,
+                section=SectionChoices.LEFT_HALF,
+                label="DNS Rule Information", 
+                fields=[
+                    "name",
+                    "status",
+                    "enabled", 
+                    "content_type",
+                    "record_type",
+                    "description",
+                ],
+                # Use default field rendering - no custom transforms
+            ),
+            
+            # Left side - Zone Configuration (all fields for now)
+            ObjectFieldsPanel(
+                weight=200,
+                section=SectionChoices.LEFT_HALF,
+                label="Zone Configuration",
+                fields=[
+                    "zone_source",
+                    "zone_fixed", 
+                    "zone_field_path",
+                    "zone_custom_field",
+                ],
+            ),
+            
+            # Left side - Rule Components Table (positioned above tags)
+            ObjectsTablePanel(
+                weight=250,  # Lower weight to appear above tags
+                section=SectionChoices.LEFT_HALF,
+                table_class=DNSRuleComponentTable,
+                table_title="DNS Rule Components",
+                table_attribute="components",
+                related_field_name="rule",  # DNSRuleComponent.rule field points to DNSRule
+            ),
+        ]
+    )
         
     def get_extra_context(self, request, instance):
         """Add component formset to template context - following Nautobot pattern."""
         context = super().get_extra_context(request, instance)
+        
+        # Components table is handled automatically by UI Component Framework via table_attribute
         
         if self.action in ("create", "update"):
             # Only create formset if we have a real model instance

@@ -410,3 +410,59 @@ class DNSRuleRecordTable(BaseTable):
             "dns_record_name",
             "created",
         )
+
+
+class DNSRuleComponentTable(BaseTable):
+    """Table for displaying DNS rule components."""
+    
+    pk = ToggleColumn()
+    
+    order = tables.Column(
+        verbose_name="Order",
+        orderable=False
+    )
+    
+    target_field = tables.Column(
+        verbose_name="Target Field",
+        orderable=False
+    )
+    
+    component_type = tables.Column(
+        verbose_name="Component Type",
+        accessor="get_component_type_display",
+        orderable=False
+    )
+    
+    value = tables.Column(
+        verbose_name="Value",
+        orderable=False
+    )
+    
+    transform_function = tables.Column(
+        verbose_name="Transform",
+        accessor="get_transform_display_name",
+        default="-",
+        orderable=False
+    )
+
+    class Meta(BaseTable.Meta):
+        """Table metadata."""
+        
+        model = models.DNSRuleComponent
+        fields = (
+            "pk",
+            "order",
+            "target_field", 
+            "component_type",
+            "value",
+            "transform_function",
+        )
+        default_columns = [
+            "order",
+            "target_field", 
+            "component_type",
+            "value",
+            "transform_function",
+        ]
+        # Components should always be displayed in order, not user-sortable
+        orderable = False
