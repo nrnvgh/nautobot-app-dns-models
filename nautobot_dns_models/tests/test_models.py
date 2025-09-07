@@ -1000,11 +1000,13 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
         DNSRuleRecord.objects.create(
             rule=cls.gui_rule,
             source_object=cls.device,
+            dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
             dns_record_object_id=cls.a_record.id,
         )
         DNSRuleRecord.objects.create(
             rule=cls.gui_rule,
             source_object=cls.interface,
+            dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
             dns_record_object_id=cls.a_record.id,
         )
         # Create another A record for the third instance
@@ -1016,6 +1018,7 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
         DNSRuleRecord.objects.create(
             rule=cls.gui_rule,
             source_object=cls.device,
+            dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
             dns_record_object_id=a_record2.id,
         )
 
@@ -1033,6 +1036,7 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
         rule_record = DNSRuleRecord.objects.create(
             rule=test_rule,
             source_object=self.interface,
+            dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
             dns_record_object_id=self.a_record.id,
         )
 
@@ -1054,6 +1058,7 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
         rule_record = DNSRuleRecord.objects.create(
             rule=property_rule,
             source_object=self.interface,
+            dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
             dns_record_object_id=self.a_record.id,
         )
 
@@ -1074,6 +1079,7 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
         rule_record = DNSRuleRecord.objects.create(
             rule=object_rule,
             source_object=self.interface,
+            dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
             dns_record_object_id=self.a_record.id,
         )
 
@@ -1094,6 +1100,7 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
         rule_record = DNSRuleRecord.objects.create(
             rule=string_rule,
             source_object=self.interface,
+            dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
             dns_record_object_id=self.a_record.id,
         )
 
@@ -1113,9 +1120,10 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             zone_fixed=self.zone,
         )
 
-        rule_record = DNSRuleRecord.objects.create(
+        DNSRuleRecord.objects.create(
             rule=cascade_rule,
             source_object=self.interface,
+            dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
             dns_record_object_id=self.a_record.id,
         )
 
@@ -1141,6 +1149,7 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
         DNSRuleRecord.objects.create(
             rule=constraint_rule,
             source_object=self.interface,
+            dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
             dns_record_object_id=self.a_record.id,
         )
 
@@ -1149,5 +1158,6 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             DNSRuleRecord.objects.create(
                 rule=constraint_rule,
                 source_object=self.interface,
-                dns_record_object_id=self.a_record.id,
+                dns_record_content_type=ContentType.objects.get_for_model(ARecordModel),
+            dns_record_object_id=self.a_record.id,
             )

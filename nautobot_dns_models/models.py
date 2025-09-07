@@ -770,25 +770,16 @@ class DNSRuleRecord(PrimaryModel):
     source_object = GenericForeignKey("source_content_type", "source_object_id")
 
     # Generic foreign key to generated DNS record (ARecordModel, CNAMERecordModel, etc.)
-    # Note: ContentType comes from rule.record_type - no duplication needed
+    dns_record_content_type = models.ForeignKey(
+        to="contenttypes.ContentType",
+        on_delete=models.CASCADE,
+        related_name="dns_rule_records_as_dns_record",
+        help_text="Content type of the generated DNS record",
+    )
+
     dns_record_object_id = models.UUIDField(db_index=True, help_text="ID of the generated DNS record")
 
-    @property
-    def dns_record_content_type(self):
-        """Get DNS record content type from the associated rule."""
-        return self.rule.record_type if self.rule else None
-
-    @property
-    def dns_record_object(self):
-        """Get the actual DNS record object using the rule's record type."""
-        if self.rule and self.rule.record_type and self.dns_record_object_id:
-            try:
-                model_class = self.rule.record_type.model_class()
-                if model_class:
-                    return model_class.objects.get(id=self.dns_record_object_id)
-            except Exception:
-                pass
-        return None
+    dns_record_object = GenericForeignKey("dns_record_content_type", "dns_record_object_id")
 
     class Meta:
         """Meta attributes for DNSRuleRecord."""
@@ -796,7 +787,7 @@ class DNSRuleRecord(PrimaryModel):
         ordering = ["rule", "source_content_type", "source_object_id"]
         verbose_name = "DNS Rule Record"
         verbose_name_plural = "DNS Rule Records"
-        unique_together = [["rule", "source_content_type", "source_object_id", "dns_record_object_id"]]
+        unique_together = [["rule", "source_content_type", "source_object_id", "dns_record_content_type", "dns_record_object_id"]]
 
     @property
     def source_object_name(self):
