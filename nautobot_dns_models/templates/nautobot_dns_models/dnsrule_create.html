@@ -1,4 +1,12 @@
 {% extends "generic/object_create.html" %}
+{% load form_helpers %}
+{% load static %}
+{% load helpers %}
+
+{% block extra_styles}
+{{ block.super}}
+<link rel="stylesheet" type="text/css" href="{% static 'nautobot_dns_models/css/rule_component.css' %}" />
+{% endblock extra_styles}
 
 {% block form %}
     {{ block.super }}
@@ -458,137 +466,3 @@
         });
     </script>
     
-    <style>
-        .drag-handle { 
-            cursor: move; 
-            color: #6c757d; 
-            font-size: 14px; 
-            user-select: none;
-            text-align: center;
-        }
-        .drag-handle:hover { 
-            color: #007bff; 
-        }
-        
-        /* Drag and drop visual feedback */
-        .component-row.dragging { 
-            opacity: 0.5; 
-            background-color: #f0f0f0 !important;
-        }
-        .component-row.drag-over { 
-            background-color: #e8f5e8 !important; 
-            border-top: 2px solid #169f32;
-        }
-        
-        /* Make entire row draggable */
-        .component-row {
-            cursor: move;
-        }
-        .component-row:hover {
-            background-color: #f8f9fa;
-        }
-        
-        /* Force consistent Select2 widths */
-        #component-rows .select2-container {
-            width: 100% !important;
-        }
-        
-        #component-rows .select2-selection {
-            width: 100% !important;
-        }
-        
-        /* Ensure consistent value input container sizing */
-        .value-input-container {
-            width: 100%;
-        }
-        
-        .value-input-container input {
-            width: 100% !important;
-            box-sizing: border-box;
-        }
-        
-        /* Ensure consistent form control sizing */
-        .component-row .form-control {
-            width: 100% !important;
-        }
-        
-        /* Panel styling to match Nautobot */  
-        .panel-heading {
-            border-radius: 10px 10px 0 0 !important;
-        }
-        
-        /* Force consistent dropdown direction */
-        .select2-container .select2-dropdown {
-            z-index: 9999 !important;
-        }
-        
-        /* Force all component dropdowns to open downward */
-        .force-dropdown-below.select2-dropdown--above {
-            display: none !important;
-        }
-        
-        /* Ensure component table dropdowns never go upward */
-        #component-rows .select2-container--open .select2-dropdown--above {
-            display: none !important;
-        }
-        
-        #component-rows .select2-container--open .select2-dropdown--below {
-            display: block !important;
-        }
-        
-        /* Additional positioning fix */
-        #component-rows .select2-dropdown {
-            top: 100% !important;
-            bottom: auto !important;
-        }
-        
-        /* Force ALL transform dropdowns to open downward - including Django-rendered ones */
-        select[name*="transform_function"] + .select2-container .select2-dropdown--above {
-            display: none !important;
-        }
-        
-        select[name*="transform_function"] + .select2-container .select2-dropdown--below {
-            display: block !important;
-        }
-        
-        select[name*="transform_function"] + .select2-container .select2-dropdown {
-            top: 100% !important;
-            bottom: auto !important;
-        }
-        
-        /* Force ALL Select2 containers in component table to position below */
-        #component-rows .select2-container {
-            position: relative !important;
-        }
-        
-        #component-rows .select2-dropdown {
-            position: absolute !important;
-            top: 100% !important;
-            bottom: auto !important;
-            margin-top: 1px !important;
-        }
-        
-        /* Additional override for first row specifically */
-        #component-rows tr:first-child select[name*="transform_function"] + .select2-container .select2-dropdown {
-            top: 100% !important;
-            bottom: auto !important;
-        }
-        
-        /* Nuclear option - force ALL Select2 dropdowns in this component table downward */
-        [id^="component-formset"] .select2-dropdown--above,
-        [id="component-formset"] .select2-dropdown--above {
-            display: none !important;
-            visibility: hidden !important;
-        }
-        
-        /* Make sure first row transform specifically opens down */
-        select[id*="components-0-transform_function"] + .select2-container .select2-dropdown--above {
-            display: none !important;
-        }
-        
-        select[id*="components-0-transform_function"] + .select2-container .select2-dropdown {
-            top: 100% !important;
-            bottom: auto !important;
-        }
-    </style>
-{% endblock %}
