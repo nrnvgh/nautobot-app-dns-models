@@ -16,3 +16,4 @@ The `DNSRuleComponent` model represents individual building blocks within a GUI-
 Components can optionally apply transform functions to modify values.
 
 *This is a placeholder - full documentation to be added.*
+

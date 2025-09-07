@@ -14,3 +14,4 @@ The `DNSRuleRecord` model tracks which GUI-based DNS rules generated which DNS r
 - Allows bulk operations on rule-generated records
 
 *This is a placeholder - full documentation to be added.*
+

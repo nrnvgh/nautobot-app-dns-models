@@ -26,3 +26,4 @@ The `DNSRule` model represents a GUI-based DNS rule for generating DNS records f
 GUI-based DNS rules use components instead of Jinja templates to build DNS record names and values.
 
 *This is a placeholder - full documentation to be added.*
+
