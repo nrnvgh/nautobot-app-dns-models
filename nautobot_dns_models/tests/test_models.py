@@ -1,4 +1,3 @@
-
 """Test DnsZoneModel."""
 
 from constance.test import override_config
@@ -553,6 +552,7 @@ class DNSZoneNameLengthValidationTest(TestCase):
 # GUI Rule Builder Model Tests
 # =============================================================================
 
+
 class GUIDNSRuleTestCase(ModelTestCases.BaseModelTestCase):
     """Test GUI-based DNSRule model."""
 
@@ -562,16 +562,16 @@ class GUIDNSRuleTestCase(ModelTestCases.BaseModelTestCase):
     def setUpTestData(cls):
         """Create test data for GUI DNSRule tests."""
         super().setUpTestData()
-        
+
         # Create test zone
         cls.zone = DNSZoneModel.objects.create(name="test.local")
-        
+
         # Get content types
         cls.interface_content_type = ContentType.objects.get_for_model(Interface)
         cls.device_content_type = ContentType.objects.get_for_model(Device)
         cls.arecord_content_type = ContentType.objects.get_for_model(ARecordModel)
         cls.txtrecord_content_type = ContentType.objects.get_for_model(TXTRecordModel)
-        
+
         # Create 3 DNSRule instances for BaseModelTestCase framework
         DNSRule.objects.create(
             name="Test Rule One",
@@ -583,7 +583,7 @@ class GUIDNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_fixed=cls.zone,
         )
         DNSRule.objects.create(
-            name="Test Rule Two", 
+            name="Test Rule Two",
             description="Second test rule",
             enabled=True,
             content_type=cls.device_content_type,
@@ -593,7 +593,7 @@ class GUIDNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         )
         DNSRule.objects.create(
             name="Test Rule Three",
-            description="Third test rule", 
+            description="Third test rule",
             enabled=False,
             content_type=cls.interface_content_type,
             record_type=cls.arecord_content_type,
@@ -612,7 +612,7 @@ class GUIDNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         self.assertEqual(rule.name, "Test Interface Rule")
         self.assertTrue(rule.enabled)
         self.assertEqual(rule.content_type, self.interface_content_type)
@@ -664,7 +664,7 @@ class GUIDNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         # Mock interface object - actual object doesn't matter for fixed zones
         mock_interface = Interface()
         resolved_zone = rule.get_zone_for_object(mock_interface)
@@ -722,12 +722,12 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
     def setUpTestData(cls):
         """Create test data for DNSRuleComponent tests."""
         super().setUpTestData()
-        
+
         # Create test zone and rule
         cls.zone = DNSZoneModel.objects.create(name="component.test")
         interface_ct = ContentType.objects.get_for_model(Interface)
         arecord_ct = ContentType.objects.get_for_model(ARecordModel)
-        
+
         cls.rule = DNSRule.objects.create(
             name="Component Test Rule",
             content_type=interface_ct,
@@ -735,7 +735,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=cls.zone,
         )
-        
+
         # Create 3 DNSRuleComponent instances for BaseModelTestCase framework
         DNSRuleComponent.objects.create(
             rule=cls.rule,
@@ -770,7 +770,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         component = DNSRuleComponent.objects.create(
             rule=test_rule,
             order=1,
@@ -779,7 +779,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             field_path="device.name",
             transform_function="normalize",
         )
-        
+
         self.assertEqual(component.rule, test_rule)
         self.assertEqual(component.order, 1)
         self.assertEqual(component.target_field, "name")
@@ -797,7 +797,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         component = DNSRuleComponent.objects.create(
             rule=test_rule,
             order=1,
@@ -805,7 +805,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             component_type="literal",
             literal_value=".example.com",
         )
-        
+
         self.assertEqual(component.component_type, "literal")
         self.assertEqual(component.literal_value, ".example.com")
 
@@ -819,7 +819,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         # Field reference requires field_path
         with self.assertRaises(ValidationError):
             component = DNSRuleComponent(
@@ -845,14 +845,14 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
     def test_get_transform_choices(self):
         """Test dynamic transform choices generation."""
         choices = DNSRuleComponent.get_transform_choices()
-        
+
         # Should have "No Transform" option
         choice_values = [choice[0] for choice in choices]
         choice_labels = [choice[1] for choice in choices]
-        
+
         self.assertIn("", choice_values)  # Empty string for no transform
         self.assertIn("No Transform", choice_labels)
-        
+
         # Should have registered transforms
         self.assertIn("normalize", choice_values)
         self.assertIn("replace_slashes", choice_values)
@@ -864,7 +864,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
         component1 = DNSRuleComponent.objects.get(rule=self.rule, order=1)
         component1.transform_function = "normalize"
         component1.save()
-        
+
         str_repr = str(component1)
         self.assertIn("Component Test Rule[1]", str_repr)
         self.assertIn("device.name", str_repr)
@@ -894,7 +894,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         # Create first component
         DNSRuleComponent.objects.create(
             rule=constraint_rule,
@@ -903,7 +903,7 @@ class DNSRuleComponentTestCase(ModelTestCases.BaseModelTestCase):
             component_type="literal",
             literal_value="first",
         )
-        
+
         # Duplicate order should fail
         with self.assertRaises(IntegrityError):
             DNSRuleComponent.objects.create(
@@ -924,10 +924,10 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
     def setUpTestData(cls):
         """Create test data for DNSRuleRecord tests."""
         super().setUpTestData()
-        
+
         # Create test zone
         cls.zone = DNSZoneModel.objects.create(name="record-test.local")
-        
+
         # Create basic test objects manually
         cls.namespace = Namespace.objects.create(name="Test Namespace")
         cls.prefix_status = Status.objects.get_for_model(Prefix).first()
@@ -936,7 +936,7 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             namespace=cls.namespace,
             status=cls.prefix_status,
         )
-        
+
         cls.ip_status = Status.objects.get_for_model(IPAddress).first()
         cls.ip_address = IPAddress.objects.create(
             address="192.168.1.10/24",
@@ -944,8 +944,8 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             parent=cls.prefix,
             status=cls.ip_status,
         )
-        
-        # Create test device and interface  
+
+        # Create test device and interface
         cls.location_type = LocationType.objects.create(name="Building")
         cls.location_status = Status.objects.get_for_model(Location).first()
         cls.location = Location.objects.create(
@@ -958,9 +958,9 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             manufacturer=cls.manufacturer,
             model="Test Switch",
         )
-        cls.device_role = Role.objects.create(name="Test Switch Role") 
+        cls.device_role = Role.objects.create(name="Test Switch Role")
         cls.device_status = Status.objects.get_for_model(Device).first()
-        
+
         cls.device = Device.objects.create(
             name="test-switch",
             device_type=cls.device_type,
@@ -968,7 +968,7 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             status=cls.device_status,
             location=cls.location,
         )
-        
+
         cls.interface_status = Status.objects.get_for_model(Interface).first()
         cls.interface = Interface.objects.create(
             name="eth0",
@@ -976,18 +976,18 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             type="1000base-t",
             status=cls.interface_status,
         )
-        
+
         # Create A record
         cls.a_record = ARecordModel.objects.create(
             name="test-interface.example.com",
             zone=cls.zone,
             address=cls.ip_address,
         )
-        
+
         # Create GUI rule
         interface_ct = ContentType.objects.get_for_model(Interface)
         arecord_ct = ContentType.objects.get_for_model(ARecordModel)
-        
+
         cls.gui_rule = DNSRule.objects.create(
             name="GUI Test Rule",
             content_type=interface_ct,
@@ -995,7 +995,7 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=cls.zone,
         )
-        
+
         # Create 3 DNSRuleRecord instances for BaseModelTestCase framework
         DNSRuleRecord.objects.create(
             rule=cls.gui_rule,
@@ -1029,13 +1029,13 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         rule_record = DNSRuleRecord.objects.create(
             rule=test_rule,
             source_object=self.interface,
             dns_record_object_id=self.a_record.id,
         )
-        
+
         self.assertEqual(rule_record.rule, test_rule)
         self.assertEqual(rule_record.source_object, self.interface)
         self.assertEqual(rule_record.dns_record_object_id, self.a_record.id)
@@ -1050,13 +1050,13 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         rule_record = DNSRuleRecord.objects.create(
             rule=property_rule,
             source_object=self.interface,
             dns_record_object_id=self.a_record.id,
         )
-        
+
         # Should get content type from rule.record_type
         self.assertEqual(rule_record.dns_record_content_type, property_rule.record_type)
 
@@ -1070,13 +1070,13 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         rule_record = DNSRuleRecord.objects.create(
             rule=object_rule,
             source_object=self.interface,
             dns_record_object_id=self.a_record.id,
         )
-        
+
         # Should fetch the actual A record
         self.assertEqual(rule_record.dns_record_object, self.a_record)
 
@@ -1090,13 +1090,13 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         rule_record = DNSRuleRecord.objects.create(
             rule=string_rule,
             source_object=self.interface,
             dns_record_object_id=self.a_record.id,
         )
-        
+
         str_repr = str(rule_record)
         self.assertIn("String Test Rule", str_repr)
         self.assertIn(str(self.interface), str_repr)
@@ -1112,17 +1112,17 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         rule_record = DNSRuleRecord.objects.create(
             rule=cascade_rule,
             source_object=self.interface,
             dns_record_object_id=self.a_record.id,
         )
-        
+
         # Deleting rule should delete tracking record
         rule_id = cascade_rule.id
         cascade_rule.delete()
-        
+
         with self.assertRaises(DNSRuleRecord.DoesNotExist):
             DNSRuleRecord.objects.get(rule_id=rule_id)
 
@@ -1136,14 +1136,14 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
             zone_source="fixed",
             zone_fixed=self.zone,
         )
-        
+
         # Create first tracking record
         DNSRuleRecord.objects.create(
             rule=constraint_rule,
             source_object=self.interface,
             dns_record_object_id=self.a_record.id,
         )
-        
+
         # Duplicate should fail
         with self.assertRaises(IntegrityError):
             DNSRuleRecord.objects.create(
@@ -1151,5 +1151,3 @@ class GUIDNSRuleRecordTestCase(ModelTestCases.BaseModelTestCase):
                 source_object=self.interface,
                 dns_record_object_id=self.a_record.id,
             )
-
-
