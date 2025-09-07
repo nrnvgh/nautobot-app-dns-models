@@ -122,6 +122,9 @@ nav:
           - PTR Record: "models/ptrrecordmodel.md"
           - SRV Record: "models/srvrecordmodel.md"
           - TXT Record: "models/txtrecordmodel.md"
+          - DNS Rule: "models/dnsrule.md"
+          - DNS Rule Component: "models/dnsrulecomponent.md"
+          - DNS Rule Record: "models/dnsrulerecord.md"
   - Administrator Guide:
       - Install and Configure: "admin/install.md"
       - Upgrade: "admin/upgrade.md"
