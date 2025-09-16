@@ -36,6 +36,7 @@ def capture_device_state_before_save(sender, instance, **kwargs):
             # Device might be new or in an inconsistent state, skip
             instance._pre_save_state = None
 
+
 #
 # NOTE: do we want to explictly list other sender models here and, if so, which?
 # NOTE: We're waiting on resolution of https://github.com/nautobot/nautobot/issues/7728 for
@@ -80,7 +81,7 @@ def handle_device_save(sender, instance, created, **kwargs):
         **kwargs: Additional signal arguments
     """
     logger.debug(f"handle_device_save: {instance} / {created=}")
-    
+
     try:
         # Process Device-based DNS rules
         dns_rule_engine.process_object(instance, created=created)
@@ -96,7 +97,9 @@ def handle_device_save(sender, instance, created, **kwargs):
 
             # Check for name changes (most common Interface template dependency)
             if old_state.name != instance.name:
-                logger.debug(f"Device name changed from \"{old_state.name}\" to \"{instance.name}\" - processing interfaces")
+                logger.debug(
+                    f'Device name changed from "{old_state.name}" to "{instance.name}" - processing interfaces'
+                )
 
                 # Process all interfaces belonging to this device
                 # This ensures Interface DNS records with {{ obj.device.name }} templates get updated

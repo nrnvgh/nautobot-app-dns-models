@@ -1,16 +1,17 @@
 """Models for Nautobot DNS Models."""
 
+import logging
+
 from constance import config as constance_config
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
-from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
-from nautobot.ipam.choices import IPAddressVersionChoices
-from nautobot.apps.utils import validate_jinja2
 from jinja2 import TemplateError, TemplateSyntaxError
-import logging
-
+from nautobot.ipam.choices import IPAddressVersionChoices
+from nautobot.apps.constants import CHARFIELD_MAX_LENGTH
+from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
+from nautobot.apps.utils import validate_jinja2
+from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,8 @@
 """Forms for nautobot_dns_models."""
 
 from django import forms
+from django.contrib.contenttypes.models import ContentType
+from django.db import models as django_models
 from nautobot.apps.forms import (
     DynamicModelMultipleChoiceField,
     NautobotBulkEditForm,
@@ -441,4 +443,99 @@ class SRVRecordFilterForm(NautobotFilterForm):
         "weight",
         "port",
         "target",
+    ]
+
+
+class DNSRuleForm(NautobotModelForm):
+    """DNSRule creation/edit form with dynamic field display."""
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRule
+        fields = "__all__"
+
+    class Media:
+        """Media for dynamic form behavior."""
+
+        js = ["nautobot_dns_models/js/dns_rule_form.js"]
+
+    def __init__(self, *args, **kwargs):
+        """Initialize form with dynamic field setup."""
+        super().__init__(*args, **kwargs)
+
+        # Add CSS classes for dynamic showing/hiding
+        template_fields = [
+            "value_template",
+            "preference_template",
+            "priority_template",
+            "weight_template",
+            "port_template",
+        ]
+
+        for field_name in template_fields:
+            if field_name in self.fields:
+                self.fields[field_name].widget.attrs.update({"class": f"template-field {field_name.replace('_', '-')}"})
+
+        # Add enhanced help text for record-type specific fields
+        field_help_text = {
+            "preference_template": "MX records only: Mail server preference value (lower = higher priority)",
+            "priority_template": "SRV records only: Service priority value (lower = higher priority)",
+            "weight_template": "SRV records only: Service weight for load balancing",
+            "port_template": "SRV records only: Service port number",
+        }
+
+        for field_name, help_text in field_help_text.items():
+            if field_name in self.fields:
+                self.fields[field_name].help_text = help_text
+
+
+class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
+    """DNSRule bulk edit form."""
+
+    pk = forms.ModelMultipleChoiceField(queryset=models.DNSRule.objects.all(), widget=forms.MultipleHiddenInput)
+    description = forms.CharField(required=False)
+    enabled = forms.NullBooleanField(required=False)
+    priority = forms.IntegerField(required=False)
+
+    class Meta:
+        """Meta attributes."""
+
+        nullable_fields = [
+            "description",
+        ]
+
+
+class DNSRuleFilterForm(NautobotFilterForm):
+    """Filter form for DNSRule searches."""
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        help_text="Search within Name and Description.",
+    )
+    name = forms.CharField(required=False, label="Name")
+    enabled = forms.NullBooleanField(required=False, label="Enabled")
+    content_type = forms.ModelChoiceField(
+        queryset=ContentType.objects.all().order_by("app_label", "model"),
+        required=False,
+        label="Content Type",
+        widget=StaticSelect2(),
+    )
+    record_type = forms.ChoiceField(
+        choices=add_blank_choice(models.RECORD_TYPE_CHOICES),
+        required=False,
+        label="Record Type",
+        widget=StaticSelect2(),
+    )
+
+    model = models.DNSRule
+
+    # Define the fields above for ordering and widget purposes
+    fields = [
+        "q",
+        "name",
+        "enabled",
+        "content_type",
+        "record_type",
     ]
