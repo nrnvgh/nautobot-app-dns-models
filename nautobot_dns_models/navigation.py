@@ -13,7 +13,7 @@ items = [
                 permissions=["nautobot_dns_models.add_dnszone"],
             ),
         ),
-    )
+    ),
 ]
 
 menu_items = (

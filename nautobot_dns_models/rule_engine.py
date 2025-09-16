@@ -4,11 +4,11 @@ import logging
 from typing import Any, Dict
 
 from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.exceptions import ValidationError
+
 #
 # TODO Use TemplateSyntaxError instead of TemplateError? it required a line number argument.
 from jinja2 import TemplateError
-
 from nautobot.core.utils.data import render_jinja2
 
 from nautobot_dns_models.models import (
@@ -55,42 +55,51 @@ class DNSRuleEngine:
         """
         content_type = ContentType.objects.get_for_model(source_obj)
         rules = DNSRule.objects.filter(content_type=content_type, enabled=True).order_by("priority")
-        
+
         # Cache rule count to avoid duplicate COUNT() queries
         rules_count = rules.count()
         logger.debug(f"Processing {source_obj} (type: {content_type}) - found {rules_count} rules")
-        
+
         if rules_count == 0:
             logger.debug(f"No DNS rules found for {content_type} - skipping DNS record processing for {source_obj}")
             return
 
         # Check if this object already has DNS records (reuse content_type from above)
-        existing_records = DNSRuleRecord.objects.filter(
-            content_type=content_type,
-            object_id=str(source_obj.pk)
-        )
+        existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=str(source_obj.pk))
 
         # Check existing record count once (serves both logging and conditional logic)
         existing_count = existing_records.count()
-        logger.debug(f"DNS record lookup for {source_obj} (pk={source_obj.pk}, name='{getattr(source_obj, 'name', 'N/A')}'): found {existing_count} existing records")
-        
+        logger.debug(
+            f"DNS record lookup for {source_obj} (pk={source_obj.pk}, name='{getattr(source_obj, 'name', 'N/A')}'): found {existing_count} existing records"
+        )
+
         if created or existing_count == 0:
             # Create new DNS records for new objects OR objects with no existing records
             if created:
-                logger.error(f"Taking CREATE path for {source_obj} (created={created}, existing_records={existing_count})")
+                logger.error(
+                    f"Taking CREATE path for {source_obj} (created={created}, existing_records={existing_count})"
+                )
             else:
-                logger.debug(f"UPDATE scenario with no existing records - this may indicate first-time DNS processing for {source_obj}")
+                logger.debug(
+                    f"UPDATE scenario with no existing records - this may indicate first-time DNS processing for {source_obj}"
+                )
             for rule in rules:
                 try:
                     result = self.create_dns_record_from_rule(rule, source_obj)
                     if result is None:
-                        logger.debug(f"Skipped creating DNS record from rule {rule.name} for {source_obj} (template rendering failed)")
+                        logger.debug(
+                            f"Skipped creating DNS record from rule {rule.name} for {source_obj} (template rendering failed)"
+                        )
                 except ValidationError as e:
-                    logger.error(f"ValidationError while creating DNS record from rule {rule.name} for {source_obj}: {e}")
+                    logger.error(
+                        f"ValidationError while creating DNS record from rule {rule.name} for {source_obj}: {e}"
+                    )
                     # Re-raise ValidationError to allow proper error handling upstream
                     raise
                 except Exception as e:
-                    logger.error(f"Failed to create DNS record from rule {rule.name} for {source_obj}: {e} (type={type(e)})")
+                    logger.error(
+                        f"Failed to create DNS record from rule {rule.name} for {source_obj}: {e} (type={type(e)})"
+                    )
                     raise
         else:
             # Update existing DNS records for modified objects
@@ -158,7 +167,9 @@ class DNSRuleEngine:
             logger.error(f"[2] ValidationError while creating DNS record from rule {rule.name} for {source_obj}: {e}")
             return None
         except Exception as e:
-            logger.error(f"[2] Failed to create DNS record from rule {rule.name} for {source_obj}: {e} (type={type(e)})")
+            logger.error(
+                f"[2] Failed to create DNS record from rule {rule.name} for {source_obj}: {e} (type={type(e)})"
+            )
             return None
 
     def update_dns_records_for_object(self, source_obj: Any) -> None:
@@ -190,7 +201,9 @@ class DNSRuleEngine:
                         rule_record.save()
                         logger.info(f"Recreated DNS record {new_record} for {source_obj}")
                     else:
-                        logger.debug(f"Could not recreate DNS record for rule {rule_record.rule.name} - template still failing")
+                        logger.debug(
+                            f"Could not recreate DNS record for rule {rule_record.rule.name} - template still failing"
+                        )
                         # If we can't recreate the record, delete the stale linking record
                         logger.info(f"Deleting stale DNSRuleRecord for rule {rule_record.rule.name}")
                         rule_record.delete()
@@ -226,7 +239,7 @@ class DNSRuleEngine:
                 try:
                     dns_record = rule_record.dns_record
                     rule_record.delete()  # Delete the linking record first
-                    
+
                     # Only delete the DNS record if it exists
                     if dns_record is not None:
                         dns_record.delete()
@@ -279,11 +292,13 @@ class DNSRuleEngine:
         try:
             result = render_jinja2(template_str, context)
             logger.error(f"Template (({template_str})) rendered to result: {result}")
-            
+
             # Check for falsy results (None, empty string, etc.)
             # render_jinja2 returns empty string for undefined variables/attributes
             if not result:
-                logger.warning(f"[1] Template rendered to falsy result for {field_name}: '{template_str}' with context keys: {list(context.keys())}")
+                logger.warning(
+                    f"[1] Template rendered to falsy result for {field_name}: '{template_str}' with context keys: {list(context.keys())}"
+                )
                 raise TemplateError(f"[1] Template rendered empty for {field_name}: '{template_str}'")
 
             # Check for template error strings that render_jinja2 sometimes returns
@@ -291,7 +306,7 @@ class DNSRuleEngine:
             if "{{ no such element:" in result:
                 logger.warning(f"[2] Template (({template_str})) rendered to error string for {field_name}: {result}")
                 raise TemplateError(f"[2] Template error for {field_name}: {result}")
-            
+
             return result
         except Exception as exc:
             # Following Nautobot core pattern: broad exception handling with logging
@@ -312,6 +327,9 @@ class DNSRuleEngine:
         if record_type in ["A", "AAAA"]:
             # A and AAAA records need address_id field (foreign key to IPAddress)
             if rule.value_template:
+                #
+                # XXX In principle, we could save ourselves a render here by checking if len(obj.ip_addresses.all() > 0,
+                # XXX but I think that would generate more queries which is more expensive.
                 address_id = self._render_template(rule.value_template, context, "value_template")
                 record_data["address_id"] = address_id
 
