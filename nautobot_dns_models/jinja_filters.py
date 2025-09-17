@@ -2,7 +2,10 @@
 
 import logging
 
+from collections.abc import Iterable
+
 from django_jinja import library
+from nautobot.ipam.models import IPAddress
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +40,25 @@ def ip_address(ip_obj, version=None):
     if ip_obj is None:
         raise ValueError("Cannot extract IP address from None")
 
+    if isinstance(ip_obj, IPAddress):
+            ip_list = [ip_obj]
+    elif isinstance(ip_obj, Iterable):
+        ip_list = ip_obj
+    else:
+        raise ValueError(f"Invalid IP object (type={type(ip_obj)})")
+
     if version is not None and version not in [4, 6]:
         raise ValueError(f"Invalid IP version: {version}. Must be 4, 6, or None")
 
-    if version is None or ip_obj.ip_version == version:
-        return ip_obj.id
+    logger.debug(f"ip_address: {ip_list} / {version}")
+    result_list = []
+    for ip in ip_list:
+        if version is None or ip.ip_version == version:
+            result_list.append(str(ip.id))
+
+    logger.debug(f"ip_address: {result_list}")
+    if result_list:
+        return " ".join(result_list)
 
     raise ValueError(f"IP address is IPv{ip_obj.ip_version}, not IPv{version}: {ip_obj.host}")
 
