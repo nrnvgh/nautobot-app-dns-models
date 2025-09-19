@@ -61,9 +61,19 @@ def ip_address(ip_obj, version=None):
 
     logger.debug(f"ip_address: {result_list}")
     if result_list:
+        logger.debug(f"returning: {result_list}")
         return " ".join(result_list)
 
-    raise ValueError(f"IP address is IPv{ip_obj.ip_version}, not IPv{version}: {ip_obj.host}")
+    # Handle different error scenarios based on input type
+    if isinstance(ip_obj, IPAddress):
+        # Single IP object that didn't match version filter
+        raise ValueError(f"IP address is IPv{ip_obj.ip_version}, not IPv{version}: {ip_obj.host}")
+    else:
+        # Collection/QuerySet with no matching IPs
+        if version is not None:
+            raise ValueError(f"No IPv{version} addresses found in collection")
+        else:
+            raise ValueError("No IP addresses found in collection")
 
 
 @library.filter

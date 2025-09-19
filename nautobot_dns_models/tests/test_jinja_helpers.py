@@ -1,7 +1,6 @@
 """Tests for DNS Jinja2 helper functions."""
 
 from django.test import TestCase
-
 from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
@@ -17,27 +16,29 @@ class JinjaHelpersTestCase(TestCase):
         # Create namespace and prefix infrastructure for real IP addresses
         cls.namespace = Namespace.objects.create(name="Test Namespace")
         cls.prefix_v4 = Prefix.objects.create(
-            prefix="192.168.1.0/24",
-            namespace=cls.namespace,
-            status=Status.objects.get_for_model(Prefix).first()
+            prefix="192.168.1.0/24", namespace=cls.namespace, status=Status.objects.get_for_model(Prefix).first()
         )
         cls.prefix_v6 = Prefix.objects.create(
-            prefix="2001:db8::/64",
-            namespace=cls.namespace,
-            status=Status.objects.get_for_model(Prefix).first()
+            prefix="2001:db8::/64", namespace=cls.namespace, status=Status.objects.get_for_model(Prefix).first()
         )
-        
-        # Create shared IP addresses for tests (read-only usage)
-        cls.ipv4_address = IPAddress.objects.create(
-            address="192.168.1.100/32",
-            namespace=cls.namespace,
-            status=Status.objects.get_for_model(IPAddress).first()
+
+        # Create multiple IP addresses for collection testing (read-only usage)
+        cls.ipv4_address_1 = IPAddress.objects.create(
+            address="192.168.1.100/24", namespace=cls.namespace, status=Status.objects.get_for_model(IPAddress).first()
         )
-        cls.ipv6_address = IPAddress.objects.create(
-            address="2001:db8::100/128",
-            namespace=cls.namespace,
-            status=Status.objects.get_for_model(IPAddress).first()
+        cls.ipv4_address_2 = IPAddress.objects.create(
+            address="192.168.1.101/24", namespace=cls.namespace, status=Status.objects.get_for_model(IPAddress).first()
         )
+        cls.ipv6_address_1 = IPAddress.objects.create(
+            address="2001:db8::100/64", namespace=cls.namespace, status=Status.objects.get_for_model(IPAddress).first()
+        )
+        cls.ipv6_address_2 = IPAddress.objects.create(
+            address="2001:db8::101/64", namespace=cls.namespace, status=Status.objects.get_for_model(IPAddress).first()
+        )
+
+        # For backward compatibility with existing tests
+        cls.ipv4_address = cls.ipv4_address_1
+        cls.ipv6_address = cls.ipv6_address_1
 
     def test_ip_address_ipv4_object(self):
         """Test ip_address with IPv4 IPAddress object."""
@@ -92,3 +93,39 @@ class JinjaHelpersTestCase(TestCase):
         # Test IPv6
         result_ipv6 = ip_address(self.ipv6_address)
         self.assertEqual(result_ipv6, str(self.ipv6_address.id))
+
+    def test_ip_address_multiple_ipv4_addresses(self):
+        """Test ip_address with multiple IPv4 addresses returns space-delimited UUIDs."""
+        # Get IPv4 addresses as QuerySet (Django test isolation ensures only our test data)
+        ipv4_queryset = IPAddress.objects.filter(ip_version=4)
+
+        result = ip_address(ipv4_queryset)
+
+        # Should return space-delimited UUIDs
+        expected_uuids = [str(self.ipv4_address_1.id), str(self.ipv4_address_2.id)]
+        expected = " ".join(expected_uuids)
+
+        self.assertEqual(result, expected)
+        self.assertIn(" ", result, "Multiple IPs should be space-delimited")
+
+        # Verify each UUID is present
+        for uuid_str in expected_uuids:
+            self.assertIn(uuid_str, result)
+
+    def test_ip_address_multiple_ipv6_addresses(self):
+        """Test ip_address with multiple IPv6 addresses returns space-delimited UUIDs."""
+        # Get IPv6 addresses as QuerySet (Django test isolation ensures only our test data)
+        ipv6_queryset = IPAddress.objects.filter(ip_version=6)
+
+        result = ip_address(ipv6_queryset)
+
+        # Should return space-delimited UUIDs
+        expected_uuids = [str(self.ipv6_address_1.id), str(self.ipv6_address_2.id)]
+        expected = " ".join(expected_uuids)
+
+        self.assertEqual(result, expected)
+        self.assertIn(" ", result, "Multiple IPs should be space-delimited")
+
+        # Verify each UUID is present
+        for uuid_str in expected_uuids:
+            self.assertIn(uuid_str, result)
