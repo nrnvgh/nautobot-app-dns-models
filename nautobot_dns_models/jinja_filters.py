@@ -32,10 +32,15 @@ def ip_address(ip_obj, version=None):
         >>> # In a Jinja template with an IPAddress object
         >>> {{ ip_obj | ip_address }}
         'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
-        >>> {{ ip_obj | ip_address:4 }}
+        >>> {{ ip_obj | ip_address(4) }}
         'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
-        >>> {{ ipv6_obj | ip_address:6 }}
+        >>> {{ ipv6_obj | ip_address(6) }}
         'b2c3d4e5-f6a7-8901-bcde-f23456789012'
+        >>> # With collections (multiple IPs)
+        >>> {{ obj.ip_addresses.all | ip_address }}
+        'uuid1 uuid2 uuid3'
+        >>> {{ obj.ip_addresses.all | ip_address(4) }}
+        'uuid1 uuid2'
     """
     if ip_obj is None:
         raise ValueError("Cannot extract IP address from None")
@@ -50,7 +55,6 @@ def ip_address(ip_obj, version=None):
     if version is not None and version not in [4, 6]:
         raise ValueError(f"Invalid IP version: {version}. Must be 4, 6, or None")
 
-    logger.debug(f"ip_address: {ip_list} / {version}")
     result_list = []
     for ip in ip_list:
         if version is None or ip.ip_version == version:
