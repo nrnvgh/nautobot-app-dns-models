@@ -1,6 +1,5 @@
 """Test DNS Rule Engine."""
 
-import logging
 from unittest import skip
 from unittest.mock import patch
 
@@ -16,11 +15,6 @@ from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine,
 
 from nautobot_dns_models.models import ARecordModel, DNSRule, DNSRuleRecord, DNSZoneModel
 from nautobot_dns_models.rule_engine import DNSRuleEngine
-
-# Configure logging to show DNS plugin debug messages during tests
-# logging.basicConfig(level=logging.DEBUG, format='%(levelname)s %(name)s: %(message)s')
-# dns_logger = logging.getLogger('nautobot_dns_models')
-# dns_logger.setLevel(logging.DEBUG)
 
 
 class DNSRuleEngineTestCase(TestCase):
@@ -648,7 +642,6 @@ class DNSRuleIntegrationTestCase(TestCase):
 
         # Delete device (cascades to interface)
         interface_id = self.interface.id  # Store before deletion
-        device_id = self.device.id
         self.device.delete()
 
         # Verify A record deleted
@@ -684,7 +677,6 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.assertEqual(a_records.count(), 1)
 
         # Delete IP address directly (not just remove from interface)
-        ip_id = self.ip_address.id
         self.ip_address.delete()
 
         # This scenario needs investigation:
@@ -713,42 +705,35 @@ class MultiRecordTestCase(TestCase):
         # Create required objects for Device/Interface creation
         cls.status = Status.objects.get_for_model(Device).first()
         cls.manufacturer = Manufacturer.objects.create(name="Test Manufacturer")
-        cls.device_type = DeviceType.objects.create(
-            manufacturer=cls.manufacturer,
-            model="Test Device Type"
-        )
+        cls.device_type = DeviceType.objects.create(manufacturer=cls.manufacturer, model="Test Device Type")
         cls.location_type = LocationType.objects.create(name="Test Location Type")
         cls.location = Location.objects.create(
-            name="Test Location",
-            location_type=cls.location_type,
-            status=Status.objects.get_for_model(Location).first()
+            name="Test Location", location_type=cls.location_type, status=Status.objects.get_for_model(Location).first()
         )
-        
+
         # Get or create a role for devices
         device_role = Role.objects.get_for_model(Device).first()
         if not device_role:
             device_role = Role.objects.create(name="Test Device Role")
             device_role.content_types.set([ContentType.objects.get_for_model(Device)])
         cls.role = device_role
-        
+
         # Create namespace and prefix for IP addresses
         cls.namespace = Namespace.objects.create(name="Test Namespace")
         cls.prefix = Prefix.objects.create(
-            prefix="192.168.1.0/24",
-            namespace=cls.namespace,
-            status=Status.objects.get_for_model(Prefix).first()
+            prefix="192.168.1.0/24", namespace=cls.namespace, status=Status.objects.get_for_model(Prefix).first()
         )
-        
+
         # Create DNS zone for testing
         cls.dns_zone = DNSZoneModel.objects.create(name="test.local")
 
     def test_multi_record_cleanup_on_ip_removal(self):
         """
         Test that removing IP from interface properly cleans up all related DNS records.
-        
+
         This tests the critical multi-record cleanup gap where:
         - Rule creates multiple A records (one per IP)
-        - IP is removed from interface  
+        - IP is removed from interface
         - All old records must be cleaned up properly
         - No orphaned DNS records or tracking records should remain
         """
@@ -760,17 +745,14 @@ class MultiRecordTestCase(TestCase):
             status=self.status,
             role=self.role,
         )
-        
+
         interface = Interface.objects.create(
-            device=device,
-            name="eth0",
-            type="1000base-t",
-            status=Status.objects.get_for_model(Interface).first()
+            device=device, name="eth0", type="1000base-t", status=Status.objects.get_for_model(Interface).first()
         )
 
         # Step 2: Create DNS rule FIRST (before IP assignment)
         interface_content_type = ContentType.objects.get_for_model(Interface)
-        
+
         rule = DNSRule.objects.create(
             name="Multi-A Record Rule",
             content_type=interface_content_type,
@@ -780,92 +762,70 @@ class MultiRecordTestCase(TestCase):
             name_template="{{ obj.device.name }}-{{ obj.name }}",
             value_template="{{ obj.ip_addresses.all() | ip_address }}",  # Multi-IP template
         )
-        
+
         # Step 3: Create 3 IP addresses
         ip1 = IPAddress.objects.create(
-            address="192.168.1.100/24",
-            namespace=self.namespace,
-            status=Status.objects.get_for_model(IPAddress).first()
+            address="192.168.1.100/24", namespace=self.namespace, status=Status.objects.get_for_model(IPAddress).first()
         )
         ip2 = IPAddress.objects.create(
-            address="192.168.1.101/24",
-            namespace=self.namespace,
-            status=Status.objects.get_for_model(IPAddress).first()
+            address="192.168.1.101/24", namespace=self.namespace, status=Status.objects.get_for_model(IPAddress).first()
         )
         ip3 = IPAddress.objects.create(
-            address="192.168.1.102/24",
-            namespace=self.namespace,
-            status=Status.objects.get_for_model(IPAddress).first()
+            address="192.168.1.102/24", namespace=self.namespace, status=Status.objects.get_for_model(IPAddress).first()
         )
 
-        print(f"IPs created: {ip1} / {ip2} / {ip3}")
-        
-        # Step 4: Get baseline record counts before IP assignment (should be 0 for clean zone)
-        baseline_a_records = ARecordModel.objects.filter(zone=self.dns_zone).count()
-        baseline_rule_records = DNSRuleRecord.objects.filter(rule=rule).count()
-        
-        # Step 5: Assign all 3 IPs to interface (triggers M2M signal → automatic DNS processing)
+        # Step 4: Assign all 3 IPs to interface (triggers M2M signal → automatic DNS processing)
         interface.ip_addresses.add(ip1, ip2, ip3)
-        
-        # Step 6: Verify 3 A records and 3 tracking records were created via signal  
+
+        # Step 5: Verify 3 A records and 3 tracking records were created via signal
         a_records_after_add = ARecordModel.objects.filter(zone=self.dns_zone)
         rule_records_after_add = DNSRuleRecord.objects.filter(rule=rule)
-        
+
         self.assertEqual(a_records_after_add.count(), 3, "Should create 3 A records initially")
         self.assertEqual(rule_records_after_add.count(), 3, "Should create 3 tracking records initially")
-        
+
         # Verify A records point to correct IPs
         created_ips = {str(record.address_id) for record in a_records_after_add}
         expected_ips = {str(ip1.id), str(ip2.id), str(ip3.id)}
         self.assertEqual(created_ips, expected_ips, "A records should point to all 3 IPs")
-        
-        # Step 7: Remove one IP from interface (triggers M2M signal → automatic cleanup)
+
+        # Step 6: Remove one IP from interface (triggers M2M signal → automatic cleanup)
         interface.ip_addresses.remove(ip2)
-        
-        # Step 8: Verify cleanup was complete and correct
+
+        # Step 7: Verify cleanup was complete and correct
         a_records_after_removal = ARecordModel.objects.filter(zone=self.dns_zone)
         rule_records_after_removal = DNSRuleRecord.objects.filter(rule=rule)
-        
+
         # Should have exactly 2 records after cleanup
-        self.assertEqual(a_records_after_removal.count(), 2, 
-                        "Should have exactly 2 A records after IP removal")
-        self.assertEqual(rule_records_after_removal.count(), 2, 
-                        "Should have exactly 2 tracking records after IP removal")
-        
-        # Verify remaining A records point to correct IPs (ip1 and ip3, not ip2)
+        self.assertEqual(a_records_after_removal.count(), 2, "Should have exactly 2 A records after IP removal")
+        self.assertEqual(
+            rule_records_after_removal.count(), 2, "Should have exactly 2 tracking records after IP removal"
+        )
+
+        # Step 8: erify remaining A records point to correct IPs (ip1 and ip3, not ip2)
         remaining_ips = {str(record.address_id) for record in a_records_after_removal}
         expected_remaining = {str(ip1.id), str(ip3.id)}
-        self.assertEqual(remaining_ips, expected_remaining, 
-                        "Remaining A records should point to remaining IPs only")
-        
+        self.assertEqual(remaining_ips, expected_remaining, "Remaining A records should point to remaining IPs only")
+
         # Step 9: Verify no orphaned records exist
         # Check for any A records in the zone that don't have tracking records
-        tracked_dns_record_ids = {
-            str(rr.dns_record_object_id) for rr in rule_records_after_removal
-        }
-        actual_dns_record_ids = {
-            str(ar.id) for ar in a_records_after_removal
-        }
-        
-        self.assertEqual(tracked_dns_record_ids, actual_dns_record_ids,
-                        "All A records should have corresponding tracking records")
-        
+        tracked_dns_record_ids = {str(rr.dns_record_object_id) for rr in rule_records_after_removal}
+        actual_dns_record_ids = {str(ar.id) for ar in a_records_after_removal}
+
+        self.assertEqual(
+            tracked_dns_record_ids, actual_dns_record_ids, "All A records should have corresponding tracking records"
+        )
+
         # Step 10: Remove another IP to test down to 1 record (triggers M2M signal again)
         interface.ip_addresses.remove(ip3)
-        
+
         # Step 11: Verify final state after second IP removal
         a_records_final = ARecordModel.objects.filter(zone=self.dns_zone)
         rule_records_final = DNSRuleRecord.objects.filter(rule=rule)
-        
+
         self.assertEqual(a_records_final.count(), 1, "Should have 1 A record after second removal")
         self.assertEqual(rule_records_final.count(), 1, "Should have 1 tracking record after second removal")
-        
+
         # Verify last record points to remaining IP
         final_ip = {str(record.address_id) for record in a_records_final}
         self.assertEqual(final_ip, {str(ip1.id)}, "Final A record should point to ip1")
-
-        print("✅ SUCCESS: Multi-record cleanup handled properly!")
-        print(f"   - Started with 3 IPs → 3 DNS records")
-        print(f"   - Removed 1 IP → 2 DNS records (clean)")
-        print(f"   - Removed 1 IP → 1 DNS record (clean)")
-        print(f"   - No orphaned records at any step")
