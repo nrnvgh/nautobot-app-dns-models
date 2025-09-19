@@ -1,7 +1,6 @@
 """Jinja2 filters for DNS Models plugin."""
 
 import logging
-
 from collections.abc import Iterable
 
 from django_jinja import library
@@ -46,7 +45,7 @@ def ip_address(ip_obj, version=None):
         raise ValueError("Cannot extract IP address from None")
 
     if isinstance(ip_obj, IPAddress):
-            ip_list = [ip_obj]
+        ip_list = [ip_obj]
     elif isinstance(ip_obj, Iterable):
         ip_list = ip_obj
     else:
