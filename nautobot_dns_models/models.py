@@ -242,6 +242,36 @@ class ARecord(DNSRecord):  # pylint: disable=too-many-ancestors
         help_text="IP address for the record.",
     )
 
+    #
+    # TODO: This is POC and should be updated to use GenericRelation (or at
+    # TODO: least compare SQL queries/performance to make a determination)
+    @property
+    def dns_rule_records(self):
+        """Mock GenericRelation: Get DNSRuleRecord objects that track this A record."""
+        from django.contrib.contenttypes.models import ContentType
+
+        return DNSRuleRecord.objects.filter(
+            dns_record_content_type=ContentType.objects.get_for_model(self), dns_record_object_id=self.id
+        )
+
+    @property
+    def source_object(self):
+        """Get the source object that created this A record via DNS rules."""
+        try:
+            tracking_record = self.dns_rule_records.get()
+            return tracking_record.source_object
+        except DNSRuleRecord.DoesNotExist:
+            return None
+
+    @property
+    def dns_rule(self):
+        """Get the DNS rule that created this A record."""
+        try:
+            tracking_record = self.dns_rule_records.get()
+            return tracking_record.rule
+        except DNSRuleRecord.DoesNotExist:
+            return None
+
     class Meta:
         """Meta attributes for ARecord."""
 
