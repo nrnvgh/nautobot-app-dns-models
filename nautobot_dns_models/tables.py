@@ -118,6 +118,8 @@ class ARecordTable(DNSRecordTable):
     """Table for list view."""
 
     address = tables.LinkColumn()
+    source_object = tables.LinkColumn()
+    dns_rule = tables.LinkColumn()
     actions = ButtonsColumn(
         models.ARecord,
         buttons=("changelog", "edit", "delete"),
@@ -136,6 +138,8 @@ class ARecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -147,6 +151,7 @@ class ARecordTable(DNSRecordTable):
             "comment",
             "ttl",
             "actions",
+            "source_object",
         )
 
 
