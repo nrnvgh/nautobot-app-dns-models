@@ -652,6 +652,8 @@ class DNSRule(PrimaryModel):
     #
     # In principle, this logic could be added to the Nautobot core. May not work for every case
     # where jinja2 is rendered, but certainly will for any where the jinja is tied to a content type.
+    # OTOH, this does assume that the first object in the queryset is guarenteed to have any field
+    # that any template is using, which may be...optimistic.
     def _validate_template_compilation_and_runtime(self, template_content: str, field_name: str) -> str | None:
         """
         Validate template compilation and runtime execution.
@@ -663,15 +665,15 @@ class DNSRule(PrimaryModel):
         Returns:
             Error message if validation fails, None if successful
         """
-        try:
-            from nautobot.core.utils.data import render_jinja2
+        from nautobot.core.utils.data import render_jinja2
 
+        try:
             # Get sample object for realistic testing
             sample_obj = None
-            if self.content_type:
-                model_class = self.content_type.model_class()
-                if model_class:
-                    sample_obj = model_class.objects.first()
+
+            model_class = self.content_type.model_class()
+            if model_class:
+                sample_obj = model_class.objects.first()
 
             # Test render with sample object or empty context
             context = {"obj": sample_obj} if sample_obj else {}
