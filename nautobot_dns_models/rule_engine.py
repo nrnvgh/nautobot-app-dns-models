@@ -370,7 +370,7 @@ class DNSRuleEngine:
         """
         logger.debug(f"Rendering template: {template_str} with context: {context}")
         result = render_jinja2(template_str, context)  # Let jinja2 exceptions bubble
-        logger.error(f"Template (({template_str})) rendered to result: {result}")
+        logger.debug(f"Template (({template_str})) rendered to result: {result}")
 
         # Check for falsy results (None, empty string, etc.)
         if not result:
