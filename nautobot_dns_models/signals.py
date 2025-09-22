@@ -4,7 +4,6 @@ import logging
 
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
-from jinja2 import TemplateError
 from nautobot.dcim.models import Device, Interface
 
 from nautobot_dns_models.rule_engine import dns_rule_engine
@@ -122,9 +121,9 @@ def handle_interface_save(sender, instance, created, **kwargs):
     if should_process:
         try:
             dns_rule_engine.process_object(instance, created=created)
-        except Exception as e:
+        except Exception as exc:
             # Log the error but don't let it break the original object save
-            logger.error(f"[SIGNAL] [handle_interface_save] Failed to process DNS rules for Interface {instance}: {e}")
+            logger.error(f"[SIGNAL] [handle_interface_save] Failed to process DNS rules for Interface {instance}: {exc}")
     else:
         logger.debug(
             f"[SIGNAL] [handle_interface_save] Skipping DNS processing for {instance} - no relevant field changes"
@@ -173,9 +172,9 @@ def handle_device_save(sender, instance, created, **kwargs):
             for interface in instance.interfaces.all():
                 logger.debug(f"Processing interface {interface} due to device field changes")
                 dns_rule_engine.process_object(interface, created=False)
-    except Exception as e:
+    except Exception as exc:
         # Log the error but don't let it break the original object save
-        logger.error(f"[handle_device_save] Failed to process DNS rules for Device {instance}: {e}")
+        logger.error(f"[handle_device_save] Failed to process DNS rules for Device {instance}: {exc}")
 
 
 @receiver(post_delete, sender=Device)
@@ -193,9 +192,9 @@ def handle_object_delete(sender, instance, **kwargs):
 
     try:
         dns_rule_engine.delete_dns_records_for_object(instance)
-    except Exception as e:
+    except Exception as exc:
         # Log the error but don't let it break the original object deletion
-        logger.error(f"Failed to clean up DNS records for {instance}: {e}")
+        logger.error(f"Failed to clean up DNS records for {instance}: {exc}")
 
 
 @receiver(m2m_changed, sender=Interface.ip_addresses.through)
@@ -223,6 +222,7 @@ def handle_m2m_changed(sender, instance, action, pk_set, **kwargs):
         # Process the instance that had its relationships changed
         logger.debug(f"[SIGNAL] [handle_m2m_changed] Processing M2M change on {instance}")
         dns_rule_engine.process_object(instance, created=False)
-    except Exception as e:
+    except Exception as exc:
         # Log the error but don't let it break the original operation
-        logger.error(f"Failed to process DNS rules for M2M change on {instance}: {e}")
+        logger.error(f"[SIGNAL] [handle_m2m_changed] Failed to process DNS rules for M2M change on {instance}: {exc}")
+        # Don't re-raise - protect core IP assignment operations
