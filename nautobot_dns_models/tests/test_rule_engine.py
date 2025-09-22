@@ -13,9 +13,9 @@ from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, IPAddressToInterface, Namespace, Prefix
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
+from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 from nautobot_dns_models.models import ARecordModel, DNSRule, DNSRuleRecord, DNSZoneModel
 from nautobot_dns_models.rule_engine import DNSRuleEngine
-from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 
 
 class DNSRuleEngineTestCase(TestCase):
@@ -834,7 +834,7 @@ class MultiRecordTestCase(TestCase):
     def test_a_records_deleted_when_interface_deleted_multiple_ips(self):
         """
         Test that all A records are deleted when interface with multiple IPs is deleted.
-        
+
         This tests cascade deletion scenario where:
         - Interface has multiple IPs with multiple A records
         - Interface itself is deleted
@@ -848,17 +848,14 @@ class MultiRecordTestCase(TestCase):
             status=self.status,
             role=self.role,
         )
-        
+
         interface = Interface.objects.create(
-            device=device,
-            name="eth0",
-            type="1000base-t",
-            status=Status.objects.get_for_model(Interface).first()
+            device=device, name="eth0", type="1000base-t", status=Status.objects.get_for_model(Interface).first()
         )
 
         # Step 2: Create DNS rule for A records
         interface_content_type = ContentType.objects.get_for_model(Interface)
-        
+
         rule = DNSRule.objects.create(
             name="Interface A Record Rule",
             content_type=interface_content_type,
@@ -868,52 +865,48 @@ class MultiRecordTestCase(TestCase):
             name_template="{{ obj.device.name }}-{{ obj.name }}",
             value_template="{{ obj.ip_addresses.all() | ip_address }}",
         )
-        
+
         # Step 3: Create multiple IP addresses and assign to interface
         ip1 = IPAddress.objects.create(
-            address="192.168.1.100/24",
-            namespace=self.namespace,
-            status=Status.objects.get_for_model(IPAddress).first()
+            address="192.168.1.100/24", namespace=self.namespace, status=Status.objects.get_for_model(IPAddress).first()
         )
         ip2 = IPAddress.objects.create(
-            address="192.168.1.101/24",
-            namespace=self.namespace,
-            status=Status.objects.get_for_model(IPAddress).first()
+            address="192.168.1.101/24", namespace=self.namespace, status=Status.objects.get_for_model(IPAddress).first()
         )
         ip3 = IPAddress.objects.create(
-            address="192.168.1.102/24",
-            namespace=self.namespace,
-            status=Status.objects.get_for_model(IPAddress).first()
+            address="192.168.1.102/24", namespace=self.namespace, status=Status.objects.get_for_model(IPAddress).first()
         )
-        
+
         interface.ip_addresses.add(ip1, ip2, ip3)
-        
+
         # Step 4: Verify multiple A records were created
         a_records = ARecordModel.objects.filter(zone=self.dns_zone)
         rule_records = DNSRuleRecord.objects.filter(rule=rule)
-        
+
         self.assertEqual(a_records.count(), 3, "Should create 3 A records for 3 IPs")
         self.assertEqual(rule_records.count(), 3, "Should create 3 tracking records")
-        
+
         # Verify A records point to correct IPs
         created_ips = {str(record.address_id) for record in a_records}
         expected_ips = {str(ip1.id), str(ip2.id), str(ip3.id)}
         self.assertEqual(created_ips, expected_ips, "A records should point to all 3 IPs")
-        
+
         # Step 5: Delete the interface (triggers cascade deletion)
         interface_id = interface.id
         interface.delete()
-        
+
         # Step 6: Verify all A records were deleted via signal handling
         remaining_a_records = ARecordModel.objects.filter(zone=self.dns_zone)
         self.assertEqual(remaining_a_records.count(), 0, "All A records should be deleted when interface is deleted")
-        
+
         # Step 7: Verify all tracking records were cleaned up
         remaining_rule_records = DNSRuleRecord.objects.filter(
             rule=rule,
-            object_id=interface_id  # Check for specific interface that was deleted
+            object_id=interface_id,  # Check for specific interface that was deleted
         )
-        self.assertEqual(remaining_rule_records.count(), 0, "All tracking records should be cleaned up when interface is deleted")
+        self.assertEqual(
+            remaining_rule_records.count(), 0, "All tracking records should be cleaned up when interface is deleted"
+        )
 
 
 class DNSRuleValidationTestCase(TestCase):
@@ -924,23 +917,21 @@ class DNSRuleValidationTestCase(TestCase):
         """Create test infrastructure."""
         cls.device_content_type = ContentType.objects.get_for_model(Device)
         cls.interface_content_type = ContentType.objects.get_for_model(Interface)
-        
+
         # Create sample objects for template validation testing
         # (Our enhanced template validation needs real objects to test against)
         manufacturer = Manufacturer.objects.create(name="Test Manufacturer")
         device_type = DeviceType.objects.create(manufacturer=manufacturer, model="Test Device Type")
         location_type = LocationType.objects.create(name="Test Location Type")
         location = Location.objects.create(
-            name="Test Location", 
-            location_type=location_type,
-            status=Status.objects.get_for_model(Location).first()
+            name="Test Location", location_type=location_type, status=Status.objects.get_for_model(Location).first()
         )
         device_role = Role.objects.get_for_model(Device).first()
         if not device_role:
             device_role = Role.objects.create(name="Test Device Role")
             device_role.content_types.set([ContentType.objects.get_for_model(Device)])
-        
-        # Create sample Device and Interface for template testing. These are only needed because of the 
+
+        # Create sample Device and Interface for template testing. These are only needed because of the
         # enhanced template validation done in DNSRule.clean().
         cls.device = Device.objects.create(
             name="test-device",
@@ -950,23 +941,16 @@ class DNSRuleValidationTestCase(TestCase):
             role=device_role,
         )
         cls.interface = Interface.objects.create(
-            device=cls.device,
-            name="eth0",
-            type="1000base-t",
-            status=Status.objects.get_for_model(Interface).first()
+            device=cls.device, name="eth0", type="1000base-t", status=Status.objects.get_for_model(Interface).first()
         )
-        
+
         # Create IP address infrastructure for template testing
         namespace = Namespace.objects.create(name="Test Namespace")
         prefix = Prefix.objects.create(
-            prefix="192.168.1.0/24",
-            namespace=namespace,
-            status=Status.objects.get_for_model(Prefix).first()
+            prefix="192.168.1.0/24", namespace=namespace, status=Status.objects.get_for_model(Prefix).first()
         )
         ip_address = IPAddress.objects.create(
-            address="192.168.1.100/24",
-            namespace=namespace,
-            status=Status.objects.get_for_model(IPAddress).first()
+            address="192.168.1.100/24", namespace=namespace, status=Status.objects.get_for_model(IPAddress).first()
         )
         # Assign IP to interface so ip_address filter has data to work with
         cls.interface.ip_addresses.add(ip_address)
@@ -984,7 +968,7 @@ class DNSRuleValidationTestCase(TestCase):
                 value_template="{{ obj.name | nonexistent_filter }}",  # This should be caught
             )
             rule.clean()  # Should raise ValidationError
-        
+
         # Verify the error message mentions the filter problem
         error_dict = cm.exception.message_dict
         self.assertIn("value_template", error_dict)
@@ -1003,13 +987,13 @@ class DNSRuleValidationTestCase(TestCase):
             name_template="{{ obj.name }}",
             # No value_template - should be allowed
         )
-        
+
         # Should NOT raise ValidationError - runtime will handle gracefully
         try:
             rule.clean()  # Should succeed
         except ValidationError:
             self.fail("A/AAAA records without value_template should be allowed - runtime handles gracefully")
-        
+
         # Note: Runtime behavior will be:
         # - Log warning about missing value_template
         # - Return empty list (no records created)
@@ -1026,7 +1010,7 @@ class DNSRuleValidationTestCase(TestCase):
             name_template="{{ obj.name }}",
             value_template="{{ obj.ip_addresses.all() | ip_address }}",  # Valid
         )
-        
+
         # Should not raise any exceptions
         try:
             rule.clean()
@@ -1039,13 +1023,13 @@ class DNSRuleValidationTestCase(TestCase):
         rule = DNSRule(
             name="Runtime Warning Rule",
             content_type=self.interface_content_type,
-            record_type="CNAME", 
+            record_type="CNAME",
             enabled=True,
             zone_template="test.local",
             name_template="{{ obj.name }}",
             value_template="{{ obj.nonexistent_attribute }}",  # May fail at runtime
         )
-        
+
         # This should NOT raise ValidationError (just logs warning)
         try:
             rule.clean()  # Should succeed despite potential runtime issues
@@ -1069,11 +1053,11 @@ class DNSRuleValidationTestCase(TestCase):
             name_template="{{ obj.name }}",
             value_template="{{ obj.ip_addresses.all() | ip_address | nonexistent_filter }}",  # Runtime error
         )
-        
+
         # This SHOULD raise ValidationError for A record value templates
         with self.assertRaises(ValidationError) as cm:
             rule.clean()
-        
+
         # Should mention the filter error from validation
         error_dict = cm.exception.message_dict
         self.assertIn("value_template", error_dict)
