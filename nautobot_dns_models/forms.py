@@ -451,7 +451,7 @@ class SRVRecordFilterForm(NautobotFilterForm):
 # =============================================================================
 
 
-class DNSRuleForm(NautobotModelForm):
+class DNSRuleFormDisabled(NautobotModelForm):
     """DNSRule creation/edit form."""
 
     # Class attribute field definitions (proper Django pattern)
@@ -567,6 +567,23 @@ class DNSRuleForm(NautobotModelForm):
 
 class DNSRuleForm(NautobotModelForm):
     """DNSRule creation/edit form with dynamic field display."""
+
+    content_type = forms.ModelChoiceField(
+        queryset=ContentType.objects.filter(
+            django_models.Q(app_label="dcim", model="device")
+            | django_models.Q(app_label="dcim", model="interface")
+            | django_models.Q(app_label="virtualization", model="virtualmachine")
+            | django_models.Q(app_label="virtualization", model="vminterface")
+        ).order_by("app_label", "model"),
+        widget=StaticSelect2(),
+        help_text="Type of object this rule applies to (Device, Interface, VM, VM Interface)",
+    )
+
+    record_type = forms.ChoiceField(
+        choices=add_blank_choice(models.RECORD_TYPE_CHOICES),
+        widget=StaticSelect2(),
+        help_text="Type of DNS record this rule creates",
+    )
 
     class Meta:
         """Meta attributes."""
