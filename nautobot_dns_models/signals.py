@@ -31,7 +31,7 @@ def has_model_field_changes(instance, debug_context="object"):
     def normalize_value(value):
         return value if value not in (None, "") else None
 
-    if instance.pk:  # Only for existing objects
+    if not instance._state.adding:  # Only for existing objects
         try:
             model_class = type(instance)
             old_instance = model_class.objects.get(pk=instance.pk)
