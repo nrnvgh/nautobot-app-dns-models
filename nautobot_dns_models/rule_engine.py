@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from jinja2 import TemplateAssertionError, TemplateSyntaxError
+from jinja2 import TemplateError
 from nautobot.core.utils.data import render_jinja2
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
@@ -107,8 +107,7 @@ class DNSRuleEngine:
                 else:
                     logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
             except (
-                TemplateSyntaxError,
-                TemplateAssertionError,
+                TemplateError,
                 DNSTemplateEmptyError,
                 DNSZoneModel.DoesNotExist,
                 ValueError,
@@ -167,8 +166,7 @@ class DNSRuleEngine:
                 logger.debug(f"Reconciling records for rule {rule.name} on {source_obj}")
                 self._reconcile_records_for_rule(rule, source_obj)
             except (
-                TemplateSyntaxError,
-                TemplateAssertionError,
+                TemplateError,
                 DNSTemplateEmptyError,
                 DNSZoneModel.DoesNotExist,
                 ValueError,
@@ -368,7 +366,7 @@ class DNSRuleEngine:
 
         Raises:
             DNSTemplateEmptyError: If template renders empty or error strings
-            TemplateSyntaxError, TemplateAssertionError: Jinja2 template errors (bubble naturally)
+            TemplateError: Jinja2 template errors (TemplateSyntaxError, TemplateAssertionError, etc.)
         """
         logger.debug(f"Rendering template: {template_str} with context: {context}")
         result = render_jinja2(template_str, context)  # Let jinja2 exceptions bubble
