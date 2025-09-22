@@ -4,14 +4,11 @@ import logging
 from typing import Any, Dict
 
 from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import ValidationError
 from django.db import models
-
-#
-# TODO Use TemplateSyntaxError instead of TemplateError? it required a line number argument.
-from jinja2 import TemplateError
+from jinja2 import TemplateAssertionError, TemplateSyntaxError
 from nautobot.core.utils.data import render_jinja2
 
+from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 from nautobot_dns_models.models import (
     ARecord,
     AAAARecord,
@@ -55,17 +52,16 @@ class DNSRuleEngine:
             created: Whether this is a newly created object
         """
         content_type = ContentType.objects.get_for_model(source_obj)
-        rules = DNSRule.objects.filter(content_type=content_type, enabled=True).order_by("priority")
-
-        # Cache rule count to avoid duplicate COUNT() queries
+        # Get all applicable rules for this object type
+        rules = self._get_applicable_rules(source_obj)
         rules_count = rules.count()
-        logger.debug(f"Processing {source_obj} (type: {content_type}) - found {rules_count} rules")
 
         if rules_count == 0:
             logger.debug(f"No DNS rules found for {content_type} - skipping DNS record processing for {source_obj}")
             return
 
-        # Check if this object already has DNS records (reuse content_type from above)
+        # Check if this object already has DNS records
+        logger.debug(f"Processing {source_obj} (type: {content_type}) - found {rules_count} rules")
         existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=str(source_obj.pk))
 
         # Check existing record count once (serves both logging and conditional logic)
@@ -84,35 +80,47 @@ class DNSRuleEngine:
                 logger.debug(
                     f"UPDATE scenario with no existing records - this may indicate first-time DNS processing for {source_obj}"
                 )
-            for rule in rules:
-                try:
-                    created_records = self.create_dns_record_from_rule(rule, source_obj)
-                    if not created_records:
-                        logger.debug(
-                            f"Skipped creating DNS record from rule {rule.name} for {source_obj} (template rendering failed)"
-                        )
-                    else:
-                        logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
-                except ValidationError as e:
-                    logger.error(
-                        f"ValidationError while creating DNS record from rule {rule.name} for {source_obj}: {e}"
-                    )
-                    # Re-raise ValidationError to allow proper error handling upstream
-                    raise
-                except Exception as e:
-                    logger.error(
-                        f"Failed to create DNS record from rule {rule.name} for {source_obj}: {e} (type={type(e)})"
-                    )
-                    raise
+            self.create_dns_records_for_object(source_obj, rules)
         else:
             # Update existing DNS records for modified objects
             logger.debug(f"Taking UPDATE path for {source_obj} (existing_records={existing_count})")
-            self.update_dns_records_for_object(source_obj)
+            self.update_dns_records_for_object(source_obj, rules)
+
+    def create_dns_records_for_object(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
+        """
+        Create DNS records for an object by processing all applicable rules.
+
+        Uses same exception handling pattern as update_dns_records_for_object
+        for consistent multi-rule processing.
+
+        Args:
+            source_obj: The source object to create DNS records for
+            applicable_rules: Pre-fetched QuerySet of applicable rules
+        """
+        logger.debug(f"Creating DNS records for {source_obj}")
+
+        for rule in applicable_rules:
+            try:
+                created_records = self.create_dns_record_from_rule(rule, source_obj)
+                if not created_records:
+                    logger.debug(f"No records created from rule {rule.name} for {source_obj}")
+                else:
+                    logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
+            except (
+                TemplateSyntaxError,
+                TemplateAssertionError,
+                DNSTemplateEmptyError,
+                DNSZoneModel.DoesNotExist,
+                ValueError,
+            ) as exc:
+                # Template/data errors - don't stop other rules
+                logger.warning(f"Rule {rule.name} failed for {source_obj}: {exc}")
+                continue
 
     def create_dns_record_from_rule(self, rule: DNSRule, source_obj: Any) -> list[Any]:
         """
         Create one or more DNS records based on a rule and source object.
-        
+
         Now aligned with update reconciliation pattern - uses shared helper methods
         for consistent template rendering, zone lookup, and record creation logic.
 
@@ -122,77 +130,80 @@ class DNSRuleEngine:
 
         Returns:
             List of created DNS records (empty list if creation failed)
+
+        Note:
+            Jinja2 exceptions bubble up naturally for proper error handling.
+            Empty result indicates template/data issues, not programming errors.
         """
         logger.debug(f"create_dns_record_from_rule: {rule} / {source_obj}")
-        try:
-            # Calculate what DNS records should exist (reuses update logic)
-            record_data_list = self._calculate_desired_record_data(rule, source_obj)
-            if not record_data_list:
-                logger.debug(f"No record data generated for rule {rule.name}")
-                return []
-            
-            # Create DNS records and tracking records (reuses update logic)
-            created_records = self._create_records_from_data(rule, source_obj, record_data_list)
-            
-            logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
-            return created_records
-            
-        except Exception as e:
-            logger.error(f"Failed to create DNS record from rule {rule.name} for {source_obj}: {e} (type={type(e)})")
+
+        # Calculate what DNS records should exist (reuses update logic)
+        desired_record_data_list = self._calculate_desired_record_data(rule, source_obj)
+        if not desired_record_data_list:
+            logger.debug(f"No record data generated for rule {rule.name}")
             return []
 
-    def update_dns_records_for_object(self, source_obj: Any) -> None:
+        # Create DNS records and tracking records (reuses update logic)
+        created_records = self._create_records_from_data(rule, source_obj, desired_record_data_list)
+
+        logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
+        return created_records
+
+    def update_dns_records_for_object(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
         """
         Update DNS records for an object by reconciling current vs desired state.
-        
+
         Uses reconciliation pattern: compare what should exist vs what does exist,
         then make minimal changes to achieve desired state.
-        
+
         Args:
             source_obj: The source object whose DNS records should be updated
+            applicable_rules: Pre-fetched QuerySet of applicable rules
         """
         logger.debug(f"Updating DNS records for {source_obj}")
-        
-        # Get all rules that apply to this object type
-        applicable_rules = self._get_applicable_rules(source_obj)
-        
+
         for rule in applicable_rules:
-            logger.debug(f"Reconciling records for rule {rule.name} on {source_obj}")
-            self._reconcile_records_for_rule(rule, source_obj)
+            try:
+                logger.debug(f"Reconciling records for rule {rule.name} on {source_obj}")
+                self._reconcile_records_for_rule(rule, source_obj)
+            except (
+                TemplateSyntaxError,
+                TemplateAssertionError,
+                DNSTemplateEmptyError,
+                DNSZoneModel.DoesNotExist,
+                ValueError,
+            ) as exc:
+                # Expected template/data errors - don't stop other rules
+                logger.warning(f"Update failed for rule {rule.name} on {source_obj}: {exc}")
+                # Clean up existing records for this failed rule
+                self._cleanup_records_for_rule(rule, source_obj)
+                continue
 
     def _get_applicable_rules(self, source_obj: Any) -> models.QuerySet:
         """Get all DNS rules that apply to the given source object."""
         content_type = ContentType.objects.get_for_model(source_obj)
-        return DNSRule.objects.filter(
-            content_type=content_type, 
-            enabled=True
-        ).order_by("priority")
+        return DNSRule.objects.filter(content_type=content_type, enabled=True).order_by("priority")
 
     def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> None:
         """Reconcile DNS records for a single rule against current object state."""
-        
         # STEP 1: Determine what SHOULD exist (target state)
-        try:
-            desired_record_data = self._calculate_desired_record_data(rule, source_obj)
-            logger.debug(f"Rule {rule.name}: desired record data: {desired_record_data}")
-        except Exception as e:
-            # Template rendering failed - handle gracefully
-            logger.info(f"Template failed for {rule.name} on {source_obj} - cleaning up existing records: {e}")
-            self._cleanup_records_for_rule(rule, source_obj)
-            return
-        
+        desired_record_data = self._calculate_desired_record_data(rule, source_obj)
+        logger.debug(f"Rule {rule.name}: desired record data: {desired_record_data}")
+
         # STEP 2: Get what currently exists
         existing_tracking_records = self._get_existing_tracking_records(rule, source_obj)
         logger.debug(f"Rule {rule.name}: existing tracking records: {existing_tracking_records}")
         # STEP 3: Compare and reconcile
         existing_count = existing_tracking_records.count()
         desired_count = len(desired_record_data)
-        
+
         logger.debug(f"Rule {rule.name}: existing={existing_count}, desired={desired_count}")
-        
+
         if desired_count == 0:
             # No records should exist - clean up everything
-            logger.info(f"No records needed for {rule.name} on {source_obj} - cleaning up {existing_count} existing records")
+            logger.info(
+                f"No records needed for {rule.name} on {source_obj} - cleaning up {existing_count} existing records"
+            )
             self._cleanup_records_for_rule(rule, source_obj)
         elif existing_count == desired_count:
             # Same count - update existing records in place
@@ -200,7 +211,9 @@ class DNSRuleEngine:
             self._update_existing_records(existing_tracking_records, desired_record_data)
         else:
             # Count changed - delete and recreate is cleanest approach
-            logger.info(f"Record count changed for {rule.name} on {source_obj} ({existing_count}→{desired_count}) - recreating")
+            logger.info(
+                f"Record count changed for {rule.name} on {source_obj} ({existing_count}→{desired_count}) - recreating"
+            )
             self._cleanup_records_for_rule(rule, source_obj)
             if desired_record_data:  # Only create if there's data
                 self._create_records_from_data(rule, source_obj, desired_record_data)
@@ -208,14 +221,14 @@ class DNSRuleEngine:
     def _calculate_desired_record_data(self, rule: DNSRule, source_obj: Any) -> list[dict[str, Any]]:
         """Calculate what DNS record data should exist (without creating records)."""
         context = {"obj": source_obj}
-        
-        # Build base record data (name, zone, etc.) - same logic as create_dns_record_from_rule
+
+        # Build base record data - exceptions bubble up naturally
         base_record_data = {
             "name": self._render_template(rule.name_template, context, "name_template"),
             "zone": self._get_zone_for_rule(rule, context),
         }
-        
-        # Get variations (handles multi-record A/AAAA logic) 
+
+        # Get variations (handles multi-record A/AAAA logic)
         record_data_list = self._build_record_data_variations(rule, context, base_record_data)
         return record_data_list
 
@@ -235,19 +248,21 @@ class DNSRuleEngine:
             object_id=source_obj.id
         )
 
-    def _update_existing_records(self, tracking_records: models.QuerySet, desired_record_data: list[dict[str, Any]]) -> None:
+    def _update_existing_records(
+        self, tracking_records: models.QuerySet, desired_record_data: list[dict[str, Any]]
+    ) -> None:
         """Update existing records when count matches desired count."""
         tracking_records_list = list(tracking_records)  # Evaluate QuerySet once
-        
+
         for tracking_record, desired_data in zip(tracking_records_list, desired_record_data):
             dns_record = tracking_record.dns_record
-            
+
             if dns_record is None:
                 # Handle missing DNS records gracefully - recreate the DNS record
                 logger.warning(f"DNS record missing for tracking record {tracking_record} - recreating")
                 record_class = self._get_record_class(tracking_record.rule.record_type)
                 dns_record = record_class.objects.create(**desired_data)
-                
+
                 # Update tracking record to point to new DNS record
                 tracking_record.dns_record_content_type = ContentType.objects.get_for_model(dns_record)
                 tracking_record.dns_record_object_id = dns_record.id
@@ -263,34 +278,38 @@ class DNSRuleEngine:
     def _cleanup_records_for_rule(self, rule: DNSRule, source_obj: Any) -> None:
         """Clean up all DNS records for a specific rule+object combination."""
         tracking_records = self._get_existing_tracking_records(rule, source_obj)
-        
+
         deleted_dns_count = 0
         deleted_tracking_count = 0
-        
+
         for tracking_record in tracking_records:
             dns_record = tracking_record.dns_record
-            
+
             # Delete tracking record first
             tracking_record.delete()
             deleted_tracking_count += 1
-            
+
             # Then delete actual DNS record if it exists
             if dns_record:
                 dns_record.delete()
                 deleted_dns_count += 1
-        
-        if deleted_dns_count > 0 or deleted_tracking_count > 0:
-            logger.info(f"Cleaned up {deleted_dns_count} DNS records and {deleted_tracking_count} tracking records for {rule.name} on {source_obj}")
 
-    def _create_records_from_data(self, rule: DNSRule, source_obj: Any, record_data_list: list[dict[str, Any]]) -> list[Any]:
+        if deleted_dns_count > 0 or deleted_tracking_count > 0:
+            logger.info(
+                f"Cleaned up {deleted_dns_count} DNS records and {deleted_tracking_count} tracking records for {rule.name} on {source_obj}"
+            )
+
+    def _create_records_from_data(
+        self, rule: DNSRule, source_obj: Any, record_data_list: list[dict[str, Any]]
+    ) -> list[Any]:
         """Create DNS records and tracking records from prepared data, returning the created DNS records."""
         record_class = self._get_record_class(rule.record_type)
         created_records = []
-        
+
         for record_data in record_data_list:
             # Create the DNS record
             dns_record = record_class.objects.create(**record_data)
-            
+
             # Create the tracking record
             rule_record = DNSRuleRecord.objects.create(
                 rule=rule,
@@ -299,13 +318,13 @@ class DNSRuleEngine:
                 dns_record_content_type=ContentType.objects.get_for_model(dns_record),
                 dns_record_object_id=str(dns_record.id),
             )
-            
+
             # Create dependency tracking records for Jinja templates
             self._create_jinja_dependency_records(rule, rule_record, source_obj)
-            
+
             created_records.append(dns_record)
             logger.info(f"Created DNS record {dns_record} from rule {rule.name} for {source_obj}")
-        
+
         return created_records
 
     def _get_record_class(self, record_type: str):
@@ -348,65 +367,56 @@ class DNSRuleEngine:
             The rendered template string
 
         Raises:
-            TemplateError: If template rendering fails
-
-        Note:
-            Unlike ComputedFields which have fallback values, DNS records require
-            precise values. Template failures result in DNS record creation failure
-            rather than creating records with invalid/empty data.
+            DNSTemplateEmptyError: If template renders empty or error strings
+            TemplateSyntaxError, TemplateAssertionError: Jinja2 template errors (bubble naturally)
         """
-        try:
-            logger.debug(f"Rendering template: {template_str} with context: {context}")
-            result = render_jinja2(template_str, context)
-            logger.error(f"Template (({template_str})) rendered to result: {result}")
+        logger.debug(f"Rendering template: {template_str} with context: {context}")
+        result = render_jinja2(template_str, context)  # Let jinja2 exceptions bubble
+        logger.error(f"Template (({template_str})) rendered to result: {result}")
 
-            # Check for falsy results (None, empty string, etc.)
-            # render_jinja2 returns empty string for undefined variables/attributes
-            if not result:
-                logger.warning(
-                    f"[1] Template rendered to falsy result for {field_name}: '{template_str}' with context keys: {list(context.keys())}"
-                )
-                raise TemplateError(f"[1] Template rendered empty for {field_name}: '{template_str}'")
+        # Check for falsy results (None, empty string, etc.)
+        if not result:
+            raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
 
-            # Check for template error strings that render_jinja2 sometimes returns
-            # Pattern: "{{ no such element: None['id'] }}" when accessing attributes on None
-            if "{{ no such element:" in result:
-                logger.warning(f"[2] Template (({template_str})) rendered to error string for {field_name}: {result}")
-                raise TemplateError(f"[2] Template error for {field_name}: {result}")
+        # Check for template error strings that render_jinja2 sometimes returns
+        # Pattern: "{{ no such element: None['id'] }}" when accessing attributes on None
+        if "{{ no such element:" in result:
+            raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
 
-            return result
-        except Exception as exc:
-            # Following Nautobot core pattern: broad exception handling with logging
-            logger.warning(f"[3] Template rendering failed for {field_name}: {exc}")
-            raise TemplateError(f"[3] Failed to render {field_name}: {exc}") from exc
+        return result
 
-    def _build_record_data_variations(self, rule: DNSRule, context: dict[str, Any], base_record_data: dict[str, Any]) -> list[dict[str, Any]]:
+    def _build_record_data_variations(
+        self, rule: DNSRule, context: dict[str, Any], base_record_data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """
         Build list of record data dictionaries (1 for single, N for multiple records).
-        
+
         Handles the case where value templates return multiple IPs (space-delimited UUIDs)
         and creates separate record data for each one.
-        
+
         Args:
             rule: The DNS rule containing templates
             context: Jinja context for template rendering
             base_record_data: Base data shared across all records (name, zone, etc.)
-            
+
         Returns:
             List of record_data dictionaries ready for DNS record creation
         """
         record_type = rule.record_type
-        
+
         if record_type in ["A", "AAAA"]:
             logger.debug(f"Building A/AAAA record data variations from rule {rule.name}")
             # Handle A/AAAA records with potential multiple IPs
             if rule.value_template:
                 address_result = self._render_template(rule.value_template, context, "value_template")
                 logger.debug(f"A/AAAA record data variations from rule {rule.name} - address result: {address_result}")
+
                 # Split on space - handles both single and multiple IPs uniformly
                 address_ids = address_result.split()
-                logger.debug(f"Building {len(address_ids)} {record_type} record data variations from IPs: {address_result}")
-                
+                logger.debug(
+                    f"Building {len(address_ids)} {record_type} record data variations from IPs: {address_result}"
+                )
+
                 record_variations = []
                 for address_id in address_ids:
                     record_data = base_record_data.copy()
@@ -414,16 +424,18 @@ class DNSRuleEngine:
                     record_variations.append(record_data)
                 return record_variations
             else:
-                logger.warning(f"A/AAAA record rule {rule.name} has no value_template")
-                return []
-        
+                # No value template - raise exception rather than return empty
+                raise DNSTemplateEmptyError("value_template", "missing", [])
+
         else:
             # Other record types - use existing single-record logic
             record_data = base_record_data.copy()
             self._add_record_type_fields_single(rule, context, record_data)
             return [record_data]
 
-    def _add_record_type_fields_single(self, rule: DNSRule, context: Dict[str, Any], record_data: Dict[str, Any]) -> None:
+    def _add_record_type_fields_single(
+        self, rule: DNSRule, context: Dict[str, Any], record_data: Dict[str, Any]
+    ) -> None:
         """
         Add record-type specific fields to the record data.
 
@@ -431,10 +443,13 @@ class DNSRuleEngine:
             rule: The DNS rule containing the templates
             context: The Jinja context for rendering
             record_data: The dictionary to add fields to
+
+        Raises:
+            DNSTemplateEmptyError: If any required template renders empty
         """
         record_type = rule.record_type
 
-        # A/AAAA records are now handled in _build_record_data_variations 
+        # A/AAAA records are now handled in _build_record_data_variations
         # to support multiple IP addresses cleanly
         if record_type in ["A", "AAAA"]:
             # This method no longer handles A/AAAA - they're handled in the variations builder
@@ -485,13 +500,13 @@ class DNSRuleEngine:
     def _create_jinja_dependency_records(self, rule: DNSRule, rule_record: "DNSRuleRecord", source_obj: Any) -> None:
         """
         Create dependency tracking records for Jinja rule templates.
-        
+
         Note: This is a placeholder implementation for the dependency tracking POC.
         The actual implementation was filed away as "successful POC" for now.
-        
+
         Args:
             rule: The DNS rule that was processed
-            rule_record: The DNSRuleRecord tracking record  
+            rule_record: The DNSRuleRecord tracking record
             source_obj: The source object that triggered rule processing
         """
         # Placeholder - dependency tracking implementation was successful POC
