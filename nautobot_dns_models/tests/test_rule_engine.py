@@ -831,6 +831,90 @@ class MultiRecordTestCase(TestCase):
         final_ip = {str(record.address_id) for record in a_records_final}
         self.assertEqual(final_ip, {str(ip1.id)}, "Final A record should point to ip1")
 
+    def test_a_records_deleted_when_interface_deleted_multiple_ips(self):
+        """
+        Test that all A records are deleted when interface with multiple IPs is deleted.
+        
+        This tests cascade deletion scenario where:
+        - Interface has multiple IPs with multiple A records
+        - Interface itself is deleted
+        - All A records and tracking records should be cleaned up via signal handling
+        """
+        # Step 1: Create device and interface
+        device = Device.objects.create(
+            name="test-device",
+            device_type=self.device_type,
+            location=self.location,
+            status=self.status,
+            role=self.role,
+        )
+        
+        interface = Interface.objects.create(
+            device=device,
+            name="eth0",
+            type="1000base-t",
+            status=Status.objects.get_for_model(Interface).first()
+        )
+
+        # Step 2: Create DNS rule for A records
+        interface_content_type = ContentType.objects.get_for_model(Interface)
+        
+        rule = DNSRule.objects.create(
+            name="Interface A Record Rule",
+            content_type=interface_content_type,
+            record_type="A",
+            enabled=True,
+            zone_template=self.dns_zone.name,
+            name_template="{{ obj.device.name }}-{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+        )
+        
+        # Step 3: Create multiple IP addresses and assign to interface
+        ip1 = IPAddress.objects.create(
+            address="192.168.1.100/24",
+            namespace=self.namespace,
+            status=Status.objects.get_for_model(IPAddress).first()
+        )
+        ip2 = IPAddress.objects.create(
+            address="192.168.1.101/24",
+            namespace=self.namespace,
+            status=Status.objects.get_for_model(IPAddress).first()
+        )
+        ip3 = IPAddress.objects.create(
+            address="192.168.1.102/24",
+            namespace=self.namespace,
+            status=Status.objects.get_for_model(IPAddress).first()
+        )
+        
+        interface.ip_addresses.add(ip1, ip2, ip3)
+        
+        # Step 4: Verify multiple A records were created
+        a_records = ARecordModel.objects.filter(zone=self.dns_zone)
+        rule_records = DNSRuleRecord.objects.filter(rule=rule)
+        
+        self.assertEqual(a_records.count(), 3, "Should create 3 A records for 3 IPs")
+        self.assertEqual(rule_records.count(), 3, "Should create 3 tracking records")
+        
+        # Verify A records point to correct IPs
+        created_ips = {str(record.address_id) for record in a_records}
+        expected_ips = {str(ip1.id), str(ip2.id), str(ip3.id)}
+        self.assertEqual(created_ips, expected_ips, "A records should point to all 3 IPs")
+        
+        # Step 5: Delete the interface (triggers cascade deletion)
+        interface_id = interface.id
+        interface.delete()
+        
+        # Step 6: Verify all A records were deleted via signal handling
+        remaining_a_records = ARecordModel.objects.filter(zone=self.dns_zone)
+        self.assertEqual(remaining_a_records.count(), 0, "All A records should be deleted when interface is deleted")
+        
+        # Step 7: Verify all tracking records were cleaned up
+        remaining_rule_records = DNSRuleRecord.objects.filter(
+            rule=rule,
+            object_id=interface_id  # Check for specific interface that was deleted
+        )
+        self.assertEqual(remaining_rule_records.count(), 0, "All tracking records should be cleaned up when interface is deleted")
+
 
 class DNSRuleValidationTestCase(TestCase):
     """Test DNS rule template validation."""
