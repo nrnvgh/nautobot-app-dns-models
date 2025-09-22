@@ -15,6 +15,7 @@ from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine,
 
 from nautobot_dns_models.models import ARecordModel, DNSRule, DNSRuleRecord, DNSZoneModel
 from nautobot_dns_models.rule_engine import DNSRuleEngine
+from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 
 
 class DNSRuleEngineTestCase(TestCase):
@@ -91,7 +92,7 @@ class DNSRuleEngineTestCase(TestCase):
     def test_render_template_method_with_undefined_variable(self):
         """Test _render_template method behavior with undefined variables."""
         # render_jinja2 returns empty string for undefined variables, which our method treats as an error
-        with self.assertRaises(TemplateError):
+        with self.assertRaises(DNSTemplateEmptyError):
             self.engine._render_template("{{ undefined_var }}", {}, "test_field")
 
     def test_render_template_method_with_syntax_error(self):
@@ -104,7 +105,7 @@ class DNSRuleEngineTestCase(TestCase):
         """Test _render_template method behavior when accessing attributes on None."""
         # This is the real-world case: when an IP is removed, obj.primary_ip4 becomes None
         # render_jinja2 returns empty string, which our method treats as an error
-        with self.assertRaises(TemplateError):
+        with self.assertRaises(DNSTemplateEmptyError):
             self.engine._render_template(
                 "{{ obj.primary_ip4.id }}", {"obj": type("MockObj", (), {"primary_ip4": None})()}, "test_field"
             )
@@ -128,7 +129,7 @@ class DNSRuleEngineTestCase(TestCase):
 
         for template, context in test_cases:
             with self.subTest(template=template, context=context):
-                with self.assertRaises(TemplateError):
+                with self.assertRaises(DNSTemplateEmptyError):
                     self.engine._render_template(template, context, "test_field")
 
     def test_render_template_method_valid_non_empty_result(self):
@@ -200,12 +201,12 @@ class DNSRuleEngineTestCase(TestCase):
         # Test case where template renders to empty string (most common failure mode)
         mock_obj = type("MockDevice", (), {"primary_ip4": None})()
 
-        with self.assertRaises(TemplateError) as context:
+        with self.assertRaises(DNSTemplateEmptyError) as context:
             self.engine._render_template("{{ obj.primary_ip4.id }}", {"obj": mock_obj}, "test_field")
 
         # The error should mention that template rendered empty
         error_message = str(context.exception)
-        self.assertIn("Template rendered empty", error_message)
+        self.assertIn("Template test_field rendered empty", error_message)
 
     def test_render_template_method_catches_error_strings(self):
         """Test detection of '{{ no such element:' error strings (if we can reproduce them)."""
@@ -216,12 +217,12 @@ class DNSRuleEngineTestCase(TestCase):
         error_string = "{{ no such element: None['id'] }}"
 
         with patch("nautobot_dns_models.rule_engine.render_jinja2", return_value=error_string):
-            with self.assertRaises(TemplateError) as context:
+            with self.assertRaises(DNSTemplateEmptyError) as context:
                 self.engine._render_template("{{ obj.attr.id }}", {"obj": "test"}, "test_field")
 
-            # The error should mention template error and contain the actual error pattern
+            # The error should mention template rendered empty and contain the actual error pattern
             error_message = str(context.exception)
-            self.assertIn("Template error", error_message)
+            self.assertIn("Template test_field rendered empty", error_message)
             self.assertIn("{{ no such element:", error_message)
 
 
@@ -829,3 +830,170 @@ class MultiRecordTestCase(TestCase):
         # Verify last record points to remaining IP
         final_ip = {str(record.address_id) for record in a_records_final}
         self.assertEqual(final_ip, {str(ip1.id)}, "Final A record should point to ip1")
+
+
+class DNSRuleValidationTestCase(TestCase):
+    """Test DNS rule template validation."""
+
+    @classmethod
+    def setUpTestData(cls):
+        """Create test infrastructure."""
+        cls.device_content_type = ContentType.objects.get_for_model(Device)
+        cls.interface_content_type = ContentType.objects.get_for_model(Interface)
+        
+        # Create sample objects for template validation testing
+        # (Our enhanced template validation needs real objects to test against)
+        manufacturer = Manufacturer.objects.create(name="Test Manufacturer")
+        device_type = DeviceType.objects.create(manufacturer=manufacturer, model="Test Device Type")
+        location_type = LocationType.objects.create(name="Test Location Type")
+        location = Location.objects.create(
+            name="Test Location", 
+            location_type=location_type,
+            status=Status.objects.get_for_model(Location).first()
+        )
+        device_role = Role.objects.get_for_model(Device).first()
+        if not device_role:
+            device_role = Role.objects.create(name="Test Device Role")
+            device_role.content_types.set([ContentType.objects.get_for_model(Device)])
+        
+        # Create sample Device and Interface for template testing. These are only needed because of the 
+        # enhanced template validation done in DNSRule.clean().
+        cls.device = Device.objects.create(
+            name="test-device",
+            device_type=device_type,
+            location=location,
+            status=Status.objects.get_for_model(Device).first(),
+            role=device_role,
+        )
+        cls.interface = Interface.objects.create(
+            device=cls.device,
+            name="eth0",
+            type="1000base-t",
+            status=Status.objects.get_for_model(Interface).first()
+        )
+        
+        # Create IP address infrastructure for template testing
+        namespace = Namespace.objects.create(name="Test Namespace")
+        prefix = Prefix.objects.create(
+            prefix="192.168.1.0/24",
+            namespace=namespace,
+            status=Status.objects.get_for_model(Prefix).first()
+        )
+        ip_address = IPAddress.objects.create(
+            address="192.168.1.100/24",
+            namespace=namespace,
+            status=Status.objects.get_for_model(IPAddress).first()
+        )
+        # Assign IP to interface so ip_address filter has data to work with
+        cls.interface.ip_addresses.add(ip_address)
+
+    def test_rule_validation_catches_nonexistent_filter(self):
+        """Test that DNSRule.clean() catches non-existent filter errors during rule creation."""
+        with self.assertRaises(ValidationError) as cm:
+            rule = DNSRule(
+                name="Bad Filter Rule",
+                content_type=self.interface_content_type,
+                record_type="A",
+                enabled=True,
+                zone_template="test.local",
+                name_template="{{ obj.name }}",
+                value_template="{{ obj.name | nonexistent_filter }}",  # This should be caught
+            )
+            rule.clean()  # Should raise ValidationError
+        
+        # Verify the error message mentions the filter problem
+        error_dict = cm.exception.message_dict
+        self.assertIn("value_template", error_dict)
+        # error_dict values are lists, so join them and check
+        error_messages = " ".join(error_dict["value_template"]).lower()
+        self.assertIn("filter error", error_messages)
+
+    def test_rule_validation_a_record_without_value_template(self):
+        """Test that A records without value_template are allowed - runtime will handle gracefully."""
+        rule = DNSRule(
+            name="No Value Template Rule",
+            content_type=self.interface_content_type,
+            record_type="A",
+            enabled=True,
+            zone_template="test.local",
+            name_template="{{ obj.name }}",
+            # No value_template - should be allowed
+        )
+        
+        # Should NOT raise ValidationError - runtime will handle gracefully
+        try:
+            rule.clean()  # Should succeed
+        except ValidationError:
+            self.fail("A/AAAA records without value_template should be allowed - runtime handles gracefully")
+        
+        # Note: Runtime behavior will be:
+        # - Log warning about missing value_template
+        # - Return empty list (no records created)
+        # - Could potentially implement smart defaults in the future
+
+    def test_rule_validation_allows_valid_templates(self):
+        """Test that valid templates pass validation."""
+        rule = DNSRule(
+            name="Valid Rule",
+            content_type=self.interface_content_type,
+            record_type="A",
+            enabled=True,
+            zone_template="test.local",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() | ip_address }}",  # Valid
+        )
+        
+        # Should not raise any exceptions
+        try:
+            rule.clean()
+        except ValidationError:
+            self.fail("Valid template should not raise ValidationError")
+
+    def test_rule_validation_with_runtime_template_warning(self):
+        """Test that templates with potential runtime issues generate warnings but don't block save."""
+        # Template that might fail at runtime depending on data (obj.missing_attr)
+        rule = DNSRule(
+            name="Runtime Warning Rule",
+            content_type=self.interface_content_type,
+            record_type="CNAME", 
+            enabled=True,
+            zone_template="test.local",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.nonexistent_attribute }}",  # May fail at runtime
+        )
+        
+        # This should NOT raise ValidationError (just logs warning)
+        try:
+            rule.clean()  # Should succeed despite potential runtime issues
+        except ValidationError as e:
+            # If there's a ValidationError, it should NOT be about runtime issues
+            error_dict = e.message_dict
+            for field, messages in error_dict.items():
+                # messages is a list, so join and check
+                combined_message = " ".join(messages).lower()
+                self.assertNotIn("runtime issues", combined_message)
+
+    def test_rule_validation_critical_template_runtime_errors(self):
+        """Test that A/AAAA value templates with runtime errors are blocked."""
+        # A record value template that would fail at runtime - should be blocked
+        rule = DNSRule(
+            name="Critical Runtime Error Rule",
+            content_type=self.interface_content_type,
+            record_type="A",
+            enabled=True,
+            zone_template="test.local",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() | ip_address | nonexistent_filter }}",  # Runtime error
+        )
+        
+        # This SHOULD raise ValidationError for A record value templates
+        with self.assertRaises(ValidationError) as cm:
+            rule.clean()
+        
+        # Should mention the filter error from validation
+        error_dict = cm.exception.message_dict
+        self.assertIn("value_template", error_dict)
+
+        # error_dict values are lists, so join them and check
+        error_messages = " ".join(error_dict["value_template"]).lower()
+        self.assertIn("filter error", error_messages)
