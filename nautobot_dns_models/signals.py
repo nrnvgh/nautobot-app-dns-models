@@ -123,7 +123,9 @@ def handle_interface_save(sender, instance, created, **kwargs):
             dns_rule_engine.process_object(instance, created=created)
         except Exception as exc:
             # Log the error but don't let it break the original object save
-            logger.error(f"[SIGNAL] [handle_interface_save] Failed to process DNS rules for Interface {instance}: {exc}")
+            logger.error(
+                f"[SIGNAL] [handle_interface_save] Failed to process DNS rules for Interface {instance}: {exc}"
+            )
     else:
         logger.debug(
             f"[SIGNAL] [handle_interface_save] Skipping DNS processing for {instance} - no relevant field changes"
