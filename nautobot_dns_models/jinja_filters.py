@@ -77,6 +77,6 @@ def ip_address(ip_obj, version=None):
 
 
 @library.filter
-def normalize(s):
+def dns_normalize(s):
     """Normalize a value so it's DNS compliant."""
     return s.replace("/", "-").replace(".", "-").lower()
