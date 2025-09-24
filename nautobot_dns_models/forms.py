@@ -9,6 +9,8 @@ from nautobot.apps.forms import (
     NautobotModelForm,
     TagsBulkEditFormMixin,
 )
+from nautobot.core.forms import add_blank_choice
+from nautobot.core.forms.widgets import StaticSelect2
 from nautobot.extras.forms import NautobotFilterForm
 from nautobot.ipam.models import Prefix
 
@@ -475,7 +477,7 @@ class DNSRuleFormDisabled(NautobotModelForm):
     )
 
     zone_fixed = forms.ModelChoiceField(
-        queryset=models.DNSZoneModel.objects.all().order_by("name"),
+        queryset=models.DNSZone.objects.all().order_by("name"),
         required=False,
         widget=StaticSelect2(),
         label="Fixed Zone",

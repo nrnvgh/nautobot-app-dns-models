@@ -109,7 +109,7 @@ class DNSRuleEngine:
             except (
                 TemplateError,
                 DNSTemplateEmptyError,
-                DNSZoneModel.DoesNotExist,
+                DNSZone.DoesNotExist,
                 ValueError,
             ) as exc:
                 # Template/data errors - don't stop other rules
@@ -168,7 +168,7 @@ class DNSRuleEngine:
             except (
                 TemplateError,
                 DNSTemplateEmptyError,
-                DNSZoneModel.DoesNotExist,
+                DNSZone.DoesNotExist,
                 ValueError,
             ) as exc:
                 # Expected template/data errors - don't stop other rules
@@ -230,11 +230,11 @@ class DNSRuleEngine:
         record_data_list = self._build_record_data_variations(rule, context, base_record_data)
         return record_data_list
 
-    def _get_zone_for_rule(self, rule: DNSRule, context: dict[str, Any]) -> DNSZoneModel:
+    def _get_zone_for_rule(self, rule: DNSRule, context: dict[str, Any]) -> DNSZone:
         """Extract zone logic into reusable method."""
         if rule.zone_template:
             zone_name = self._render_template(rule.zone_template, context, "zone_template")
-            return DNSZoneModel.objects.get(name=zone_name)
+            return DNSZone.objects.get(name=zone_name)
         else:
             return rule.zone_fixed
 

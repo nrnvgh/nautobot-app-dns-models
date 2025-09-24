@@ -15,7 +15,7 @@ def ip_address(ip_obj, version=None):
     Extract IPAddress UUID from Nautobot IPAddress objects for DNS record creation.
 
     This filter returns the UUID/ID of the IPAddress object, which is what DNS record
-    models (ARecordModel, AAAARecordModel) expect for their address ForeignKey field.
+    models (ARecord, AAAARecord) expect for their address ForeignKey field.
 
     Args:
         ip_obj (IPAddress): Nautobot IPAddress object
