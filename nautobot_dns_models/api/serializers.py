@@ -164,3 +164,15 @@ class SRVRecordSerializer(DNSRecordSerializer):
 
         model = models.SRVRecord
         fields = "__all__"
+
+
+class DNSRuleSerializer(NautobotModelSerializer):  # pylint: disable=too-many-ancestors
+    """DNSRule Serializer."""
+
+    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:dnsrule-detail")
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRule
+        fields = "__all__"

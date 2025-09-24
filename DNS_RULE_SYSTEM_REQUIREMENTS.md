@@ -8,9 +8,11 @@ This document defines the requirements for implementing a Jinja-based DNS record
 ### 1.2 Scope
 The DNS Rule System provides automated DNS record management triggered by object lifecycle events in Nautobot, supporting all DNS record types (A, AAAA, CNAME, MX, NS, PTR, SRV, TXT) with user-defined Jinja2 templates.
 
-### 1.3 Branch Information
+### 1.3 Version Information
 - **Development Branch**: [`u/nrnvgh-107-jinja-based-dns-record-updates`](https://github.com/nrnvgh/nautobot-app-dns-models/tree/u/nrnvgh-107-jinja-based-dns-record-updates)
 - **Target Nautobot Version**: 2.4+
+- **Current Status**: v0.9 (Proof of Concept - single record per rule)
+- **Production Target**: v1.0 (Multiple records per rule for real-world usage)
 
 ## 2. Functional Requirements
 
@@ -50,33 +52,40 @@ The DNS Rule System provides automated DNS record management triggered by object
 - **FR-010**: Manual DNS record deletion SHALL leave orphaned DNSRuleRecord entries for cleanup
 - **FR-011**: Record recreation SHALL be attempted if DNS record is missing but DNSRuleRecord exists
 
+#### 2.1.5 Rule Uniqueness and Conflict Management
+- **FR-012**: Multiple DNS rules MAY target the same content type with different record types (e.g., Interface A + Interface CNAME rules)
+- **FR-013**: Only one DNS rule SHALL be permitted per `(content_type, record_type)` combination in v1.0
+- **FR-014**: Duplicate record type rules SHALL be prevented at rule creation time (e.g., cannot create two Interface A record rules)
+- **FR-015**: Rule creation validation SHALL be designed for future extensibility to support tenant/location-based scoping
+- **FR-016**: Future versions MAY allow multiple rules of the same type when scoped to different tenants/locations (v2.0+)
+
 ### 2.2 Signal Handling
 
 #### 2.2.1 Object Lifecycle Events
-- **FR-012**: System SHALL respond to `post_save` signals for object creation and updates
-- **FR-013**: System SHALL respond to `post_delete` signals for object deletion
-- **FR-014**: System SHALL respond to `m2m_changed` signals for many-to-many relationship changes
+- **FR-017**: System SHALL respond to `post_save` signals for object creation and updates
+- **FR-018**: System SHALL respond to `post_delete` signals for object deletion
+- **FR-019**: System SHALL respond to `m2m_changed` signals for many-to-many relationship changes
 
 #### 2.2.2 Recursion Prevention
-- **FR-015**: System SHALL NOT process DNS models to prevent infinite recursion
-- **FR-016**: Signal processing errors SHALL be logged without affecting the original operation
+- **FR-020**: System SHALL NOT process DNS models to prevent infinite recursion
+- **FR-021**: Signal processing errors SHALL be logged without affecting the original operation
 
 ### 2.3 User Interface
 
 #### 2.3.1 Rule Management
-- **FR-017**: Users SHALL be able to create, read, update, and delete DNS rules via web UI
-- **FR-018**: Rule forms SHALL dynamically show/hide fields based on selected record type
-- **FR-019**: Rule lists SHALL be filterable by content type, record type, and enabled status
+- **FR-022**: Users SHALL be able to create, read, update, and delete DNS rules via web UI
+- **FR-023**: Rule forms SHALL dynamically show/hide fields based on selected record type
+- **FR-024**: Rule lists SHALL be filterable by content type, record type, and enabled status
 
 #### 2.3.2 Record Identification
-- **FR-020**: DNS record lists SHALL indicate which records were auto-created by rules
-- **FR-021**: Users SHALL be able to filter records by creation method (manual vs auto-created)
+- **FR-025**: DNS record lists SHALL indicate which records were auto-created by rules
+- **FR-026**: Users SHALL be able to filter records by creation method (manual vs auto-created)
 
 ### 2.4 API Integration
 
 #### 2.4.1 REST API
-- **FR-022**: DNS rules SHALL be fully manageable via REST API
-- **FR-023**: API responses SHALL include rule linkage information for DNS records
+- **FR-027**: DNS rules SHALL be fully manageable via REST API
+- **FR-028**: API responses SHALL include rule linkage information for DNS records
 
 ## 3. Technical Requirements
 
@@ -179,17 +188,63 @@ The DNS Rule System provides automated DNS record management triggered by object
 
 ### 4.2 Pending Work Items
 
-#### 4.2.1 High Priority
+#### 4.2.1 High Priority (v0.9 - Proof of Concept Completion)
 - [x] **JavaScript Implementation**: Complete dynamic form field visibility based on record type selection
-- [ ] **Interface IP Handling**: Investigate special handling for A records from Interface objects with multiple IPs
-- [ ] **Test Case Development**: Create comprehensive test cases for interface IP assignments
-- [ ] **Template Exception Testing**: Verify _render_template catches correct exception types. We also need to ensure that exceptions are handled graceful and in keeping with Least Surprise. If a template fails to render (and therefore the DNS entry isn't created), should we allow the parent action to take place?
-- [ ] **Multiple Template Error Display**: Add test to ensure that template syntax errors for multiple templates in a given rule are all shown in the UI simultaneously
+  - **Completed**: Fixed StaticSelect2 widget event handling with select2:change and select2:select events
+- [x] **Interface IP Handling**: Basic single record from interface IPs (POC complete)
+- [x] **Test Case Development**: Create comprehensive test cases for interface IP assignments (single record)
+- [ ] **Rule Uniqueness Validation**: Implement `(content_type, record_type)` uniqueness constraint
+- [ ] **DNSRuleRecordSerializer**: Add missing API serializer for DNSRuleRecord model  
+- [ ] **Template Exception Testing**: Verify _render_template catches correct exception types and graceful handling
+- [x] **Performance Testing Framework**: Create comprehensive performance test suite for DNS rule system
+  - **Completed**: Built test_performance.py with baseline, SQL analysis, and statistical measurement across 128 IP assignments
+  - **Metrics**: Quantified DNS overhead at 6.31ms per IP assignment with 6 additional SQL queries
+  - **Value**: Provides baseline for optimization work and data-driven performance improvement
 
-#### 4.2.2 Medium Priority
+#### 4.2.2 Critical Priority (v1.0 - Production Architecture) 
+- [x] **Multiple Records Per Rule Engine**: MAJOR REWORK - Enable one rule to create multiple DNS records
+  - **Completed**: Space-delimited UUID filter approach for A/AAAA records
+  - **Template Enhancement**: `{{ obj.ip_addresses.all | ip_address }}` → "uuid1 uuid2 uuid3"
+  - **Architecture**: Clean `_build_record_data_variations` method creates multiple record data
+- [x] **Multi-Record Update Logic**: Fix update path to properly handle count changes (3→2→1 IPs)
+  - **Completed**: Reconciliation pattern compares desired vs existing state
+  - **Architecture**: Delete/recreate approach when record counts change
+- [x] **Create/Update Path Alignment**: Unified architecture between create and update operations
+  - **Completed**: Shared helper methods for template rendering, zone lookup, record creation
+  - **Code Quality**: Eliminated duplicate logic between creation and update paths
+- [x] **Enhanced IP Address Filter**: Multi-IP collection support with space-delimited UUID output
+  - **Completed**: Filter handles QuerySet collections, returns space-delimited UUIDs
+  - **Testing**: Comprehensive test coverage for single and multiple IP scenarios
+- [x] **Comprehensive Multi-Record Testing**: Complete test coverage for multi-record scenarios
+  - **Completed**: End-to-end tests for 3→2→1 IP cleanup scenarios
+  - **Coverage**: Orphaned record detection, signal integration, reconciliation logic
+- [x] **Template Filter Validation**: Enhanced DNSRule.clean() catches compilation and runtime errors
+  - **Completed**: Full template compilation testing during rule creation
+  - **Enhancement**: Real object test rendering to catch runtime issues early
+- [x] **Transaction Isolation**: Removed dangerous signal handler that could break IP assignments
+  - **Completed**: Eliminated handle_m2m_wor handler with transaction-breaking exception handling
+  - **Safety**: DNS failures can no longer poison main object transactions
+- [ ] **Enhanced Interface IP Handling**: Production-ready multiple IP scenarios (replaces POC implementation)
+- [ ] **Device Primary IP Handling**: Support Device.primary_ip4/primary_ip6 DNS record creation
+- [ ] **VM/VMInterface Signal Handling**: Multiple record support for virtualization (1.0 priority)  
+- [x] **Device Rename Cascade Handling**: Update all DNS records when device names change (vital for 1.0)
+  - **Completed**: Implemented comprehensive signal deduplication with field change detection for Device and Interface models
+  - **Architecture**: Smart change detection using has_model_field_changes() helper, cascade processing for interface DNS records when device fields change
+- [x] **Graceful Jinja Error Handling**: Improve specific exception handling - catch expected errors gracefully, expose programming bugs
+  - **Completed**: Refined exception handling strategy with specific exception types (DNSTemplateEmptyError, DNSProcessingError)
+  - **Architecture**: Clean exception-based design allowing specific failures to be caught while preserving programming bug visibility
+
+#### 4.2.3 Medium Priority  
 - [ ] **Rule Scoping System**: Design tenant/location/tag-based rule filtering. Should also support global rules.
 - [ ] **IP Address Lookup**: Solve A/AAAA record IP address field handling with VRF considerations
 - [ ] **Manual Record Deletion Handling**: Clean up orphaned DNSRuleRecord entries
+  - **Test Coverage**: Write test case that verifies DNSRuleRecord entries are properly cleaned up when corresponding DNS records are manually deleted
+- [ ] **Template Failure Deletion Strategy**: Evaluate if deleting DNS records on template rendering failures is too aggressive
+  - **Alternatives**: Consider graceful degradation, retry logic, or manual intervention flags instead of immediate deletion
+  - **Impact**: Current approach may delete records due to transient failures (network issues, temporary locks)
+- [ ] **A/AAAA Filter Requirement Validation**: Implement alternative validation for A/AAAA record value templates requiring | ip_address filter
+  - **Context**: Removed from clean() method for more thoughtful implementation approach
+  - **Options**: Form-level validation, runtime guidance, or UI hints
 - [ ] **UI Record Indicators**: Add visual indicators for auto-created vs manual records
 - [ ] **Rule Deletion Strategy**: Determine how to handle DNS records and DNSRuleRecords when a rule is deleted
 - [ ] **Auto-Created Record Tagging**: Design how to mark auto-created DNS records (tags, status fields, etc.) and whether tag names should be configurable
@@ -214,12 +269,64 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **DNS Rule Validation Conflicts**: Understand behavior when DNS rules generate records that violate existing DNS record model validation
 - [ ] **Record-Type-Specific Field Validation**: Implement validation to make record-type-specific template fields required (MX preference_template, SRV priority/weight/port templates) per DNS RFC compliance
 
-#### 4.2.3 Explicitly Deferred for Initial Release
+#### 4.2.4 User Experience Enhancements
+- [ ] **Smart IP Version Detection**: Explore automatic IP version detection for ip_address filter
+  - **Context Enhancement**: Add rule information to template context for smart filtering
+  - **Filter Intelligence**: Enable `{{ obj.ip_addresses.all | ip_address }}` without manual version parameters
+  - **Implementation Options**: Enhanced context vs thread-local state vs specialized filter variants
+  - **User Benefit**: Eliminate need for manual `| ip_address(4)` vs `| ip_address(6)` specification
+- [ ] **User Template Test Rendering**: Provide UI functionality for users to test render DNS rule templates with specific objects
+  - **Purpose**: Allow users to validate and debug templates during rule creation/editing
+  - **Functionality**: Select object from dropdown, render template, show results in real-time
+  - **Benefits**: Immediate feedback, reduced trial-and-error, better template debugging
+- [ ] **GenericRelation vs Properties Evaluation**: Compare GenericRelation implementation against current property-based reverse relationships
+  - **Current**: Property-based dns_rule_records and source_object properties on ARecordModel
+  - **Alternative**: Django GenericRelation fields for reverse relationship traversal
+  - **Evaluation Criteria**: SQL query performance, code complexity, Django best practices alignment
+  - **Decision Factors**: Property N+1 queries vs GenericRelation prefetch optimization capabilities
+- [ ] **Database Query Optimization**: Audit and optimize database queries throughout codebase using select_related/prefetch_related
+  - **Focus Areas**: IPAddress template context rendering, reverse relationship traversals, bulk operations, signal handler field comparison safety
+  - **Current Issues**: Field access in change detection may trigger SQL queries; template rendering relationship traversal; property access patterns
+  - **Signal Handler Issue**: getattr() calls on ForeignKey fields in has_model_field_changes() trigger relation loading
+  - **Proposed Solution**: Compare ForeignKey ID fields instead - use getattr(obj, f"{field.name}_id", None) to detect relationship changes without triggering SQL queries
+  - **Optimization Targets**: Rule processing performance, bulk DNS record operations, relationship lookups, transaction duration reduction
+  - **Benefits**: Reduced database load, faster template rendering, improved scalability, shorter transaction lock times
+- [ ] **RFC-Compliant CNAME Handling**: Improve CNAME record handling to comply with RFC 1912 section 2.4
+  - **Current Issue**: CNAME records may coexist with other record types at same name (violates RFC)
+  - **RFC 1912 Section 2.4**: CNAME records must not coexist with other record types at the same name
+  - **RFC 2181 Section 10.1**: Additional implications for future record type implementations
+  - **Implementation**: Add validation to prevent CNAME conflicts, consider impact on multi-record scenarios
+- [ ] **UI DNS Error Feedback**: Extend UI to show DNS processing errors and status
+  - **Purpose**: Provide users clean feedback about DNS rule failures without exposing raw exceptions
+  - **Implementation Options**: Custom object detail panels, status indicators, background job integration
+  - **User Experience**: Status panels on object detail pages, dashboard for DNS health monitoring
+  - **Scope**: Plugin-friendly extensions (no core view modifications), proper separation of concerns
+- [ ] **Fix Bulk Disable Validation Error**: Fix ValidationError when bulk-editing DNS rules to disable them
+  - **Current Issue**: Template validation runs runtime test rendering even for disabled rules
+  - **Problem**: Enhanced template validation blocks disabling rules when they fail test rendering
+  - **Solution**: Skip runtime test rendering for disabled rules since they won't execute anyway
+- [ ] **Refine ValueError Exception Handling**: Revisit broad ValueError catching in process_object
+  - **Current Issue**: Generic ValueError catching may mask programming bugs
+  - **Specific Target**: Consider specific DNSFilterError for ip_address filter failures vs generic ValueError
+  - **Goal**: Distinguish between expected filter errors and unexpected programming issues
+- [ ] **Fix Zone Fixed Reference**: Fix rule_engine.py reference to non-existent rule.zone_fixed field
+  - **Current Issue**: Dead code path attempts to access rule.zone_fixed which doesn't exist on DNSRule model
+  - **Root Cause**: Legacy code from when fixed zone selection was considered as a feature
+  - **Solution**: Remove dead code path since all existing rules use zone_template field
+- [x] **Fix DNS Rule Form JavaScript**: Fixed DNSRuleForm JavaScript integration for StaticSelect2 widget
+  - **Completed**: Added dual event handling for select2:change and select2:select events to enable dynamic field visibility
+  - **Benefit**: Users now see only relevant template fields based on selected record type (A, MX, SRV, etc.)
+- [ ] **Evaluate Fixed Zone Selection Feature**: Evaluate whether to add fixed zone selection as UI feature vs current template-only approach
+  - **Use Case**: Consider scenarios where users want different rules for different zones
+  - **Design Question**: Whether literal strings in zone_template field are sufficient vs dedicated zone picker UI
+  - **Trade-offs**: UX simplicity vs template flexibility, validation benefits vs implementation complexity
+
+#### 4.2.5 Explicitly Deferred for Initial Release
 - [ ] **Tenant Signal Handling**: Excluded due to massive cascade potential (could affect thousands of records)
 - [ ] **VRF Signal Handling**: Excluded due to large-scale impact on IP addressing and related records
 - [ ] **IPAddress Signal Handling**: Skipped for 1.0 as most IP-related changes are covered by Device/Interface/VM signals; may warrant revisiting if direct IPAddress rule targeting or IP-specific metadata usage emerges
 
-#### 4.2.4 Future Enhancements
+#### 4.2.6 Future Enhancements
 - [ ] **Priority Configuration Methods**: Evaluate template vs increment-based priority configuration
 - [ ] **Model File Organization**: Consider splitting models.py into records.py and rules.py
 - [ ] **DNS Lowercase Config**: Add configuration option to force DNS records to lowercase
@@ -275,13 +382,27 @@ The DNS Rule System provides automated DNS record management triggered by object
 - Character transformation rules for DNS compliance for things like `/` -> `-`
 - Priority assignment methods (template vs increment)
 
-### 7.2 Advanced Features
+### 7.2 Advanced Rule Scoping and Inheritance
+- [ ] **Tenant/Location Rule Scoping**: Design how rules interact with tenant/location hierarchies
+  - Do global rules apply to objects with specific tenants configured?
+  - When both global and tenant-specific rules exist, which takes precedence?
+  - How does rule inheritance work down organizational hierarchies?
+- [ ] **Rule Precedence System**: Define clear hierarchy for overlapping rule scenarios
+  - Global vs tenant-specific vs location-specific rule priority
+  - Conflict resolution when multiple applicable rules exist
+  - User control over precedence order
+- [ ] **Per-Zone Rule Support**: Evaluate zone-scoped rule organization
+  - Should rules be scoped to specific DNS zones for better performance?
+  - How do zone-scoped rules interact with template-calculated zones?
+  - Organization benefits vs complexity trade-offs
+
+### 7.3 Advanced Features  
 - Rule condition logic (beyond content type matching); location, vrf, tags, etc.
 - Bulk rule operations
 - Rule import/export functionality
 - Template validation and testing tools
 
-### 7.3 Monitoring and Observability
+### 7.4 Monitoring and Observability
 - Rule execution metrics
 - Template rendering performance monitoring
 - DNS record lifecycle tracking

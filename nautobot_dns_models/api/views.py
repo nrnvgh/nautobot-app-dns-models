@@ -8,6 +8,7 @@ from nautobot_dns_models.api.serializers import (
     CNAMERecordSerializer,
     DNSViewPrefixAssignmentSerializer,
     DNSViewSerializer,
+    DNSRuleSerializer,
     DNSZoneSerializer,
     MXRecordSerializer,
     NSRecordSerializer,
@@ -21,6 +22,7 @@ from nautobot_dns_models.filters import (
     CNAMERecordFilterSet,
     DNSViewFilterSet,
     DNSViewPrefixAssignmentFilterSet,
+    DNSRuleFilterSet,
     DNSZoneFilterSet,
     MXRecordFilterSet,
     NSRecordFilterSet,
@@ -34,6 +36,7 @@ from nautobot_dns_models.models import (
     CNAMERecord,
     DNSView,
     DNSViewPrefixAssignment,
+    DNSRule,
     DNSZone,
     MXRecord,
     NSRecord,
@@ -149,5 +152,15 @@ class SRVRecordViewSet(NautobotModelViewSet):
     queryset = SRVRecord.objects.all()
     serializer_class = SRVRecordSerializer
     filterset_class = SRVRecordFilterSet
+
+    lookup_field = "pk"
+
+
+class DNSRuleViewSet(NautobotModelViewSet):  # pylint: disable=too-many-ancestors
+    """DNSRule API ViewSet."""
+
+    queryset = DNSRule.objects.all()
+    serializer_class = DNSRuleSerializer
+    filterset_class = DNSRuleFilterSet
 
     lookup_field = "pk"
