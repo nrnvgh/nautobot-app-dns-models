@@ -36,9 +36,9 @@ def ip_address(ip_obj, version=None):
         >>> {{ ipv6_obj | ip_address(6) }}
         'b2c3d4e5-f6a7-8901-bcde-f23456789012'
         >>> # With collections (multiple IPs)
-        >>> {{ obj.ip_addresses.all | ip_address }}
+        >>> {{ obj.ip_addresses.all() | ip_address }}
         'uuid1 uuid2 uuid3'
-        >>> {{ obj.ip_addresses.all | ip_address(4) }}
+        >>> {{ obj.ip_addresses.all() | ip_address(4) }}
         'uuid1 uuid2'
     """
     if ip_obj is None:
