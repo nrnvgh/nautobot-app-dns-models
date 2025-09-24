@@ -79,7 +79,14 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
         "MXRecord",
         "SRVRecord",
         "TXTRecord",
+        "DNSRule",
     ]
+
+    def ready(self):
+        """Import signal handlers when the app is ready."""
+        super().ready()
+        # Import signals to ensure they are connected
+        import nautobot_dns_models.signals  # noqa: F401
 
 
 config = NautobotDnsModelsConfig  # pylint:disable=invalid-name

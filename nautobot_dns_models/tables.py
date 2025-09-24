@@ -357,3 +357,30 @@ class SRVRecordTable(DNSRecordTable):
             "zone",
             "actions",
         )
+
+
+class DNSRuleTable(BaseTable):
+    """Table for DNS Rule list view."""
+
+    pk = ToggleColumn()
+    name = tables.Column(linkify=True)
+    enabled = tables.BooleanColumn()
+    content_type = tables.Column()
+    record_type = tables.Column()
+    priority = tables.Column()
+    actions = ButtonsColumn(models.DNSRule)
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.DNSRule
+        fields = (
+            "pk",
+            "name",
+            "description",
+            "enabled",
+            "content_type",
+            "record_type",
+            "priority",
+            "actions",
+        )

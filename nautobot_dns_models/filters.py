@@ -203,3 +203,13 @@ class SRVRecordFilterSet(DNSRecordFilterSet):
 
         model = models.SRVRecord
         fields = "__all__"
+
+
+class DNSRuleFilterSet(NautobotFilterSet):
+    """Filter for DNSRule."""
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.DNSRule
+        fields = "__all__"

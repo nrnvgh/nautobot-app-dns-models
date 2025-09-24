@@ -166,3 +166,15 @@ class SRVRecordSerializer(DNSRecordSerializer):  # pylint: disable=too-many-ance
 
         # Option for disabling write for certain fields:
         # read_only_fields = []
+
+
+class DNSRuleSerializer(NautobotModelSerializer):  # pylint: disable=too-many-ancestors
+    """DNSRule Serializer."""
+
+    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:dnsrule-detail")
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRule
+        fields = "__all__"

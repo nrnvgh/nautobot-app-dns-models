@@ -3,14 +3,15 @@
 import logging
 
 from constance import config as constance_config
-from django.contrib.contenttypes.models import ContentType
+
 from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from jinja2 import TemplateAssertionError, TemplateError, TemplateSyntaxError
-from nautobot.apps.constants import CHARFIELD_MAX_LENGTH
 from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
+from nautobot.apps.constants import CHARFIELD_MAX_LENGTH
 from nautobot.apps.utils import validate_jinja2
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 

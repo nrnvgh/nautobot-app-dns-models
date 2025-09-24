@@ -10,8 +10,8 @@ from nautobot.core.utils.data import render_jinja2
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 from nautobot_dns_models.models import (
-    ARecord,
     AAAARecord,
+    ARecord,
     CNAMERecord,
     DNSRule,
     DNSRuleRecord,
@@ -19,7 +19,6 @@ from nautobot_dns_models.models import (
     MXRecord,
     NSRecord,
     PTRRecord,
-    RECORD_TYPE_CHOICES,
     SRVRecord,
     TXTRecord,
 )
@@ -240,10 +239,8 @@ class DNSRuleEngine:
 
     def _get_existing_tracking_records(self, rule: DNSRule, source_obj: Any) -> models.QuerySet:
         """Get existing tracking records for a rule+object combination."""
-        return DNSRule.objects.filter(
-            rule=rule,
-            content_type=ContentType.objects.get_for_model(source_obj),
-            object_id=source_obj.id
+        return DNSRuleRecord.objects.filter(
+            rule=rule, content_type=ContentType.objects.get_for_model(source_obj), object_id=source_obj.id
         )
 
     def _update_existing_records(
@@ -312,9 +309,9 @@ class DNSRuleEngine:
             rule_record = DNSRuleRecord.objects.create(
                 rule=rule,
                 content_type=ContentType.objects.get_for_model(source_obj),
-                object_id=str(source_obj.id),
+                object_id=source_obj.id,
                 dns_record_content_type=ContentType.objects.get_for_model(dns_record),
-                dns_record_object_id=str(dns_record.id),
+                dns_record_object_id=dns_record.id,
             )
 
             # Create dependency tracking records for Jinja templates

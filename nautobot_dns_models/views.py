@@ -15,6 +15,7 @@ from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
     CNAMERecordSerializer,
+    DNSRuleSerializer,
     DNSZoneSerializer,
     MXRecordSerializer,
     NSRecordSerializer,
@@ -26,6 +27,7 @@ from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
     CNAMERecordFilterSet,
+    DNSRuleFilterSet,
     DNSZoneFilterSet,
     MXRecordFilterSet,
     NSRecordFilterSet,
@@ -43,6 +45,9 @@ from nautobot_dns_models.forms import (
     CNAMERecordBulkEditForm,
     CNAMERecordFilterForm,
     CNAMERecordForm,
+    DNSRuleBulkEditForm,
+    DNSRuleFilterForm,
+    DNSRuleForm,
     DNSZoneBulkEditForm,
     DNSZoneFilterForm,
     DNSZoneForm,
@@ -66,6 +71,7 @@ from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
     CNAMERecord,
+    DNSRule,
     DNSZone,
     MXRecord,
     NSRecord,
@@ -77,6 +83,7 @@ from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
     CNAMERecordTable,
+    DNSRuleTable,
     DNSZoneTable,
     MXRecordTable,
     NSRecordTable,
@@ -422,6 +429,28 @@ class SRVRecordUIViewSet(views.NautobotUIViewSet):
     lookup_field = "pk"
     queryset = SRVRecord.objects.all()
     table_class = SRVRecordTable
+    object_detail_content = ObjectDetailContent(
+        panels=[
+            ObjectFieldsPanel(
+                weight=100,
+                section=SectionChoices.LEFT_HALF,
+                fields="__all__",
+            )
+        ]
+    )
+
+
+class DNSRuleUIViewSet(views.NautobotUIViewSet):
+    """DNSRule UI ViewSet."""
+
+    bulk_update_form_class = DNSRuleBulkEditForm
+    filterset_class = DNSRuleFilterSet
+    filterset_form_class = DNSRuleFilterForm
+    form_class = DNSRuleForm
+    lookup_field = "pk"
+    queryset = DNSRule.objects.all()
+    serializer_class = DNSRuleSerializer
+    table_class = DNSRuleTable
     object_detail_content = ObjectDetailContent(
         panels=[
             ObjectFieldsPanel(
