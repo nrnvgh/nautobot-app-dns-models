@@ -42,7 +42,7 @@ def _make_unicode_label_with_idna_length(char, target_length):
 
 
 class TestDnsZone(ModelTestCases.BaseModelTestCase):
-    """Test DnsZoneModel."""
+    """Test DNSZone."""
 
     model = DNSZone
 
@@ -61,7 +61,7 @@ class TestDnsZone(ModelTestCases.BaseModelTestCase):
         self.assertEqual(str(dnszone), "Development")
 
     def test_create_dnszone_all_fields_success(self):
-        """Create DnsZoneModel with all fields."""
+        """Create DNSZone with all fields."""
         dnszone = DNSZone.objects.create(name="Development", description="Development Test")
         self.assertEqual(dnszone.name, "Development")
         self.assertEqual(dnszone.description, "Development Test")
@@ -981,8 +981,8 @@ class DNSRuleRecordTestCase(TestCase):
         )
 
         # Create DNS zone and records
-        cls.dns_zone = DNSZoneModel.objects.create(name="example.com")
-        cls.a_record = ARecordModel.objects.create(
+        cls.dns_zone = DNSZone.objects.create(name="example.com")
+        cls.a_record = ARecord.objects.create(
             name="test-device-1",
             address=cls.ip_address,
             zone=cls.dns_zone,
@@ -990,7 +990,7 @@ class DNSRuleRecordTestCase(TestCase):
 
         # Create DNS rule
         cls.content_type_device = ContentType.objects.get_for_model(Device)
-        cls.content_type_a_record = ContentType.objects.get_for_model(ARecordModel)
+        cls.content_type_a_record = ContentType.objects.get_for_model(ARecord)
         cls.dns_rule = DNSRule.objects.create(
             name="test-device-rule",
             content_type=cls.content_type_device,
@@ -1083,13 +1083,13 @@ class DNSRuleRecordTestCase(TestCase):
     def test_dnsrulerecord_with_different_record_types(self):
         """Test DNSRuleRecord with different DNS record types."""
         # Create CNAME record
-        cname_record = CNAMERecordModel.objects.create(
+        cname_record = CNAMERecord.objects.create(
             name="www-test-device-1",
             alias="test-device-1.example.com",
             zone=self.dns_zone,
         )
 
-        content_type_cname = ContentType.objects.get_for_model(CNAMERecordModel)
+        content_type_cname = ContentType.objects.get_for_model(CNAMERecord)
 
         rule_record = DNSRuleRecord.objects.create(
             rule=self.dns_rule,
@@ -1149,13 +1149,13 @@ class DNSRuleRecordTestCase(TestCase):
             status=self.status,
         )
 
-        aaaa_record = AAAARecordModel.objects.create(
+        aaaa_record = AAAARecord.objects.create(
             name="test-device-ipv6",
             address=ipv6_address,
             zone=self.dns_zone,
         )
 
-        content_type_aaaa = ContentType.objects.get_for_model(AAAARecordModel)
+        content_type_aaaa = ContentType.objects.get_for_model(AAAARecord)
 
         rule_record = DNSRuleRecord.objects.create(
             rule=self.dns_rule,
@@ -1209,7 +1209,7 @@ class DNSRuleRecordTestCase(TestCase):
         )
 
         # Create a second A record for the second rule
-        second_a_record = ARecordModel.objects.create(
+        second_a_record = ARecord.objects.create(
             name="test-device-1-info",
             address=self.ip_address,
             zone=self.dns_zone,

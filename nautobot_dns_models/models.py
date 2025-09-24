@@ -3,6 +3,8 @@
 import logging
 
 from constance import config as constance_config
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericForeignKey
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -248,7 +250,6 @@ class ARecord(DNSRecord):  # pylint: disable=too-many-ancestors
     @property
     def dns_rule_records(self):
         """Mock GenericRelation: Get DNSRuleRecord objects that track this A record."""
-        from django.contrib.contenttypes.models import ContentType
 
         return DNSRuleRecord.objects.filter(
             dns_record_content_type=ContentType.objects.get_for_model(self), dns_record_object_id=self.id

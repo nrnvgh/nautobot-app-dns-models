@@ -14,7 +14,7 @@ from nautobot.ipam.models import IPAddress, IPAddressToInterface, Namespace, Pre
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
-from nautobot_dns_models.models import ARecordModel, DNSRule, DNSRuleRecord, DNSZoneModel
+from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.rule_engine import DNSRuleEngine
 
 
@@ -278,7 +278,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         )
 
         # Create DNS zone
-        self.dns_zone = DNSZoneModel.objects.create(name="example.com")
+        self.dns_zone = DNSZone.objects.create(name="example.com")
 
         # Create DNS rule for Interface A records
         self.dns_rule = DNSRule.objects.create(
@@ -295,7 +295,7 @@ class DNSRuleIntegrationTestCase(TestCase):
     def test_interface_a_record_created_on_ip_addition_via_m2m_api(self):
         """Test that A records are created when IP is added to interface via Django M2M API."""
         # Verify no A records exist initially
-        initial_a_records = ARecordModel.objects.filter(name__startswith="eth0.test-device").count()
+        initial_a_records = ARecord.objects.filter(name__startswith="eth0.test-device").count()
         self.assertEqual(initial_a_records, 0)
 
         # Verify no DNSRuleRecord tracking exists initially
@@ -306,7 +306,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.interface.ip_addresses.add(self.ip_address)
 
         # Verify A record was created
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         a_record = a_records.first()
@@ -328,7 +328,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.interface.ip_addresses.add(self.ip_address)
 
         # Verify A record exists
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         # Verify DNSRuleRecord tracking exists
@@ -339,7 +339,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.interface.ip_addresses.remove(self.ip_address)
 
         # Verify A record was deleted
-        remaining_a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        remaining_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(remaining_a_records.count(), 0)
 
         # Verify DNSRuleRecord tracking was also cleaned up
@@ -361,7 +361,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.interface.ip_addresses.add(self.ip_address, ip_address_2)
 
         # Verify A record was created (should use first IP)
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         a_record = a_records.first()
@@ -372,7 +372,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.interface.ip_addresses.remove(self.ip_address)
 
         # Verify A record still exists (should now use the remaining IP)
-        remaining_a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        remaining_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(remaining_a_records.count(), 1)
 
         # The record should now point to the remaining IP
@@ -383,7 +383,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.interface.ip_addresses.remove(ip_address_2)
 
         # Now the A record should be deleted (template fails with no IPs)
-        final_a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        final_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(final_a_records.count(), 0)
 
     @skip("Requires Nautobot M2M signal improvements - see nautobot/nautobot#7728")
@@ -397,7 +397,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         WARNING: This functionality is currently UNTESTED in the standard test environment.
         """
         # Verify no A records exist initially
-        initial_a_records = ARecordModel.objects.filter(name__startswith="eth0.test-device").count()
+        initial_a_records = ARecord.objects.filter(name__startswith="eth0.test-device").count()
         self.assertEqual(initial_a_records, 0)
 
         # Verify no DNSRuleRecord tracking exists initially
@@ -409,7 +409,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.assertEqual(count, 1)  # Verify return value
 
         # Verify A record was created
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         a_record = a_records.first()
@@ -439,7 +439,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.interface.ip_addresses.add(self.ip_address)
 
         # Verify A record exists
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         # Verify DNSRuleRecord tracking exists
@@ -451,7 +451,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.assertEqual(count, 1)  # Verify return value
 
         # Verify A record was deleted
-        remaining_a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        remaining_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(remaining_a_records.count(), 0)
 
         # Verify DNSRuleRecord tracking was also cleaned up
@@ -481,7 +481,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.assertEqual(count, 2)  # Both IPs should be added
 
         # Verify A record was created (should use first IP)
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         a_record = a_records.first()
@@ -493,7 +493,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.assertEqual(count, 1)  # One IP should be removed
 
         # Verify A record still exists (should now use the remaining IP)
-        remaining_a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        remaining_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(remaining_a_records.count(), 1)
 
         # The record should now point to the remaining IP
@@ -505,7 +505,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.assertEqual(count, 1)  # Last IP should be removed
 
         # Now the A record should be deleted (template fails with no IPs)
-        final_a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        final_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(final_a_records.count(), 0)
 
     @skip("Requires Nautobot M2M signal improvements - see nautobot/nautobot#7728")
@@ -568,7 +568,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         """Test that A records are updated when interface name changes."""
         # Setup: add IP and create record
         self.interface.ip_addresses.add(self.ip_address)
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         # Change interface name
@@ -577,8 +577,8 @@ class DNSRuleIntegrationTestCase(TestCase):
 
         # Current expectation: DNS rule engine should update existing record
         # Note: This tests the UPDATE path in the rule engine
-        updated_records = ARecordModel.objects.filter(name="eth1.test-device", zone=self.dns_zone)
-        old_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        updated_records = ARecord.objects.filter(name="eth1.test-device", zone=self.dns_zone)
+        old_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
 
         # For v0.9, we expect the record to be updated (not recreated)
         # The exact behavior depends on rule engine update logic
@@ -599,7 +599,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         """
         # Setup: add IP and create record
         self.interface.ip_addresses.add(self.ip_address)
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         # Change device name (should trigger cascade processing of interfaces)
@@ -607,8 +607,8 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.device.save()
 
         # Enhanced v0.9 behavior: Device name changes trigger Interface rule updates
-        updated_records = ARecordModel.objects.filter(name="eth0.new-device", zone=self.dns_zone)
-        old_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        updated_records = ARecord.objects.filter(name="eth0.new-device", zone=self.dns_zone)
+        old_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
 
         # Verify cascade processing worked:
         self.assertEqual(updated_records.count(), 1, "Device name change should trigger interface record update")
@@ -619,7 +619,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         """Test that A records are deleted when interface is deleted."""
         # Setup: add IP and create record
         self.interface.ip_addresses.add(self.ip_address)
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         # Delete interface
@@ -627,7 +627,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.interface.delete()
 
         # Verify A record deleted
-        remaining_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        remaining_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(remaining_records.count(), 0)
 
         # Verify tracking cleaned up
@@ -638,7 +638,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         """Test that A records are deleted when device is deleted."""
         # Setup: add IP and create record
         self.interface.ip_addresses.add(self.ip_address)
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         # Delete device (cascades to interface)
@@ -646,7 +646,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         self.device.delete()
 
         # Verify A record deleted
-        remaining_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        remaining_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(remaining_records.count(), 0)
 
         # Verify tracking cleaned up
@@ -674,7 +674,7 @@ class DNSRuleIntegrationTestCase(TestCase):
         """
         # Setup: add IP and create record
         self.interface.ip_addresses.add(self.ip_address)
-        a_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         # Delete IP address directly (not just remove from interface)
@@ -687,7 +687,7 @@ class DNSRuleIntegrationTestCase(TestCase):
 
         # For now, document the current behavior:
         try:
-            remaining_records = ARecordModel.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+            remaining_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
             if remaining_records.exists():
                 record = remaining_records.first()
                 # Check if record.address is now invalid
@@ -726,7 +726,7 @@ class MultiRecordTestCase(TestCase):
         )
 
         # Create DNS zone for testing
-        cls.dns_zone = DNSZoneModel.objects.create(name="test.local")
+        cls.dns_zone = DNSZone.objects.create(name="test.local")
 
     def test_multi_record_cleanup_on_ip_removal(self):
         """
@@ -779,7 +779,7 @@ class MultiRecordTestCase(TestCase):
         interface.ip_addresses.add(ip1, ip2, ip3)
 
         # Step 5: Verify 3 A records and 3 tracking records were created via signal
-        a_records_after_add = ARecordModel.objects.filter(zone=self.dns_zone)
+        a_records_after_add = ARecord.objects.filter(zone=self.dns_zone)
         rule_records_after_add = DNSRuleRecord.objects.filter(rule=rule)
 
         self.assertEqual(a_records_after_add.count(), 3, "Should create 3 A records initially")
@@ -794,7 +794,7 @@ class MultiRecordTestCase(TestCase):
         interface.ip_addresses.remove(ip2)
 
         # Step 7: Verify cleanup was complete and correct
-        a_records_after_removal = ARecordModel.objects.filter(zone=self.dns_zone)
+        a_records_after_removal = ARecord.objects.filter(zone=self.dns_zone)
         rule_records_after_removal = DNSRuleRecord.objects.filter(rule=rule)
 
         # Should have exactly 2 records after cleanup
@@ -821,7 +821,7 @@ class MultiRecordTestCase(TestCase):
         interface.ip_addresses.remove(ip3)
 
         # Step 11: Verify final state after second IP removal
-        a_records_final = ARecordModel.objects.filter(zone=self.dns_zone)
+        a_records_final = ARecord.objects.filter(zone=self.dns_zone)
         rule_records_final = DNSRuleRecord.objects.filter(rule=rule)
 
         self.assertEqual(a_records_final.count(), 1, "Should have 1 A record after second removal")
@@ -880,7 +880,7 @@ class MultiRecordTestCase(TestCase):
         interface.ip_addresses.add(ip1, ip2, ip3)
 
         # Step 4: Verify multiple A records were created
-        a_records = ARecordModel.objects.filter(zone=self.dns_zone)
+        a_records = ARecord.objects.filter(zone=self.dns_zone)
         rule_records = DNSRuleRecord.objects.filter(rule=rule)
 
         self.assertEqual(a_records.count(), 3, "Should create 3 A records for 3 IPs")
@@ -896,7 +896,7 @@ class MultiRecordTestCase(TestCase):
         interface.delete()
 
         # Step 6: Verify all A records were deleted via signal handling
-        remaining_a_records = ARecordModel.objects.filter(zone=self.dns_zone)
+        remaining_a_records = ARecord.objects.filter(zone=self.dns_zone)
         self.assertEqual(remaining_a_records.count(), 0, "All A records should be deleted when interface is deleted")
 
         # Step 7: Verify all tracking records were cleaned up
