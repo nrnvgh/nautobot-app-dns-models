@@ -447,10 +447,10 @@ class DNSRuleEngineTestCase(TestCase):
         )
 
         rules = self.engine._get_applicable_rules(self.device)
-        
+
         # Should get location-specific A rule + global CNAME rule (2 rules total)
         self.assertEqual(rules.count(), 2)
-        
+
         # Verify we got the correct rules
         rule_names = {rule.name for rule in rules}
         self.assertIn(location_a_rule.name, rule_names)  # Location-specific A rule
@@ -472,7 +472,7 @@ class DNSRuleEngineTestCase(TestCase):
         )
 
         # Create global A record rule (should be overridden)
-        global_rule = DNSRule.objects.create(
+        DNSRule.objects.create(
             name="global-override-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=None,
@@ -484,7 +484,7 @@ class DNSRuleEngineTestCase(TestCase):
         )
 
         rules = self.engine._get_applicable_rules(self.device)
-        
+
         # Should only get location-specific rule
         self.assertEqual(rules.count(), 1)
         self.assertEqual(rules.first().name, location_rule.name)
@@ -527,7 +527,7 @@ class DNSRuleEngineTestCase(TestCase):
         )
 
         rules = self.engine._get_applicable_rules(self.device)
-        
+
         # Should get all 3 location-specific rules
         self.assertEqual(rules.count(), 3)
         rule_names = {rule.name for rule in rules}
@@ -586,18 +586,18 @@ class DNSRuleEngineTestCase(TestCase):
         )
 
         rules = self.engine._get_applicable_rules(self.device)
-        
+
         # Should get location A + CNAME rules + global MX rules (4 total)
         self.assertEqual(rules.count(), 4)
-        
+
         # Verify priority ordering within the returned QuerySet
         rules_list = list(rules)
-        
+
         # Verify we have the expected rules
         rule_names = {rule.name for rule in rules}
         expected_names = {location_a_rule.name, location_cname_rule.name, global_mx_high.name, global_mx_low.name}
         self.assertEqual(rule_names, expected_names)
-        
+
         # Verify overall priority ordering (should be ordered by priority field)
         priorities = [rule.priority for rule in rules_list]
         self.assertEqual(priorities, sorted(priorities))  # Should be in ascending order
@@ -1240,8 +1240,11 @@ class DNSRuleIntegrationTestCase(TestCase):
             location=self.location,
             role=self.device_role,
             status=self.device_status,
-            primary_ip4=self.ip_address,
         )
+
+        # Assign primary IP after creation - this triggers the problematic pattern
+        device.primary_ip4 = self.ip_address
+        device.save()
 
         # Should have location-1 record
         loc1_records = ARecord.objects.filter(name="test-moving-device-loc1")
