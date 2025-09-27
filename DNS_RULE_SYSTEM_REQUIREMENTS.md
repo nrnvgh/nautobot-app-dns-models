@@ -245,12 +245,32 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **A/AAAA Filter Requirement Validation**: Implement alternative validation for A/AAAA record value templates requiring | ip_address filter
   - **Context**: Removed from clean() method for more thoughtful implementation approach
   - **Options**: Form-level validation, runtime guidance, or UI hints
-- [ ] **UI Record Indicators**: Add visual indicators for auto-created vs manual records
+- [ ] **UI Record Indicators**: Add visual indicators for auto-created vs manual DNS records
+  - **Purpose**: Provide users clear operational visibility to distinguish between automated and manually created DNS records
+  - **UI Framework Approach**: Leverage Nautobot's UI Framework (TemplateExtension, ObjectsTablePanel) rather than Django templates
+  - **Implementation Options**:
+    - **Option 1 - Enhanced Table Columns (Primary)**: Add creation source indicator column using `django_tables2.TemplateColumn` with badges/icons
+      - Badge approach: `<span class="label label-info"><i class="mdi mdi-robot"></i> Auto</span>` vs `<span class="label label-default"><i class="mdi mdi-account"></i> Manual</span>`
+      - Inline approach: Enhanced name column with small automation icon next to auto-created records
+    - **Option 2 - Custom Detail Panel (Secondary)**: Create `DNSRuleInfoPanel` using `nautobot.apps.ui.Panel` for comprehensive automation information
+      - Shows creating rule, source object, automation status
+      - Only renders for auto-created records (`should_render()` checks `obj.dns_rule_records.exists()`)
+      - Positioned in detail view using `TemplateExtension` registration
+    - **Option 3 - Model Properties**: Add efficiency properties (`is_auto_created`, `creating_rule`, `source_object`) for clean template access
+    - **Option 4 - Filtering Support**: Add creation source filters in `FilterSet` to enable operational queries ("show only auto-created records")
+  - **Architectural Decision**: Rejected job-based DNS processing due to queue flooding and race condition concerns; sticking with optimized signal handlers
+  - **Implementation Priority**: Start with table columns for immediate visibility, add detail panels for comprehensive information
 - [ ] **Rule Deletion Strategy**: Determine how to handle DNS records and DNSRuleRecords when a rule is deleted
 - [ ] **Auto-Created Record Tagging**: Design how to mark auto-created DNS records (tags, status fields, etc.) and whether tag names should be configurable
 - [ ] **IP Removal Handling**: Investigate better ways to handle IP removal than catching template exceptions - explore pre-validation approaches
 - [ ] **Signal Optimization**: Optimize signal handling to only trigger for content types that have configured DNS rules
 - [ ] **Signal Coverage for 1.0 Release**: Implement signal receivers for VirtualMachine, VMInterface (1.0 priority), with Service/VLAN/Cluster as maybe 1.0. Consider Location, Rack/RackGroup for post-1.0
+- [ ] **InterfaceRedundancyGroup and Service DNS Rules**: Evaluate DNS rule support for InterfaceRedundancyGroup and Service objects since they can accept IP assignments
+  - **Location Extraction**: Determine location resolution for these object types (Service may not have direct location, InterfaceRedundancyGroup location via member interfaces?)
+  - **Anycast Address Handling**: Design patterns for handling anycast IP addresses that may be assigned to multiple objects across different locations
+  - **Use Cases**: Service load balancer VIPs, redundancy group virtual IPs, shared service addresses
+  - **Template Context**: Ensure template rendering works appropriately for objects that may span multiple physical locations
+  - **Signal Handling**: Determine if these objects need dedicated signal receivers or can leverage existing IP assignment signals
 - [ ] **Device Rename Cascade Handling**: Address how device renames affect interface record naming templates (vital for 1.0)
 - [ ] **Prefix Signal Evaluation**: Determine if Prefix objects need signal handling based on common template usage patterns
 - [ ] **Content Type Restrictions**: Determine if DNS rules should be limited to specific content types and define the allowed list. should that list be hardcoded or user-defined?
