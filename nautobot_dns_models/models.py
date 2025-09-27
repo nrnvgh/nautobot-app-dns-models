@@ -608,6 +608,7 @@ class DNSRule(PrimaryModel):
         """Meta attributes for DNSRule."""
 
         ordering = ["name"]
+        verbose_name = "DNS Rule"
         constraints = [
             models.UniqueConstraint(
                 fields=["content_type", "record_type", "location"],
