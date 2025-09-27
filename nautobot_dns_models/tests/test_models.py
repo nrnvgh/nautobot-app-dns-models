@@ -10,6 +10,7 @@ from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
 from nautobot_dns_models.models import (
+    RECORD_TYPE_CHOICES,
     AAAARecord,
     ARecord,
     CNAMERecord,
@@ -21,7 +22,6 @@ from nautobot_dns_models.models import (
     MXRecord,
     NSRecord,
     PTRRecord,
-    RECORD_TYPE_CHOICES,
     SRVRecord,
     TXTRecord,
     dns_wire_label_length,
@@ -633,6 +633,37 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         cls.content_type_device = ContentType.objects.get_for_model(Device)
         cls.content_type_interface = ContentType.objects.get_for_model(Interface)
 
+        # Create sample Device for template validation
+        # (DNSRule.clean() needs at least one Device object to test templates against)
+
+        # Create minimal infrastructure for Device
+        location_type = LocationType.objects.create(name="Test Location Type")
+        location_type.content_types.add(cls.content_type_device)
+
+        cls.location = Location.objects.create(
+            name="Test Location",
+            location_type=location_type,
+            status=Status.objects.get_for_model(Location).first(),
+        )
+
+        cls.manufacturer = Manufacturer.objects.create(name="Test Manufacturer")
+        cls.device_type = DeviceType.objects.create(
+            manufacturer=cls.manufacturer,
+            model="Test Device Type",
+        )
+
+        device_role = Role.objects.create(name="Test Device Role")
+        device_role.content_types.add(cls.content_type_device)
+
+        # Create sample Device for template validation
+        cls.device = Device.objects.create(
+            name="test-device",
+            device_type=cls.device_type,
+            location=cls.location,
+            role=device_role,
+            status=Status.objects.get_for_model(Device).first(),
+        )
+
         # Create 3 DNS rules for base model test cases
         DNSRule.objects.create(
             name="test-rule-1",
@@ -847,14 +878,24 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
 
         # Test valid record types
         for record_type in valid_types:
-            rule = DNSRule(
-                name=f"test-{record_type.lower()}",
-                content_type=self.content_type_device,
-                zone_template="test.com",
-                record_type=record_type,
-                name_template="{{ obj.name }}",
-                value_template="test-value",
-            )
+            rule_data = {
+                "name": f"test-{record_type.lower()}",
+                "content_type": self.content_type_device,
+                "zone_template": "test.com",
+                "record_type": record_type,
+                "name_template": "{{ obj.name }}",
+                "value_template": "test-value",
+            }
+
+            # Add record-type-specific required fields
+            if record_type == "MX":
+                rule_data["preference_template"] = "10"
+            elif record_type == "SRV":
+                rule_data["priority_template"] = "10"
+                rule_data["weight_template"] = "5"
+                rule_data["port_template"] = "80"
+
+            rule = DNSRule(**rule_data)
             rule.full_clean()  # Should not raise
 
         # Test invalid record type
