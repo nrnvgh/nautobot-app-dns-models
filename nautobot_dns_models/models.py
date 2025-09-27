@@ -3,15 +3,14 @@
 import logging
 
 from constance import config as constance_config
-
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from jinja2 import TemplateAssertionError, TemplateError, TemplateSyntaxError
-from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
 from nautobot.apps.constants import CHARFIELD_MAX_LENGTH
+from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
 from nautobot.apps.utils import validate_jinja2
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 
@@ -251,7 +250,6 @@ class ARecord(DNSRecord):  # pylint: disable=too-many-ancestors
     @property
     def dns_rule_records(self):
         """Mock GenericRelation: Get DNSRuleRecord objects that track this A record."""
-
         return DNSRuleRecord.objects.filter(
             dns_record_content_type=ContentType.objects.get_for_model(self), dns_record_object_id=self.id
         )
@@ -472,12 +470,20 @@ class DNSRule(PrimaryModel):
     content_type = models.ForeignKey(
         ContentType, on_delete=models.CASCADE, help_text="Content type that triggers this rule"
     )
+    location = models.ForeignKey(
+        "dcim.Location",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Scope rule to specific location. Leave blank for global rule.",
+    )
     # XXX Do we actually need this?
     priority = models.IntegerField(default=100, help_text="Rule priority (lower values = higher priority)")
 
     # Templates
     zone_template = models.TextField(help_text="Jinja2 template for DNS zone name")
-    record_type = models.CharField(max_length=10, choices=RECORD_TYPE_CHOICES, help_text="Type of DNS record to create")
+    record_type = models.CharField(max_length=10, choices=RECORD_TYPE_CHOICES, help_text="Type of DNS record")
     name_template = models.TextField(help_text="Jinja2 template for record name")
 
     value_template = models.TextField(help_text="Jinja2 template for the primary record value")
@@ -498,10 +504,48 @@ class DNSRule(PrimaryModel):
         ordering = ["priority", "name"]
         verbose_name = "DNS Rule"
         verbose_name_plural = "DNS Rules"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["content_type", "record_type", "location"],
+                condition=models.Q(enabled=True),
+                name="unique_enabled_rule_per_content_record_location",
+            ),
+        ]
 
     def __str__(self):
         """String representation of DNSRule."""
         return self.name
+
+    def validate_unique(self, exclude=None):
+        """
+        Handle uniqueness for global rules (location=None).
+
+        UniqueConstraint handles location-scoped rules automatically,
+        but we need manual validation for global rules due to NULL behavior.
+        """
+        # Missing required fields is a larger issue that will be handled automatically, but since we
+        # use them in the if block, we need to return before the if block if they're in the exclude list.
+        exclude = exclude or []
+        if "content_type" in exclude or "record_type" in exclude:
+            super().validate_unique(exclude)
+            return
+
+        # Only handle the global rules case (location=None) and only for enabled rules
+        # Location-scoped rules are handled by the database UniqueConstraint with condition
+        if (
+            self.location is None
+            and self.enabled
+            and DNSRule.objects.exclude(pk=self.pk)
+            .filter(content_type=self.content_type, record_type=self.record_type, location__isnull=True, enabled=True)
+            .exists()
+        ):
+            raise ValidationError(
+                {
+                    "location": f"An enabled global {self.record_type} record rule for '{self.content_type}' already exists."
+                }
+            )
+
+        super().validate_unique(exclude)
 
     def clean(self):
         """Validate DNS rule templates and configuration."""

@@ -66,7 +66,7 @@ class DNSRuleEngine:
         # Check existing record count once (serves both logging and conditional logic)
         existing_count = existing_records.count()
         logger.debug(
-            f"DNS record lookup for {source_obj} (pk={source_obj.pk}, name='{getattr(source_obj, 'name', 'N/A')}'): found {existing_count} existing records"
+            f"DNS record lookup for {source_obj} (pk={source_obj.pk}, name=\"{getattr(source_obj, 'name', 'N/A')}\"): found {existing_count} existing records"
         )
 
         if created or existing_count == 0:
@@ -176,10 +176,76 @@ class DNSRuleEngine:
                 self._cleanup_records_for_rule(rule, source_obj)
                 continue
 
+    def _get_object_location(self, source_obj: Any) -> Any:
+        """
+        Extract location from source object for location-scoped rule resolution.
+
+        Location extraction logic:
+        - Device: device.location (required field in Nautobot)
+        - Interface: interface.device.location (device.location is required)
+        - VirtualMachine: vm.cluster.location (future)
+        - VMInterface: vminterface.virtual_machine.cluster.location (future)
+        - Service: None (global scope for anycast) (future)
+        - InterfaceRedundancyGroup: None (complex multi-location) (future)
+
+        Args:
+            source_obj: The object to extract location from
+
+        Returns:
+            Location object or None if object type is not location-aware
+        """
+        # Device objects have direct location (required field)
+        if hasattr(source_obj, "location"):
+            return source_obj.location
+
+        # Interface objects get location from device (device.location is required)
+        if hasattr(source_obj, "device"):
+            return source_obj.device.location
+
+        # TODO: Add future model location extraction:
+        # - VirtualMachine: return source_obj.cluster.location if hasattr(source_obj, "cluster")
+        # - VMInterface: return source_obj.virtual_machine.cluster.location
+        # - Service: return None (global scope for anycast)
+        # - InterfaceRedundancyGroup: return None (complex multi-location scenario)
+
+        # Object type is not location-aware
+        return None
+
     def _get_applicable_rules(self, source_obj: Any) -> models.QuerySet:
-        """Get all DNS rules that apply to the given source object."""
+        """
+        Get all DNS rules that apply to the given source object.
+
+        Location-scoped rule resolution:
+        1. Try location-specific rules first (location=object_location)
+        2. Fallback to global rules (location=None) if no location-specific rules
+        3. Location-specific rules override global rules for same content_type + record_type
+
+        Args:
+            source_obj: The object to find applicable rules for
+
+        Returns:
+            QuerySet of applicable DNSRule objects ordered by priority
+        """
         content_type = ContentType.objects.get_for_model(source_obj)
-        return DNSRule.objects.filter(content_type=content_type, enabled=True).order_by("priority")
+        object_location = self._get_object_location(source_obj)
+
+        # Try location-specific rules first
+        if object_location:
+            location_rules = DNSRule.objects.filter(
+                content_type=content_type, location=object_location, enabled=True
+            ).order_by("priority")
+
+            if location_rules.exists():
+                logger.debug(f"Using location-specific rules for {source_obj} at location {object_location}")
+                return location_rules
+
+        # Fallback to global rules (location=None)
+        global_rules = DNSRule.objects.filter(content_type=content_type, location__isnull=True, enabled=True).order_by(
+            "priority"
+        )
+
+        logger.debug(f"Using global rules for {source_obj} (location: {object_location})")
+        return global_rules
 
     def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> None:
         """Reconcile DNS records for a single rule against current object state."""
@@ -326,7 +392,7 @@ class DNSRuleEngine:
         """Get the DNS record model class for a given record type."""
         record_class = RECORD_MODEL_MAPPING.get(record_type)
         if not record_class:
-            raise ValueError(f"Unknown record type '{record_type}'")
+            raise ValueError(f'Unknown record type "{record_type}"')
         return record_class
 
     def delete_dns_records_for_object(self, source_obj: Any) -> None:
@@ -374,7 +440,7 @@ class DNSRuleEngine:
             raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
 
         # Check for template error strings that render_jinja2 sometimes returns
-        # Pattern: "{{ no such element: None['id'] }}" when accessing attributes on None
+        # Pattern: "{{ no such element: None[\"id\"] }}" when accessing attributes on None
         if "{{ no such element:" in result:
             raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
 

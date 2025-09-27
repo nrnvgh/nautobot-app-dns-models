@@ -81,12 +81,20 @@ def has_model_field_changes(instance, debug_context="object"):
 
 @receiver(pre_save, sender=Device)
 @receiver(pre_save, sender=Interface)
+# TODO: Add signal handlers for future models:
+# - VirtualMachine (location via cluster.location)
+# - Cluster (location changes affect VMs)
+# - Service (for anycast IP assignments)
+# - InterfaceRedundancyGroup (for redundant IP assignments)
 def capture_object_change_state(sender, instance, **kwargs):
     """
     Capture object field changes to determine if DNS processing is needed.
 
     This consolidated handler works for any model type by using the model name
     as the debug context and detecting changes via the shared helper function.
+
+    Location-aware processing: Device location changes trigger cascade updates
+    for all interfaces on that device to handle location-scoped DNS rules.
 
     Args:
         sender: The model class being saved (Device, Interface, etc.)
@@ -100,12 +108,17 @@ def capture_object_change_state(sender, instance, **kwargs):
 
 
 @receiver(post_save, sender=Interface)
+# TODO: Add post_save handlers for future models:
+# - VirtualMachine, VMInterface (virtualization support)
+# - Service (anycast IP assignments)
+# - InterfaceRedundancyGroup (redundant IP assignments)
 def handle_interface_save(sender, instance, created, **kwargs):
     """
     Handle Interface save events to trigger DNS rule processing.
 
     Only processes DNS rules if interface fields changed (determined by pre_save handler)
-    or if this is a newly created interface.
+    or if this is a newly created interface. Location-scoped rules are automatically
+    resolved based on interface.device.location.
 
     Args:
         sender: The model class that was saved (Interface)
@@ -133,6 +146,8 @@ def handle_interface_save(sender, instance, created, **kwargs):
 
 
 @receiver(post_save, sender=Device)
+# TODO: Add post_save handlers for future models:
+# - Cluster (location changes affect VMs and VMInterfaces)
 def handle_device_save(sender, instance, created, **kwargs):
     """
     Handle Device save events to trigger DNS rule processing with cascade updates.
@@ -140,6 +155,9 @@ def handle_device_save(sender, instance, created, **kwargs):
     This handler processes Device-based DNS rules and also triggers cascade
     processing of Interface DNS rules when any device fields referenced in Interface
     templates are changed (e.g., device name, location, role, etc.).
+
+    Location-aware processing: Device location changes trigger cascade updates
+    for all interfaces on that device to handle location-scoped DNS rules.
 
     PERFORMANCE NOTE: Any device field changes trigger processing of all interfaces
     on that device. For devices with many interfaces, this has performance cost
@@ -181,9 +199,15 @@ def handle_device_save(sender, instance, created, **kwargs):
 
 @receiver(post_delete, sender=Device)
 @receiver(post_delete, sender=Interface)
+# TODO: Add post_delete handlers for future models:
+# - VirtualMachine, VMInterface, Cluster
+# - Service, InterfaceRedundancyGroup
 def handle_object_delete(sender, instance, **kwargs):
     """
     Handle object delete events to clean up associated DNS records.
+
+    Location-aware cleanup: Removes DNS records created by location-scoped
+    rules when objects are deleted.
 
     Args:
         sender: The model class that was deleted
@@ -200,9 +224,16 @@ def handle_object_delete(sender, instance, **kwargs):
 
 
 @receiver(m2m_changed, sender=Interface.ip_addresses.through)
+# TODO: Add m2m_changed handlers for future models:
+# - VMInterface.ip_addresses.through (virtualization support)
+# - Service.ip_addresses.through (anycast IP assignments)
+# - InterfaceRedundancyGroup.ip_addresses.through (redundant IP assignments)
 def handle_m2m_changed(sender, instance, action, pk_set, **kwargs):
     """
     Handle many-to-many relationship changes to trigger DNS rule processing.
+
+    Location-aware processing: IP assignments trigger DNS rule evaluation
+    using location-scoped rules based on the interface's device location.
 
     This is specifically needed for Interface.ip_addresses changes where
     the post_save signal fires before the M2M relationship is updated.

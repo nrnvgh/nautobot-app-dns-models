@@ -4,12 +4,14 @@ from django import forms
 from django.contrib.contenttypes.models import ContentType
 from django.db import models as django_models
 from nautobot.apps.forms import (
+    DynamicModelChoiceField,
     NautobotBulkEditForm,
     NautobotModelForm,
     TagsBulkEditFormMixin,
 )
 from nautobot.core.forms import add_blank_choice
 from nautobot.core.forms.widgets import StaticSelect2
+from nautobot.dcim.models import Location
 from nautobot.extras.forms import NautobotFilterForm
 
 from nautobot_dns_models import models
@@ -533,6 +535,13 @@ class DNSRuleForm(NautobotModelForm):
         help_text="Type of object this rule applies to (Device, Interface, VM, VM Interface)",
     )
 
+    location = DynamicModelChoiceField(
+        queryset=Location.objects.all(),
+        required=False,
+        widget=StaticSelect2(),
+        help_text="Scope rule to specific location. Leave blank for global rule.",
+    )
+
     record_type = forms.ChoiceField(
         choices=add_blank_choice(models.RECORD_TYPE_CHOICES),
         widget=StaticSelect2(),
@@ -612,6 +621,11 @@ class DNSRuleFilterForm(NautobotFilterForm):
         label="Content Type",
         widget=StaticSelect2(),
     )
+    location = DynamicModelChoiceField(
+        queryset=Location.objects.all(),
+        required=False,
+        label="Location",
+    )
     record_type = forms.ChoiceField(
         choices=add_blank_choice(models.RECORD_TYPE_CHOICES),
         required=False,
@@ -627,5 +641,6 @@ class DNSRuleFilterForm(NautobotFilterForm):
         "name",
         "enabled",
         "content_type",
+        "location",
         "record_type",
     ]

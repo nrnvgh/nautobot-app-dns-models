@@ -584,38 +584,19 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             status=Status.objects.get_for_model(Device).first(),
         )
 
-        # Create 3 DNS rules for base model test cases
+        # Create minimal rule for BaseModelTestCase (needs at least one object)
+        # Use location-scoped rule to avoid conflicts with individual test cases
         DNSRule.objects.create(
-            name="test-rule-1",
-            description="Test Rule 1",
+            name="base-test-rule",
+            description="Base test rule for BaseModelTestCase",
             enabled=True,
-            content_type=cls.content_type_device,
-            priority=100,
-            zone_template="example.com",
-            record_type="A",
+            content_type=cls.content_type_interface,  # Use Interface to avoid Device conflicts
+            location=cls.location,  # Location-scoped to avoid global conflicts
+            priority=999,  # High priority to avoid conflicts
+            zone_template="base-test.com",
+            record_type="CNAME",  # Use CNAME to avoid A/AAAA conflicts
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.address }}",
-        )
-        DNSRule.objects.create(
-            name="test-rule-2",
-            description="Test Rule 2",
-            enabled=False,
-            content_type=cls.content_type_interface,
-            priority=200,
-            zone_template="internal.com",
-            record_type="CNAME",
-            name_template="{{ obj.device.name }}-{{ obj.name }}",
-            value_template="{{ obj.device.name }}.example.com",
-        )
-        DNSRule.objects.create(
-            name="test-rule-3",
-            enabled=True,
-            content_type=cls.content_type_device,
-            priority=150,
-            zone_template="test.com",
-            record_type="TXT",
-            name_template="test",
-            value_template="test-value",
+            value_template="base.example.com",
         )
 
     def test_dnsrule_for_a_record(self):
@@ -832,6 +813,41 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
 
     def test_dnsrule_priority_ordering(self):
         """Test that DNSRule ordering by priority works correctly."""
+        # Create test rules with different priorities
+        DNSRule.objects.create(
+            name="test-rule-1",
+            description="Test Rule 1",
+            enabled=True,
+            content_type=self.content_type_device,
+            priority=100,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.address }}",
+        )
+        DNSRule.objects.create(
+            name="test-rule-2",
+            description="Test Rule 2",
+            enabled=False,
+            content_type=self.content_type_interface,
+            priority=200,
+            zone_template="internal.com",
+            record_type="CNAME",
+            name_template="{{ obj.device.name }}-{{ obj.name }}",
+            value_template="{{ obj.device.name }}.example.com",
+        )
+        DNSRule.objects.create(
+            name="test-rule-3",
+            enabled=True,
+            content_type=self.content_type_device,
+            priority=150,
+            zone_template="test.com",
+            record_type="TXT",
+            name_template="test",
+            value_template="test-value",
+            location=self.location,  # Use location to avoid conflicts with other tests
+        )
+
         rules = DNSRule.objects.filter(name__startswith="test-rule-").order_by("priority", "name")
 
         # Should be ordered by priority: 100, 150, 200
@@ -839,9 +855,16 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         self.assertEqual(rules[1].name, "test-rule-3")  # priority 150
         self.assertEqual(rules[2].name, "test-rule-2")  # priority 200
 
-    def test_dnsrule_get_absolute_url(self):
+    def test_get_absolute_url(self):
         """Test DNSRule get_absolute_url method."""
-        rule = DNSRule.objects.get(name="test-rule-1")
+        rule = DNSRule.objects.create(
+            name="url-test-rule",
+            content_type=self.content_type_device,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.address }}",
+        )
         expected_url = f"/plugins/dns/dns-rules/{rule.pk}/"
         self.assertEqual(rule.get_absolute_url(), expected_url)
 
@@ -962,6 +985,261 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 value_template="{{ obj.primary_ip4.id }}",
             )
             rule.full_clean()
+
+    def test_dnsrule_global_uniqueness_constraint(self):
+        """Test that two enabled global rules with same content_type + record_type fails."""
+        # Create first enabled global rule (location=None)
+        DNSRule.objects.create(
+            name="global-rule-1",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=None,  # Global rule
+            enabled=True,  # Enabled
+        )
+
+        # Attempt to create second enabled global rule with same content_type + record_type
+        with self.assertRaises(ValidationError):  # Model validation error
+            duplicate_rule = DNSRule(
+                name="global-rule-2",
+                content_type=self.content_type_device,
+                zone_template="test.com",
+                record_type="A",
+                name_template="{{ obj.name }}",
+                value_template="{{ obj.primary_ip4.id }}",
+                location=None,  # Same: global rule
+                enabled=True,  # Same: enabled
+            )
+            duplicate_rule.full_clean()  # Triggers validate_unique()
+
+    def test_dnsrule_location_scoped_uniqueness_constraint(self):
+        """Test that two enabled location-scoped rules with same content_type + record_type + location fails."""
+        # Create first enabled location-scoped rule
+        DNSRule.objects.create(
+            name="location-rule-1",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=self.location,  # Specific location
+            enabled=True,  # Enabled
+        )
+
+        # Attempt to create second enabled rule with same content_type + record_type + location
+        with self.assertRaises(IntegrityError):  # Database constraint violation
+            DNSRule.objects.create(
+                name="location-rule-2",
+                content_type=self.content_type_device,
+                zone_template="test.com",
+                record_type="A",
+                name_template="{{ obj.name }}",
+                value_template="{{ obj.primary_ip4.id }}",
+                location=self.location,  # Same location
+                enabled=True,  # Same: enabled
+            )
+
+    def test_dnsrule_global_and_location_rules_allowed(self):
+        """Test that global rule + location-scoped rule with same content_type + record_type succeeds."""
+        # Create global rule
+        global_rule = DNSRule.objects.create(
+            name="global-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=None,  # Global
+        )
+
+        # Create location-scoped rule (should succeed - different location value)
+        location_rule = DNSRule.objects.create(
+            name="location-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=self.location,  # Specific location
+        )
+
+        # Both should exist
+        self.assertTrue(DNSRule.objects.filter(id=global_rule.id).exists())
+        self.assertTrue(DNSRule.objects.filter(id=location_rule.id).exists())
+
+        # Verify they have different location values
+        self.assertIsNone(global_rule.location)
+        self.assertEqual(location_rule.location, self.location)
+
+    def test_dnsrule_disabled_rules_allow_duplicates(self):
+        """Test that disabled rules can have duplicate content_type + record_type combinations."""
+        # Create first disabled global rule
+        DNSRule.objects.create(
+            name="disabled-global-rule-1",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=None,  # Global rule
+            enabled=False,  # Disabled
+        )
+
+        # Create second disabled global rule with same content_type + record_type (should succeed)
+        DNSRule.objects.create(
+            name="disabled-global-rule-2",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=None,  # Same: global rule
+            enabled=False,  # Same: disabled
+        )
+
+        # Create disabled location-scoped rules with same content_type + record_type + location (should succeed)
+        DNSRule.objects.create(
+            name="disabled-location-rule-1",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=self.location,  # Specific location
+            enabled=False,  # Disabled
+        )
+
+        DNSRule.objects.create(
+            name="disabled-location-rule-2",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=self.location,  # Same location
+            enabled=False,  # Same: disabled
+        )
+
+        # Verify all rules were created successfully
+        self.assertEqual(DNSRule.objects.filter(enabled=False).count(), 4)
+
+    def test_dnsrule_enabled_rule_allowed_with_disabled_duplicate(self):
+        """Test that an enabled rule can be created when a disabled rule with same content_type + record_type exists."""
+        # Create disabled global rule first
+        DNSRule.objects.create(
+            name="disabled-global-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=None,  # Global rule
+            enabled=False,  # Disabled
+        )
+
+        # Create enabled global rule with same content_type + record_type (should succeed)
+        enabled_global_rule = DNSRule.objects.create(
+            name="enabled-global-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=None,  # Same: global rule
+            enabled=True,  # Different: enabled
+        )
+
+        # Create disabled location-scoped rule
+        DNSRule.objects.create(
+            name="disabled-location-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=self.location,  # Specific location
+            enabled=False,  # Disabled
+        )
+
+        # Create enabled location-scoped rule with same content_type + record_type + location (should succeed)
+        enabled_location_rule = DNSRule.objects.create(
+            name="enabled-location-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=self.location,  # Same location
+            enabled=True,  # Different: enabled
+        )
+
+        # Verify all rules were created successfully
+        self.assertEqual(DNSRule.objects.filter(enabled=False).count(), 2)
+        # Count includes the base test rule from setUpTestData (1) + our 2 new enabled rules = 3
+        self.assertEqual(DNSRule.objects.filter(enabled=True).count(), 3)
+        self.assertTrue(enabled_global_rule.enabled)
+        self.assertTrue(enabled_location_rule.enabled)
+
+    def test_dnsrule_enabling_disabled_rule_with_enabled_duplicate_fails(self):
+        """Test that enabling a disabled rule fails when an enabled rule with same content_type + record_type exists."""
+        # Create enabled global rule first
+        DNSRule.objects.create(
+            name="enabled-global-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=None,  # Global rule
+            enabled=True,  # Enabled
+        )
+
+        # Create disabled global rule with same content_type + record_type (should succeed initially)
+        disabled_rule = DNSRule.objects.create(
+            name="disabled-global-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=None,  # Same: global rule
+            enabled=False,  # Different: disabled
+        )
+
+        # Attempt to enable the disabled rule (should fail due to uniqueness constraint)
+        disabled_rule.enabled = True
+        with self.assertRaises(ValidationError):
+            disabled_rule.full_clean()
+
+        # Test location-scoped scenario
+        DNSRule.objects.create(
+            name="enabled-location-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=self.location,  # Specific location
+            enabled=True,  # Enabled
+        )
+
+        disabled_location_rule = DNSRule.objects.create(
+            name="disabled-location-rule",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+            location=self.location,  # Same location
+            enabled=False,  # Disabled
+        )
+
+        # Attempt to enable the disabled location rule (should fail)
+        disabled_location_rule.enabled = True
+        with self.assertRaises(ValidationError):
+            disabled_location_rule.full_clean()
 
 
 class DNSRuleRecordTestCase(TestCase):

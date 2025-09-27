@@ -366,6 +366,7 @@ class DNSRuleTable(BaseTable):
     name = tables.Column(linkify=True)
     enabled = tables.BooleanColumn()
     content_type = tables.Column()
+    location = tables.LinkColumn()
     record_type = tables.Column()
     priority = tables.Column()
     actions = ButtonsColumn(models.DNSRule)
@@ -380,6 +381,7 @@ class DNSRuleTable(BaseTable):
             "description",
             "enabled",
             "content_type",
+            "location",
             "record_type",
             "priority",
             "actions",
