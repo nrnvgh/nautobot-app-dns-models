@@ -458,6 +458,7 @@ RECORD_TYPE_CHOICES = [
     "custom_validators",
     "export_templates",
     "graphql",
+    "locations",
     "relationships",
     "webhooks",
 )
@@ -632,6 +633,7 @@ class DNSRule(PrimaryModel):
         Returns:
             Error message if validation fails, None if successful
         """
+        # TODO move this to the top of the file /if/ we keep this method.
         from nautobot.core.utils.data import render_jinja2
 
         try:
