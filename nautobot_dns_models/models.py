@@ -479,8 +479,6 @@ class DNSRule(PrimaryModel):
         db_index=True,
         help_text="Scope rule to specific location. Leave blank for global rule.",
     )
-    # XXX Do we actually need this?
-    priority = models.IntegerField(default=100, help_text="Rule priority (lower values = higher priority)")
 
     # Templates
     zone_template = models.TextField(help_text="Jinja2 template for DNS zone name")
@@ -502,7 +500,7 @@ class DNSRule(PrimaryModel):
     class Meta:
         """Meta attributes for DNSRule."""
 
-        ordering = ["priority", "name"]
+        ordering = ["name"]
         constraints = [
             models.UniqueConstraint(
                 fields=["content_type", "record_type", "location"],

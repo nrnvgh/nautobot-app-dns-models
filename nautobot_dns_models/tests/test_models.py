@@ -592,7 +592,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             enabled=True,
             content_type=cls.content_type_interface,  # Use Interface to avoid Device conflicts
             location=cls.location,  # Location-scoped to avoid global conflicts
-            priority=999,  # High priority to avoid conflicts
             zone_template="base-test.com",
             record_type="CNAME",  # Use CNAME to avoid A/AAAA conflicts
             name_template="{{ obj.name }}",
@@ -743,7 +742,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         # Test default values
         self.assertEqual(rule.description, "")
         self.assertTrue(rule.enabled)
-        self.assertEqual(rule.priority, 100)
         # Test blank optional template fields
         self.assertEqual(rule.preference_template, "")
         self.assertEqual(rule.priority_template, "")
@@ -811,50 +809,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             )
             invalid_rule.full_clean()
 
-    def test_dnsrule_priority_ordering(self):
-        """Test that DNSRule ordering by priority works correctly."""
-        # Create test rules with different priorities
-        DNSRule.objects.create(
-            name="test-rule-1",
-            description="Test Rule 1",
-            enabled=True,
-            content_type=self.content_type_device,
-            priority=100,
-            zone_template="example.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.address }}",
-        )
-        DNSRule.objects.create(
-            name="test-rule-2",
-            description="Test Rule 2",
-            enabled=False,
-            content_type=self.content_type_interface,
-            priority=200,
-            zone_template="internal.com",
-            record_type="CNAME",
-            name_template="{{ obj.device.name }}-{{ obj.name }}",
-            value_template="{{ obj.device.name }}.example.com",
-        )
-        DNSRule.objects.create(
-            name="test-rule-3",
-            enabled=True,
-            content_type=self.content_type_device,
-            priority=150,
-            zone_template="test.com",
-            record_type="TXT",
-            name_template="test",
-            value_template="test-value",
-            location=self.location,  # Use location to avoid conflicts with other tests
-        )
-
-        rules = DNSRule.objects.filter(name__startswith="test-rule-").order_by("priority", "name")
-
-        # Should be ordered by priority: 100, 150, 200
-        self.assertEqual(rules[0].name, "test-rule-1")  # priority 100
-        self.assertEqual(rules[1].name, "test-rule-3")  # priority 150
-        self.assertEqual(rules[2].name, "test-rule-2")  # priority 200
-
     def test_get_absolute_url(self):
         """Test DNSRule get_absolute_url method."""
         rule = DNSRule.objects.create(
@@ -902,19 +856,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         )
         # Before saving, enabled should default to True
         self.assertTrue(rule.enabled)
-
-    def test_dnsrule_priority_default_100(self):
-        """Test that DNSRule priority field defaults to 100."""
-        rule = DNSRule(
-            name="default-priority",
-            content_type=self.content_type_device,
-            zone_template="test.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
-        )
-        # Before saving, priority should default to 100
-        self.assertEqual(rule.priority, 100)
 
     def test_dnsrule_value_template_required(self):
         """Test that value_template is required and cannot be omitted."""

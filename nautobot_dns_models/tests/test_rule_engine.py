@@ -377,37 +377,6 @@ class DNSRuleEngineTestCase(TestCase):
         self.assertEqual(rules.count(), 1)
         self.assertEqual(rules.first(), global_rule)
 
-    def test_get_applicable_rules_priority_ordering(self):
-        """Test that rules are ordered by priority within location scope."""
-
-        # Create multiple location-specific rules with different priorities
-        rule_high = DNSRule.objects.create(
-            name="high-priority-rule",
-            content_type=ContentType.objects.get_for_model(Device),
-            location=self.location,
-            priority=50,  # Lower number = higher priority
-            zone_template="high.example.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
-        )
-
-        rule_low = DNSRule.objects.create(
-            name="low-priority-rule",
-            content_type=ContentType.objects.get_for_model(Device),
-            location=self.location,
-            priority=200,  # Higher number = lower priority
-            zone_template="low.example.com",
-            record_type="CNAME",
-            name_template="{{ obj.name }}-alias",
-            value_template="{{ obj.name }}.example.com",
-        )
-
-        rules = self.engine._get_applicable_rules(self.device)
-        self.assertEqual(rules.count(), 2)
-        self.assertEqual(rules.first(), rule_high)  # Should be first due to priority
-        self.assertEqual(rules.last(), rule_low)
-
     def test_get_applicable_rules_per_record_type_precedence_mixed_rules(self):
         """Test per-record-type precedence: location-specific A rule + global CNAME rule."""
         # Create location-specific A record rule
@@ -415,7 +384,6 @@ class DNSRuleEngineTestCase(TestCase):
             name="location-a-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=self.location,
-            priority=100,
             zone_template="location.example.com",
             record_type="A",
             name_template="{{ obj.name }}",
@@ -427,7 +395,6 @@ class DNSRuleEngineTestCase(TestCase):
             name="global-cname-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=None,  # Global rule
-            priority=200,
             zone_template="global.example.com",
             record_type="CNAME",
             name_template="{{ obj.name }}-alias",
@@ -439,7 +406,6 @@ class DNSRuleEngineTestCase(TestCase):
             name="global-a-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=None,  # Global rule
-            priority=150,
             zone_template="global.example.com",
             record_type="A",
             name_template="{{ obj.name }}-global",
@@ -464,7 +430,6 @@ class DNSRuleEngineTestCase(TestCase):
             name="location-override-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=self.location,
-            priority=100,
             zone_template="location.example.com",
             record_type="A",
             name_template="{{ obj.name }}-location",
@@ -476,7 +441,6 @@ class DNSRuleEngineTestCase(TestCase):
             name="global-override-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=None,
-            priority=50,  # Even higher priority, but should still be overridden
             zone_template="global.example.com",
             record_type="A",
             name_template="{{ obj.name }}-global",
@@ -496,7 +460,6 @@ class DNSRuleEngineTestCase(TestCase):
             name="location-a-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=self.location,
-            priority=100,
             zone_template="location.example.com",
             record_type="A",
             name_template="{{ obj.name }}",
@@ -507,7 +470,6 @@ class DNSRuleEngineTestCase(TestCase):
             name="location-cname-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=self.location,
-            priority=200,
             zone_template="location.example.com",
             record_type="CNAME",
             name_template="{{ obj.name }}-alias",
@@ -518,7 +480,6 @@ class DNSRuleEngineTestCase(TestCase):
             name="location-mx-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=self.location,
-            priority=300,
             zone_template="location.example.com",
             record_type="MX",
             name_template="{{ obj.name }}-mail",
@@ -533,75 +494,6 @@ class DNSRuleEngineTestCase(TestCase):
         rule_names = {rule.name for rule in rules}
         expected_names = {location_a_rule.name, location_cname_rule.name, location_mx_rule.name}
         self.assertEqual(rule_names, expected_names)
-
-    def test_get_applicable_rules_per_record_type_precedence_priority_within_scope(self):
-        """Test that priority ordering works within location and global scopes independently."""
-        # Create location-specific A rule
-        location_a_rule = DNSRule.objects.create(
-            name="location-a-rule",
-            content_type=ContentType.objects.get_for_model(Device),
-            location=self.location,
-            priority=50,
-            zone_template="location.example.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
-        )
-
-        # Create location-specific CNAME rule
-        location_cname_rule = DNSRule.objects.create(
-            name="location-cname-rule",
-            content_type=ContentType.objects.get_for_model(Device),
-            location=self.location,
-            priority=150,  # Lower priority than A rule
-            zone_template="location.example.com",
-            record_type="CNAME",
-            name_template="{{ obj.name }}-alias",
-            value_template="{{ obj.name }}.example.com",
-        )
-
-        # Create global MX rules with different priorities
-        global_mx_high = DNSRule.objects.create(
-            name="global-mx-high",
-            content_type=ContentType.objects.get_for_model(Device),
-            location=None,
-            priority=75,  # Higher priority
-            zone_template="global.example.com",
-            record_type="MX",
-            name_template="{{ obj.name }}-mail-high",
-            value_template="mail1.example.com",
-            preference_template="10",
-        )
-
-        global_mx_low = DNSRule.objects.create(
-            name="global-mx-low",
-            content_type=ContentType.objects.get_for_model(Device),
-            location=None,
-            priority=125,  # Lower priority
-            zone_template="global.example.com",
-            record_type="MX",
-            name_template="{{ obj.name }}-mail-low",
-            value_template="mail2.example.com",
-            preference_template="20",
-        )
-
-        rules = self.engine._get_applicable_rules(self.device)
-
-        # Should get location A + CNAME rules + global MX rules (4 total)
-        self.assertEqual(rules.count(), 4)
-
-        # Verify priority ordering within the returned QuerySet
-        rules_list = list(rules)
-
-        # Verify we have the expected rules
-        rule_names = {rule.name for rule in rules}
-        expected_names = {location_a_rule.name, location_cname_rule.name, global_mx_high.name, global_mx_low.name}
-        self.assertEqual(rule_names, expected_names)
-
-        # Verify overall priority ordering (should be ordered by priority field)
-        priorities = [rule.priority for rule in rules_list]
-        self.assertEqual(priorities, sorted(priorities))  # Should be in ascending order
-
 
 class DNSRuleIntegrationTestCase(TestCase):
     """Integration tests for DNS rule processing with real objects and signals."""
