@@ -4,15 +4,15 @@ from django import forms
 from django.contrib.contenttypes.models import ContentType
 from django.db import models as django_models
 from nautobot.apps.forms import (
-    DynamicModelChoiceField,
     DynamicModelMultipleChoiceField,
+    DynamicModelChoiceField,
     NautobotBulkEditForm,
     NautobotModelForm,
     TagsBulkEditFormMixin,
 )
 from nautobot.core.forms import add_blank_choice
 from nautobot.core.forms.widgets import StaticSelect2
-from nautobot.dcim.models import Location
+from nautobot.dcim.form_mixins import LocatableModelFormMixin, LocatableModelFilterFormMixin
 from nautobot.extras.forms import NautobotFilterForm
 from nautobot.ipam.models import Prefix
 
@@ -569,7 +569,7 @@ class DNSRuleFormDisabled(NautobotModelForm):
         self.fields["record_type"].choices = add_blank_choice(record_type_choices)
 
 
-class DNSRuleForm(NautobotModelForm):
+class DNSRuleForm(LocatableModelFormMixin, NautobotModelForm):
     """DNSRule creation/edit form with dynamic field display."""
 
     content_type = forms.ModelChoiceField(
@@ -581,13 +581,6 @@ class DNSRuleForm(NautobotModelForm):
         ).order_by("app_label", "model"),
         widget=StaticSelect2(),
         help_text="Type of object this rule applies to (Device, Interface, VM, VM Interface)",
-    )
-
-    location = DynamicModelChoiceField(
-        queryset=Location.objects.all(),
-        required=False,
-        widget=StaticSelect2(),
-        help_text="Scope rule to specific location. Leave blank for global rule.",
     )
 
     record_type = forms.ChoiceField(
@@ -653,7 +646,7 @@ class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         ]
 
 
-class DNSRuleFilterForm(NautobotFilterForm):
+class DNSRuleFilterForm(LocatableModelFilterFormMixin, NautobotFilterForm):
     """Filter form for DNSRule searches."""
 
     q = forms.CharField(
@@ -669,11 +662,7 @@ class DNSRuleFilterForm(NautobotFilterForm):
         label="Content Type",
         widget=StaticSelect2(),
     )
-    location = DynamicModelChoiceField(
-        queryset=Location.objects.all(),
-        required=False,
-        label="Location",
-    )
+
     record_type = forms.ChoiceField(
         choices=add_blank_choice(models.RECORD_TYPE_CHOICES),
         required=False,
