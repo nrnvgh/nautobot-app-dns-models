@@ -78,4 +78,4 @@ DNS Record (A/AAAA/CNAME/etc.)
 ## Related Models
 
 - [DNS Rule Model](dnsrule.md): The rule definition that creates DNS records
-- Various DNS record models: [A Record](arecordmodel.md), [AAAA Record](aaaarecordmodel.md), [CNAME Record](cnamerecordmodel.md), etc.
+- Various DNS record models: [A Record](arecord.md), [AAAA Record](aaaarecord.md), [CNAME Record](cnamerecord.md), etc.
