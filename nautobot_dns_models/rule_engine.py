@@ -223,13 +223,12 @@ class DNSRuleEngine:
         1. For each record type, prefer location-specific rules over global rules
         2. If no location-specific rule exists for a record type, use global rule
         3. Multiple record types can have different rule sources (location vs global)
-        4. Rules are ordered by priority within each precedence group
 
         Args:
             source_obj: The object to find applicable rules for
 
         Returns:
-            QuerySet of applicable DNSRule objects ordered by priority
+            QuerySet of applicable DNSRule objects
         """
         content_type = ContentType.objects.get_for_model(source_obj)
         object_location = self._get_object_location(source_obj)
@@ -241,7 +240,7 @@ class DNSRuleEngine:
                 content_type=content_type,
                 location__isnull=True,
                 enabled=True
-            ).order_by("priority")
+            )
         
         # Get all potentially applicable rules in one query
         all_rules = DNSRule.objects.filter(
@@ -249,7 +248,7 @@ class DNSRuleEngine:
             enabled=True
         ).filter(
             models.Q(location=object_location) | models.Q(location__isnull=True)
-        ).order_by("priority")
+        )
         
         # Group by record_type using defaultdict
         rules_by_type = defaultdict(lambda: {"location": [], "global": []})
@@ -268,8 +267,8 @@ class DNSRuleEngine:
             else:
                 final_rule_pks.extend([r.pk for r in rules["global"]])
         
-        # Return QuerySet filtered to selected rules, maintaining original ordering
-        return DNSRule.objects.filter(pk__in=final_rule_pks).order_by("priority")
+        # Return QuerySet filtered to selected rules, maintaining model ordering
+        return DNSRule.objects.filter(pk__in=final_rule_pks)
 
     def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> None:
         """Reconcile DNS records for a single rule against current object state."""

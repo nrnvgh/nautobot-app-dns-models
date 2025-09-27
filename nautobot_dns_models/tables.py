@@ -378,7 +378,6 @@ class DNSRuleTable(BaseTable):
     content_type = tables.Column()
     location = tables.LinkColumn()
     record_type = tables.Column()
-    priority = tables.Column()
     actions = ButtonsColumn(models.DNSRule)
 
     class Meta(BaseTable.Meta):
@@ -393,6 +392,5 @@ class DNSRuleTable(BaseTable):
             "content_type",
             "location",
             "record_type",
-            "priority",
             "actions",
         )
