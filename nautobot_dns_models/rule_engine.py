@@ -1,6 +1,7 @@
 """DNS Rule Processing Engine for Nautobot DNS Models."""
 
 import logging
+from collections import defaultdict
 from typing import Any, Dict
 
 from django.contrib.contenttypes.models import ContentType
@@ -72,7 +73,7 @@ class DNSRuleEngine:
         if created or existing_count == 0:
             # Create new DNS records for new objects OR objects with no existing records
             if created:
-                logger.error(
+                logger.debug(
                     f"Taking CREATE path for {source_obj} (created={created}, existing_records={existing_count})"
                 )
             else:
@@ -160,6 +161,9 @@ class DNSRuleEngine:
         """
         logger.debug(f"Updating DNS records for {source_obj}")
 
+        # Clean up records from rules that are no longer applicable
+        self._cleanup_orphaned_records(source_obj, applicable_rules)
+
         for rule in applicable_rules:
             try:
                 logger.debug(f"Reconciling records for rule {rule.name} on {source_obj}")
@@ -215,10 +219,11 @@ class DNSRuleEngine:
         """
         Get all DNS rules that apply to the given source object.
 
-        Location-scoped rule resolution:
-        1. Try location-specific rules first (location=object_location)
-        2. Fallback to global rules (location=None) if no location-specific rules
-        3. Location-specific rules override global rules for same content_type + record_type
+        Location-scoped rule resolution with per-record-type precedence:
+        1. For each record type, prefer location-specific rules over global rules
+        2. If no location-specific rule exists for a record type, use global rule
+        3. Multiple record types can have different rule sources (location vs global)
+        4. Rules are ordered by priority within each precedence group
 
         Args:
             source_obj: The object to find applicable rules for
@@ -228,24 +233,43 @@ class DNSRuleEngine:
         """
         content_type = ContentType.objects.get_for_model(source_obj)
         object_location = self._get_object_location(source_obj)
-
-        # Try location-specific rules first
-        if object_location:
-            location_rules = DNSRule.objects.filter(
-                content_type=content_type, location=object_location, enabled=True
+        
+        # If object has no location, only global rules can apply
+        if object_location is None:
+            logger.debug(f"Using global rules for {source_obj} (no location)")
+            return DNSRule.objects.filter(
+                content_type=content_type,
+                location__isnull=True,
+                enabled=True
             ).order_by("priority")
-
-            if location_rules.exists():
-                logger.debug(f"Using location-specific rules for {source_obj} at location {object_location}")
-                return location_rules
-
-        # Fallback to global rules (location=None)
-        global_rules = DNSRule.objects.filter(content_type=content_type, location__isnull=True, enabled=True).order_by(
-            "priority"
-        )
-
-        logger.debug(f"Using global rules for {source_obj} (location: {object_location})")
-        return global_rules
+        
+        # Get all potentially applicable rules in one query
+        all_rules = DNSRule.objects.filter(
+            content_type=content_type,
+            enabled=True
+        ).filter(
+            models.Q(location=object_location) | models.Q(location__isnull=True)
+        ).order_by("priority")
+        
+        # Group by record_type using defaultdict
+        rules_by_type = defaultdict(lambda: {"location": [], "global": []})
+        
+        for rule in all_rules:
+            if rule.location == object_location:
+                rules_by_type[rule.record_type]["location"].append(rule)
+            else:  # rule.location is None
+                rules_by_type[rule.record_type]["global"].append(rule)
+        
+        # For each record type, prefer location-specific rules
+        final_rule_pks = []
+        for rules in rules_by_type.values():
+            if rules["location"]:
+                final_rule_pks.extend([r.pk for r in rules["location"]])
+            else:
+                final_rule_pks.extend([r.pk for r in rules["global"]])
+        
+        # Return QuerySet filtered to selected rules, maintaining original ordering
+        return DNSRule.objects.filter(pk__in=final_rule_pks).order_by("priority")
 
     def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> None:
         """Reconcile DNS records for a single rule against current object state."""
@@ -359,6 +383,30 @@ class DNSRuleEngine:
             logger.info(
                 f"Cleaned up {deleted_dns_count} DNS records and {deleted_tracking_count} tracking records for {rule.name} on {source_obj}"
             )
+
+    def _cleanup_orphaned_records(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
+        """
+        Clean up DNS records from rules that are no longer applicable to the source object.
+
+        This handles scenarios like:
+        - Device location changes (old location-specific rules no longer apply)
+        - Rule modifications (disabled, deleted, or scope changes)
+        - Object attribute changes that affect rule applicability
+
+        Args:
+            source_obj: The source object whose orphaned records should be cleaned up
+            applicable_rules: QuerySet of currently applicable rules for this object
+        """
+        content_type = ContentType.objects.get_for_model(source_obj)
+        existing_tracking_records = DNSRuleRecord.objects.filter(
+            content_type=content_type, object_id=str(source_obj.pk)
+        )
+
+        # Find and clean up records from rules that are no longer applicable
+        orphaned_records = existing_tracking_records.exclude(rule__in=applicable_rules)
+        for tracking_record in orphaned_records:
+            logger.debug(f"Cleaning up orphaned record from rule {tracking_record.rule.name} for {source_obj}")
+            self._cleanup_records_for_rule(tracking_record.rule, source_obj)
 
     def _create_records_from_data(
         self, rule: DNSRule, source_obj: Any, record_data_list: list[dict[str, Any]]
