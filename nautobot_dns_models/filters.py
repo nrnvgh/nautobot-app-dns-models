@@ -4,6 +4,7 @@ import django_filters
 from django.db.models import F
 from django.db.models.functions import Coalesce
 from nautobot.apps.filters import NautobotFilterSet, SearchFilter
+from nautobot.dcim.filters import LocatableModelFilterSetMixin
 from netaddr import IPAddress as NetIPAddress
 
 from nautobot_dns_models import models
@@ -236,7 +237,7 @@ class SRVRecordFilterSet(DNSRecordFilterSet):
         fields = "__all__"
 
 
-class DNSRuleFilterSet(NautobotFilterSet):
+class DNSRuleFilterSet(NautobotFilterSet, LocatableModelFilterSetMixin):
     """Filter for DNSRule."""
 
     class Meta:
