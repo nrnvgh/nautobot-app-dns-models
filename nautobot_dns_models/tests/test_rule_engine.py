@@ -28,6 +28,27 @@ from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.rule_engine import DNSRuleEngine
 
+TEST_LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "level": "DEBUG",
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        # This will capture logs from your app.
+        # Replace 'myapp' with the name of the logger you want to see.
+        "nautobot_dns_models": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+            "propagate": True,
+        },
+    },
+}
+
+
 
 class BaseRuleEngineTestCase(TestCase):
     """Base test case with comprehensive setup data for all DNS rule engine tests."""
@@ -179,7 +200,9 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
         # render_jinja2 returns empty string, which our method treats as an error
         with self.assertRaises(DNSTemplateEmptyError):
             self.engine._render_template(
-                "{{ obj.primary_ip4.id }}", {"obj": self.device}, "test_field"  # self.device has no primary_ip4 set
+                "{{ obj.primary_ip4.id }}",
+                {"obj": self.device},
+                "test_field",  # self.device has no primary_ip4 set
             )
 
     def test_render_template_method_with_array_index_error(self):
@@ -193,9 +216,7 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
             status=Status.objects.get_for_model(Interface).first(),
         )
         with self.assertRaises(TemplateError):
-            self.engine._render_template(
-                "{{ obj.ip_addresses[0].id }}", {"obj": empty_interface}, "test_field"
-            )
+            self.engine._render_template("{{ obj.ip_addresses[0].id }}", {"obj": empty_interface}, "test_field")
 
     def test_render_template_method_empty_string_handling(self):
         """Test that empty string results are treated as errors."""
@@ -239,7 +260,7 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
             status=Status.objects.get_for_model(Device).first(),
             # primary_ip4 remains None by default
         )
-        
+
         test_cases = [
             # Case from actual logs: obj.primary_ip4.id when primary_ip4 is None
             ("{{ obj.primary_ip4.id }}", {"obj": device_no_ip}),
@@ -284,12 +305,12 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
             type="1000base-t",
             status=Status.objects.get_for_model(Interface).first(),
         )
-        
+
         # Test the template that should trigger the DEBUG=True error pattern
         # The rule engine should catch the DebugUndefined error pattern and include it in the exception
         with self.assertRaises(DNSTemplateEmptyError) as context:
             self.engine._render_template("{{ obj.role.id }}", {"obj": interface_no_role}, "test_field")
-        
+
         # In DEBUG=True with DebugUndefined, the error message should contain the pattern
         self.assertIn("{{ no such element:", str(context.exception))
 
@@ -1655,3 +1676,215 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
         # error_dict values are lists, so join them and check
         error_messages = " ".join(error_dict["value_template"]).lower()
         self.assertIn("filter error", error_messages)
+
+    @override_settings(
+        DEBUG=True,
+        LOGGING=TEST_LOGGING_CONFIG,
+    )
+    def test_template_failure_preserves_existing_records(self):
+        """Test that existing DNS records are not deleted when template rendering fails."""
+        # Create a DNS rule for interface IPs with a template that will fail on interfaces without roles
+        dns_rule = DNSRule.objects.create(
+            name="interface-ip-with-role-rule",
+            description="Create A records from interface IPs, requires role",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.role.name }}.{{ obj.name }}.{{ obj.device.name }}",  # This will fail if no role
+            value_template="{{ obj.ip_addresses.first().id }}",
+            enabled=True,
+        )
+        
+        # Create a test device
+        test_device = Device.objects.create(
+            name="multi-interface-device",
+            device_type=self.device_type,
+            location=self.location,
+            role=self.device_role,
+            status=Status.objects.get_for_model(Device).first(),
+        )
+
+        # Create interface role for successful interfaces
+        interface_role = Role.objects.create(name="test-interface-role")
+        interface_role.content_types.add(ContentType.objects.get_for_model(Interface))
+
+        # Create 3 interfaces
+        interface1 = Interface.objects.create(
+            name="eth1",
+            device=test_device,
+            type="1000base-t",
+            status=Status.objects.get_for_model(Interface).first(),
+            role=interface_role,  # Has role - template should work
+        )
+        
+        interface2 = Interface.objects.create(
+            name="eth2", 
+            device=test_device,
+            type="1000base-t",
+            status=Status.objects.get_for_model(Interface).first(),
+            role=interface_role,  # Has role - template should work
+        )
+        
+        interface3 = Interface.objects.create(
+            name="eth3",
+            device=test_device,
+            type="1000base-t", 
+            status=Status.objects.get_for_model(Interface).first(),
+            # No role - template will fail
+        )
+
+        # Create IP addresses for interfaces 1 and 2 (successful cases)
+        ip1 = IPAddress.objects.create(
+            address="192.168.1.101/24",
+            status=Status.objects.get_for_model(IPAddress).first(),
+            namespace=self.namespace,
+            parent=self.prefix,
+        )
+        
+        ip2 = IPAddress.objects.create(
+            address="192.168.1.102/24", 
+            status=Status.objects.get_for_model(IPAddress).first(),
+            namespace=self.namespace,
+            parent=self.prefix,
+        )
+
+        # Assign IPs to interfaces (this should trigger DNS record creation via M2M signals)
+        interface1.ip_addresses.add(ip1)
+        interface2.ip_addresses.add(ip2)
+        
+        # Verify DNS records were created for interfaces 1 and 2
+        a_records_1 = ARecord.objects.filter(name=f"{interface_role.name}.eth1.{test_device.name}", zone=self.dns_zone)
+        a_records_2 = ARecord.objects.filter(name=f"{interface_role.name}.eth2.{test_device.name}", zone=self.dns_zone)
+        
+        self.assertEqual(a_records_1.count(), 1, "DNS record should be created for interface 1")
+        self.assertEqual(a_records_2.count(), 1, "DNS record should be created for interface 2")
+        
+        # Verify tracking records were created
+        rule_records_1 = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface1.id)
+        rule_records_2 = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface2.id)
+        
+        self.assertEqual(rule_records_1.count(), 1, "Tracking record should exist for interface 1")
+        self.assertEqual(rule_records_2.count(), 1, "Tracking record should exist for interface 2")
+        
+        # Now create IP for interface 3 (no role) - this should cause template failure
+        ip3 = IPAddress.objects.create(
+            address="192.168.1.103/24",
+            status=Status.objects.get_for_model(IPAddress).first(),
+            namespace=self.namespace,
+            parent=self.prefix,
+        )
+        
+        # Assign IP to interface 3 - this should trigger template failure but not affect other records
+        interface3.ip_addresses.add(ip3)
+        
+        # Verify that existing DNS records for interfaces 1 and 2 are NOT deleted
+        a_records_1_after = ARecord.objects.filter(name=f"{interface_role.name}.eth1.{test_device.name}", zone=self.dns_zone)
+        a_records_2_after = ARecord.objects.filter(name=f"{interface_role.name}.eth2.{test_device.name}", zone=self.dns_zone)
+        
+        self.assertEqual(a_records_1_after.count(), 1, "Interface 1 DNS record should NOT be deleted on template failure")
+        self.assertEqual(a_records_2_after.count(), 1, "Interface 2 DNS record should NOT be deleted on template failure")
+        
+        # Verify no DNS record was created for interface 3 (template failure)  
+        # Note: We can't predict the exact name since the template will fail on the role part
+        a_records_3 = ARecord.objects.filter(name__endswith=f"eth3.{test_device.name}", zone=self.dns_zone)
+        self.assertEqual(a_records_3.count(), 0, "No DNS record should be created for interface 3 due to template failure")
+        
+        # Verify tracking records for interfaces 1 and 2 still exist
+        rule_records_1_after = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface1.id)
+        rule_records_2_after = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface2.id)
+        
+        self.assertEqual(rule_records_1_after.count(), 1, "Interface 1 tracking record should be preserved")
+        self.assertEqual(rule_records_2_after.count(), 1, "Interface 2 tracking record should be preserved")
+
+    def test_multiple_ips_preserves_existing_records(self):
+        """Test that adding a second IP to an interface doesn't delete/recreate the first DNS record."""
+        # Create a DNS rule for interface IPs
+        dns_rule = DNSRule.objects.create(
+            name="interface-multi-ip-rule",
+            description="Create A records from interface IPs",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            enabled=True,
+        )
+
+        # Create a test device and interface
+        test_device = Device.objects.create(
+            name="multi-ip-device",
+            device_type=self.device_type,
+            location=self.location,
+            role=self.device_role,
+            status=Status.objects.get_for_model(Device).first(),
+        )
+
+        test_interface = Interface.objects.create(
+            name="eth0",
+            device=test_device,
+            type="1000base-t",
+            status=Status.objects.get_for_model(Interface).first(),
+        )
+
+        # Create first IP address and assign it
+        ip1 = IPAddress.objects.create(
+            address="192.168.1.110/24",
+            status=Status.objects.get_for_model(IPAddress).first(),
+            namespace=self.namespace,
+            parent=self.prefix,
+        )
+
+        test_interface.ip_addresses.add(ip1)
+
+        # Verify first DNS record was created
+        a_records = ARecord.objects.filter(name=f"eth0.{test_device.name}", zone=self.dns_zone)
+        self.assertEqual(a_records.count(), 1, "First DNS record should be created")
+        
+        first_record = a_records.first()
+        first_record_id = first_record.id
+        first_record_address_id = first_record.address_id
+        
+        # Verify it points to the first IP
+        self.assertEqual(str(first_record_address_id), str(ip1.id), "First record should point to first IP")
+
+        # Create second IP address and assign it
+        ip2 = IPAddress.objects.create(
+            address="192.168.1.120/24",
+            status=Status.objects.get_for_model(IPAddress).first(),
+            namespace=self.namespace,
+            parent=self.prefix,
+        )
+
+        test_interface.ip_addresses.add(ip2)
+
+        # Verify we now have TWO DNS records (one for each IP)
+        a_records_after = ARecord.objects.filter(name=f"eth0.{test_device.name}", zone=self.dns_zone)
+        self.assertEqual(a_records_after.count(), 2, "Should have two DNS records (one per IP)")
+        
+        # Get records by IP address to verify both exist
+        record_for_ip1 = a_records_after.filter(address_id=ip1.id).first()
+        record_for_ip2 = a_records_after.filter(address_id=ip2.id).first()
+        
+        self.assertIsNotNone(record_for_ip1, "Should have DNS record for first IP")
+        self.assertIsNotNone(record_for_ip2, "Should have DNS record for second IP")
+        
+        # Critical test: The first record ID should be the same (not deleted and recreated)
+        self.assertEqual(record_for_ip1.id, first_record_id, "First DNS record should NOT be deleted and recreated")
+        
+        # Verify tracking records exist for both IPs
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=test_interface.id)
+        self.assertEqual(rule_records.count(), 2, "Should have two tracking records (one per IP)")
+
+        # Remove the first IP to test that only its record is deleted
+        test_interface.ip_addresses.remove(ip1)
+        
+        # Verify only the second IP's record remains
+        a_records_final = ARecord.objects.filter(name=f"eth0.{test_device.name}", zone=self.dns_zone)
+        self.assertEqual(a_records_final.count(), 1, "Should have one DNS record after removing first IP")
+        
+        final_record = a_records_final.first()
+        self.assertEqual(str(final_record.address_id), str(ip2.id), "Remaining record should point to second IP")
+        
+        # Verify only one tracking record remains
+        rule_records_final = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=test_interface.id)
+        self.assertEqual(rule_records_final.count(), 1, "Should have one tracking record after IP removal")
