@@ -648,7 +648,7 @@ class DNSRule(PrimaryModel):
             Error message if validation fails, None if successful
         """
         # TODO move this to the top of the file /if/ we keep this method.
-        from nautobot.core.utils.data import render_jinja2
+        from nautobot.apps.utils import render_jinja2
 
         try:
             # Get sample object for realistic testing
