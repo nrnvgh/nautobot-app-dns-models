@@ -10,7 +10,7 @@ from nautobot.dcim.models import Device, DeviceType, Interface, Location, Locati
 from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
-from nautobot_dns_models.models import ARecordModel, DNSRule, DNSRuleRecord, DNSZoneModel
+from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord, DNSZone
 
 
 @override_settings(DEBUG=True)
@@ -85,7 +85,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
             cls.ip_addresses.append(ip)
 
         # Create DNS zone for rule testing
-        cls.dns_zone = DNSZoneModel.objects.create(
+        cls.dns_zone = DNSZone.objects.create(
             name="perf.test.internal",
             soa_mname="ns.perf.test.internal",
             soa_rname="admin@perf.test.internal",
@@ -234,7 +234,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
             print(f"Total System Cost per Assignment: {total_overhead_ms / 128:.2f}ms")
 
         # Verify DNS records were actually created
-        a_records = ARecordModel.objects.count()
+        a_records = ARecord.objects.count()
         tracking_records = DNSRuleRecord.objects.count()
 
         print("\n=== DNS Records Created ===")
@@ -398,7 +398,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
             print(f"{i:2d}. [{time_ms:5.1f}ms] {sql}")
 
         # Verify DNS record was created
-        a_record_count = ARecordModel.objects.filter(name=f"{interface.name}.{interface.device.name}").count()
+        a_record_count = ARecord.objects.filter(name=f"{interface.name}.{interface.device.name}").count()
         tracking_count = DNSRuleRecord.objects.filter(object_id=str(interface.pk)).count()
 
         print("\nDNS Records Created:")
