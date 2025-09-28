@@ -1,81 +1,71 @@
 # DNS Rule Model
 
-The DNS Rule model is used to define automated DNS record creation rules. When objects of specified content types are created or modified, these rules trigger the automatic creation of corresponding DNS records using Jinja2 templates.
+The DNSRule model defines automated DNS record creation rules that trigger when specified Nautobot objects are created, modified, or deleted.
 
-## Fields
+## Model Fields
 
-- `name` (string): Unique name identifier for the DNS rule (max 100 characters).
-- `description` (string): Optional description of the DNS rule's purpose.
-- `enabled` (boolean): Whether this rule is currently active (default: True).
-- `content_type` (ContentType): The Nautobot content type that triggers this rule (e.g., dcim.Device, dcim.Interface).
-- `priority` (integer): Rule execution priority when multiple rules apply (lower values = higher priority, default: 100).
+### Core Fields
+- `name` (CharField): Unique identifier, max 100 characters
+- `description` (CharField): Optional description, max 200 characters  
+- `enabled` (BooleanField): Rule active status, default True
+- `content_type` (ForeignKey): ContentType that triggers this rule
+- `location` (ForeignKey): Optional Location for rule scoping, null for global rules
 
-## Template Fields
+### Template Fields
+- `zone_template` (TextField): Jinja2 template for DNS zone name
+- `record_type` (CharField): DNS record type choice (A, AAAA, CNAME, MX, NS, PTR, SRV, TXT)
+- `name_template` (TextField): Jinja2 template for record name
+- `value_template` (TextField): Jinja2 template for record value
 
-All template fields use Jinja2 syntax and have access to the triggering object as `obj`:
+### Record-Specific Template Fields
+- `preference_template` (TextField): MX record preference value, blank for non-MX records
+- `priority_template` (TextField): SRV record priority value, blank for non-SRV records  
+- `weight_template` (TextField): SRV record weight value, blank for non-SRV records
+- `port_template` (TextField): SRV record port number, blank for non-SRV records
 
-- `zone_template` (text): Template to determine the DNS zone for the record.
-- `record_type` (choice): Type of DNS record to create. Available options:
-  - A Record
-  - AAAA Record  
-  - CNAME Record
-  - MX Record
-  - NS Record
-  - PTR Record
-  - SRV Record
-  - TXT Record
-- `name_template` (text): Template for the DNS record name.
-- `value_template` (text): Template for the primary record value (used by all record types).
+## Model Constraints
 
-## Record Type-Specific Templates
-
-### MX Records
-- `preference_template` (text): Template for MX record preference/priority value.
-
-### SRV Records  
-- `priority_template` (text): Template for SRV record priority value.
-- `weight_template` (text): Template for SRV record weight value.
-- `port_template` (text): Template for SRV record port number.
-
-## Template Context
-
-Templates have access to:
-- `obj`: The object that triggered the rule (e.g., Device, Interface, IPAddress)
-- Related objects through Django ORM (e.g., `obj.device` for Interface objects)
-
-## Examples
-
-### Device A Record Rule
-```yaml
-Name: device-a-record
-Content Type: dcim | device  
-Zone Template: example.com
-Record Type: A Record
-Name Template: {{ obj.name }}
-Value Template: {{ obj.primary_ip4.address.ip }}
+### Uniqueness Constraint
+```python
+UniqueConstraint(
+    fields=["content_type", "record_type", "location"],
+    condition=Q(enabled=True),
+    name="unique_enabled_rule_per_content_record_location"
+)
 ```
 
-### Interface A Record Rule
-```yaml
-Name: interface-a-record
-Content Type: dcim | interface
-Zone Template: {{ obj.device.location.name }}.example.com  
-Record Type: A Record
-Name Template: {{ obj.name }}.{{ obj.device.name }}
-Value Template: {{ obj.ip_addresses.first.id }}
-```
+**Behavior**: Only one enabled rule per (content_type, record_type, location) combination.
 
-### MX Record Rule
-```yaml
-Name: mail-mx-record
-Content Type: dcim | device
-Zone Template: example.com
-Record Type: MX Record  
-Name Template: mail
-Value Template: {{ obj.name }}.example.com
-Preference Template: 10
-```
+### Validation Methods
+- `validate_unique()`: Custom validation for global rules (location=None) to handle NULL uniqueness
+- `clean()`: Template syntax validation and record-type-specific field requirements
+
+## Model Meta Options
+- `ordering = ["name"]`: Rules ordered alphabetically by name
+- Inherits from `PrimaryModel`: Includes standard Nautobot model features
+
+## Database Relationships
+
+### Foreign Key Relationships
+- `content_type` → `django_content_type` (CASCADE)
+- `location` → `dcim_location` (PROTECT)
+
+### Reverse Relationships
+- `dnsrulerecord_set`: DNSRuleRecord objects that reference this rule
+- Used for tracking auto-created DNS records
+
+## Field Validation
+
+### Required Fields
+- `name`, `content_type`, `zone_template`, `record_type`, `name_template`, `value_template`
+
+### Record-Type Specific Requirements
+- **MX Records**: `preference_template` required
+- **SRV Records**: `priority_template`, `weight_template`, `port_template` required
+- **Other Records**: Only core templates required
 
 ## Related Models
 
-DNS rules create linkage records via the [DNSRuleRecord model](dnsrulerecord.md) to track which DNS records were auto-created and enable proper cleanup during updates and deletions.
+- [DNSRuleRecord](dnsrulerecord.md): Links rules to created DNS records
+- [ContentType](https://docs.djangoproject.com/en/stable/ref/contrib/contenttypes/): Django framework for generic relationships
+- [Location](https://docs.nautobot.com/projects/core/en/stable/models/dcim/location/): Nautobot location hierarchy
