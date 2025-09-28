@@ -1,7 +1,8 @@
 """Tables for nautobot_dns_models."""
 
 import django_tables2 as tables
-from nautobot.apps.tables import BaseTable, ButtonsColumn, ToggleColumn
+from nautobot.apps.tables import BaseTable, BooleanColumn, ButtonsColumn, ToggleColumn
+from nautobot.tenancy.tables import TenantColumn
 
 from nautobot_dns_models import models
 
@@ -374,10 +375,10 @@ class DNSRuleTable(BaseTable):
 
     pk = ToggleColumn()
     name = tables.Column(linkify=True)
-    enabled = tables.BooleanColumn()
+    enabled = BooleanColumn()
     content_type = tables.Column()
     location = tables.LinkColumn()
-    tenant = tables.LinkColumn()
+    tenant = TenantColumn()
     record_type = tables.Column()
     actions = ButtonsColumn(models.DNSRule)
 
