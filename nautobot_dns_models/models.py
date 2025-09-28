@@ -680,7 +680,12 @@ class DNSRule(PrimaryModel):
 class DNSRuleRecord(BaseModel):
     """Links source objects to DNS records created by rules."""
 
-    rule = models.ForeignKey(DNSRule, on_delete=models.CASCADE, help_text="DNS rule that created this record")
+    rule = models.ForeignKey(
+        DNSRule, 
+        on_delete=models.CASCADE, 
+        related_name="rule_records",
+        help_text="DNS rule that created this record"
+    )
     content_type = models.ForeignKey(
         ContentType, on_delete=models.CASCADE, help_text="Content type of the source object"
     )

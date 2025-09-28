@@ -53,7 +53,7 @@ UniqueConstraint(
 - `tenant` → `tenancy_tenant` (PROTECT)
 
 ### Reverse Relationships
-- `dnsrulerecord_set`: DNSRuleRecord objects that reference this rule
+- `rule_records`: DNSRuleRecord objects that reference this rule
 - Used for tracking auto-created DNS records
 
 ## Field Validation
