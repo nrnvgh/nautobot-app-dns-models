@@ -7,7 +7,7 @@ from typing import Any, Dict
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from jinja2 import TemplateError
-from nautobot.core.utils.data import render_jinja2
+from nautobot.apps.utils import render_jinja2
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 from nautobot_dns_models.models import (
@@ -547,6 +547,8 @@ class DNSRuleEngine:
 
         # Check for template error strings that render_jinja2 sometimes returns
         # Pattern: "{{ no such element: None[\"id\"] }}" when accessing attributes on None
+        # This occurs in DEBUG=True environments where Django uses jinja2.runtime.DebugUndefined
+        # instead of regular Undefined, causing descriptive error strings instead of empty results
         if "{{ no such element:" in result:
             raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
 
