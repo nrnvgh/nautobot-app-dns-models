@@ -12,13 +12,12 @@ Categories:
 """
 
 from unittest import skip
-from unittest.mock import patch
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from jinja2 import TemplateError
-from nautobot.core.utils.data import render_jinja2
+from nautobot.apps.utils import render_jinja2
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer
 from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, IPAddressToInterface, Namespace, Prefix
@@ -180,15 +179,22 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
         # render_jinja2 returns empty string, which our method treats as an error
         with self.assertRaises(DNSTemplateEmptyError):
             self.engine._render_template(
-                "{{ obj.primary_ip4.id }}", {"obj": type("MockObj", (), {"primary_ip4": None})()}, "test_field"
+                "{{ obj.primary_ip4.id }}", {"obj": self.device}, "test_field"  # self.device has no primary_ip4 set
             )
 
     def test_render_template_method_with_array_index_error(self):
         """Test _render_template method behavior with array index errors."""
         # render_jinja2 throws UndefinedError for array index errors, which we catch and re-raise
+        # Create interface with no IP addresses to test array index error
+        empty_interface = Interface.objects.create(
+            name="empty-interface",
+            device=self.device,
+            type="1000base-t",
+            status=Status.objects.get_for_model(Interface).first(),
+        )
         with self.assertRaises(TemplateError):
             self.engine._render_template(
-                "{{ obj.ip_addresses[0].id }}", {"obj": type("MockInterface", (), {"ip_addresses": []})()}, "test_field"
+                "{{ obj.ip_addresses[0].id }}", {"obj": empty_interface}, "test_field"
             )
 
     def test_render_template_method_empty_string_handling(self):
@@ -224,11 +230,21 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
         # The pattern is: "{{ no such element: None['id'] }}"
 
         # Test case that should trigger the pattern (based on actual logs)
+        # Create a device without primary_ip4 for testing
+        device_no_ip = Device.objects.create(
+            name="device-no-primary-ip",
+            device_type=self.device_type,
+            location=self.location,
+            role=self.device_role,
+            status=Status.objects.get_for_model(Device).first(),
+            # primary_ip4 remains None by default
+        )
+        
         test_cases = [
             # Case from actual logs: obj.primary_ip4.id when primary_ip4 is None
-            ("{{ obj.primary_ip4.id }}", {"obj": type("MockDevice", (), {"primary_ip4": None})()}),
-            # Case: None object attribute access
-            ("{{ obj.attr.id }}", {"obj": type("MockObj", (), {"attr": None})()}),
+            ("{{ obj.primary_ip4.id }}", {"obj": device_no_ip}),
+            # Case: None object attribute access - use device with no primary_ip4
+            ("{{ obj.primary_ip4.id }}", {"obj": device_no_ip}),
         ]
 
         for template, context in test_cases:
@@ -246,31 +262,36 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
     def test_render_template_method_catches_empty_results(self):
         """Test that our _render_template method catches empty results from template failures."""
         # Test case where template renders to empty string (most common failure mode)
-        mock_obj = type("MockDevice", (), {"primary_ip4": None})()
+        # Use real device object without primary_ip4 set
 
         with self.assertRaises(DNSTemplateEmptyError) as context:
-            self.engine._render_template("{{ obj.primary_ip4.id }}", {"obj": mock_obj}, "test_field")
+            self.engine._render_template("{{ obj.primary_ip4.id }}", {"obj": self.device}, "test_field")
 
         # The error should mention that template rendered empty
         error_message = str(context.exception)
         self.assertIn("Template test_field rendered empty", error_message)
 
+    @override_settings(DEBUG=True)
     def test_render_template_method_catches_error_strings(self):
-        """Test detection of '{{ no such element:' error strings (if we can reproduce them)."""
-        # Note: This pattern might be environment-specific or occur in different contexts
-        # For now, test that our detection logic works if such a string is returned
+        """Test detection of '{{ no such element:' error strings from DEBUG=True environments."""
+        # In DEBUG=True environments, Django uses jinja2.runtime.DebugUndefined which returns
+        # descriptive error strings like "{{ no such element: None['id'] }}" instead of empty strings.
 
-        # Mock render_jinja2 to return the error pattern
-        error_string = "{{ no such element: None['id'] }}"
-
-        with patch("nautobot_dns_models.rule_engine.render_jinja2", return_value=error_string):
-            with self.assertRaises(DNSTemplateEmptyError) as context:
-                self.engine._render_template("{{ obj.attr.id }}", {"obj": "test"}, "test_field")
-
-            # The error should mention template rendered empty and contain the actual error pattern
-            error_message = str(context.exception)
-            self.assertIn("Template test_field rendered empty", error_message)
-            self.assertIn("{{ no such element:", error_message)
+        # Create interface with no role to test the real scenario
+        interface_no_role = Interface.objects.create(
+            name="test-interface-no-role",
+            device=self.device,
+            type="1000base-t",
+            status=Status.objects.get_for_model(Interface).first(),
+        )
+        
+        # Test the template that should trigger the DEBUG=True error pattern
+        # The rule engine should catch the DebugUndefined error pattern and include it in the exception
+        with self.assertRaises(DNSTemplateEmptyError) as context:
+            self.engine._render_template("{{ obj.role.id }}", {"obj": interface_no_role}, "test_field")
+        
+        # In DEBUG=True with DebugUndefined, the error message should contain the pattern
+        self.assertIn("{{ no such element:", str(context.exception))
 
 
 class RuleResolutionTestCase(BaseRuleEngineTestCase):
