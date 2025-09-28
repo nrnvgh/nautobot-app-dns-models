@@ -4,14 +4,13 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('nautobot_dns_models', '0007_remove_dnsrule_unique_rule_per_content_record_location_and_more'),
+        ("nautobot_dns_models", "0007_remove_dnsrule_unique_rule_per_content_record_location_and_more"),
     ]
 
     operations = [
         migrations.AlterModelOptions(
-            name='dnsrule',
-            options={'ordering': ['priority', 'name']},
+            name="dnsrule",
+            options={"ordering": ["priority", "name"]},
         ),
     ]
