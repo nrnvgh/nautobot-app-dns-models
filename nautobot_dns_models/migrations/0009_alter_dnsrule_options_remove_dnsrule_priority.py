@@ -4,18 +4,17 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('nautobot_dns_models', '0008_alter_dnsrule_options'),
+        ("nautobot_dns_models", "0008_alter_dnsrule_options"),
     ]
 
     operations = [
         migrations.AlterModelOptions(
-            name='dnsrule',
-            options={'ordering': ['name']},
+            name="dnsrule",
+            options={"ordering": ["name"]},
         ),
         migrations.RemoveField(
-            model_name='dnsrule',
-            name='priority',
+            model_name="dnsrule",
+            name="priority",
         ),
     ]
