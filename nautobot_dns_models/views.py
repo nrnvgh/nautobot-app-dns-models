@@ -10,6 +10,7 @@ from nautobot.apps.ui import (
     StatsPanel,
 )
 from nautobot.core.ui import object_detail
+from nautobot.core.templatetags import helpers
 
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
@@ -451,12 +452,58 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
     queryset = DNSRule.objects.all()
     serializer_class = DNSRuleSerializer
     table_class = DNSRuleTable
-    object_detail_content = ObjectDetailContent(
-        panels=[
-            ObjectFieldsPanel(
-                weight=100,
-                section=SectionChoices.LEFT_HALF,
-                fields="__all__",
-            )
+
+    #
+    # We don't define an object_detail_content property here because we want to build the panels dynamically.
+    def get_object(self):
+        obj = super().get_object()
+        self.object_detail_content = self._build_panels(obj)
+
+        return obj
+
+    def _get_record_type_fields(self, obj):
+        record_type_fields = [
+            "zone_template",
+            "name_template",
+            "value_template",
         ]
-    )
+        if obj.record_type == "MX":
+            record_type_fields.extend(["preference_template"])
+        elif obj.record_type == "SRV":
+            record_type_fields.extend(["priority_template", "weight_template", "port_template"])
+
+        return record_type_fields
+
+    def _build_panels(self, obj):
+        record_type_fields = self._get_record_type_fields(obj)
+        #
+        # NOTE: Temporarily disabled until/unless we tweak things. At issue is that, by default, nautobot
+        # puts a lot of padding around <pre> tags, so when you render a bunch of rows with them,
+        # those rows take up a lot of vertical space. If/when we re-jigger how weights and the like 
+        # are handled, we can revisit this; if those fields aren't templates, we can eshew <pre> tags.
+        #
+        # That said, it's (currently) really only a visible issue for SRV records, so maybe it's not
+        # the end of the world?
+
+        # template_field_transforms = {
+        #     x: [helpers.pre_tag] for x in record_type_fields if x.endswith("_template")
+        # }
+        return ObjectDetailContent(
+            #
+            # TODO: This can be done a single panel if we want. Single panel feels a bit cleaner, but
+            # TODO: using two panels gives is the option to position one of them to the right.
+            panels=[
+                ObjectFieldsPanel(
+                    weight=100,
+                    section=SectionChoices.LEFT_HALF,
+                    fields=["name", "description", "enabled", "tenant", "location", "content_type", "record_type"],
+                ),
+                ObjectFieldsPanel(
+                    label="Templates",
+                    weight=200,
+                    section=SectionChoices.LEFT_HALF,
+                    fields=record_type_fields,
+                    #value_transforms=template_field_transforms,
+                ),
+            ]
+        )
