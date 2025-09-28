@@ -14,18 +14,23 @@ DNS Rules eliminate the need to manually create and maintain DNS records for inf
 
 ### Rule Scoping
 
-DNS rules can be **global** or **location-scoped**:
+DNS rules can be **global**, **location-scoped**, **tenant-scoped**, or **location+tenant-scoped**:
 
-- **Global Rules**: Apply to all objects of the specified type, regardless of location
-- **Location-Scoped Rules**: Apply only to objects in specific locations
+- **Global Rules**: Apply to all objects of the specified type, regardless of location or tenant
+- **Location-Scoped Rules**: Apply only to objects in specific locations (any tenant)
+- **Tenant-Scoped Rules**: Apply only to objects owned by specific tenants (any location)  
+- **Location+Tenant-Scoped Rules**: Apply only to objects in specific locations AND owned by specific tenants
 
 ### Rule Precedence
 
-When both global and location-scoped rules exist for the same content type and record type:
+When multiple rules exist for the same content type and record type, the system uses **location-first precedence**:
 
-- **Location-specific rules take precedence** over global rules for that record type
-- **Different record types** can use different rule sources (location vs global)
-- This allows mixed scenarios: location-specific A records + global CNAME records
+1. **Location+Tenant specific** - Most specific (both location AND tenant match)
+2. **Location specific** - Location-wide policy (any tenant in that location)
+3. **Tenant specific** - Tenant-wide policy (any location for that tenant)
+4. **Global** - Organization-wide policy (any location, any tenant)
+
+**Per-record-type independence**: Different record types can use different rule sources, enabling mixed scenarios like location-specific A records + tenant-specific CNAME records for the same object.
 
 ### Multi-Record Support
 
@@ -99,6 +104,44 @@ web-server-01    IN A    192.168.1.100
 
 - London devices get `device.lon.london.example.com`
 - All other devices get `device.example.com`
+
+### Tenant-Specific Naming
+
+**Scenario**: Different DNS zones for different customer tenants.
+
+**Global Rule** (fallback for all tenants):
+
+- Zone Template: `internal.example.com`
+- Name Template: `{{ obj.name }}`
+
+**Tenant Rule** (ACME Corp tenant only):
+
+- Tenant: ACME Corp
+- Zone Template: `acme.example.com`
+- Name Template: `{{ obj.name }}.acme`
+
+**Result**:
+
+- ACME Corp devices get `device.acme.acme.example.com`
+- All other devices get `device.internal.example.com`
+
+### Combined Location+Tenant Scoping
+
+**Scenario**: Specific naming for tenant devices in specific locations.
+
+**Location+Tenant Rule** (ACME Corp devices in NYC only):
+
+- Location: NYC-Datacenter
+- Tenant: ACME Corp
+- Zone Template: `acme-nyc.example.com`
+- Name Template: `{{ obj.name }}`
+
+**Precedence Result**:
+
+- ACME Corp devices in NYC get the location+tenant rule (most specific)
+- ACME Corp devices elsewhere get tenant-only rule
+- Non-ACME devices in NYC get location-only rule
+- All others get global rule
 
 ### Interface Multi-IP Records
 

@@ -10,6 +10,7 @@ The DNSRule model defines automated DNS record creation rules that trigger when 
 - `enabled` (BooleanField): Rule active status, default True
 - `content_type` (ForeignKey): ContentType that triggers this rule
 - `location` (ForeignKey): Optional Location for rule scoping, null for global rules
+- `tenant` (ForeignKey): Optional Tenant for rule scoping, null for global rules
 
 ### Template Fields
 - `zone_template` (TextField): Jinja2 template for DNS zone name
@@ -28,16 +29,16 @@ The DNSRule model defines automated DNS record creation rules that trigger when 
 ### Uniqueness Constraint
 ```python
 UniqueConstraint(
-    fields=["content_type", "record_type", "location"],
+    fields=["content_type", "record_type", "location", "tenant"],
     condition=Q(enabled=True),
-    name="unique_enabled_rule_per_content_record_location"
+    name="unique_enabled_rule_per_content_record_location_tenant"
 )
 ```
 
-**Behavior**: Only one enabled rule per (content_type, record_type, location) combination.
+**Behavior**: Only one enabled rule per (content_type, record_type, location, tenant) combination.
 
 ### Validation Methods
-- `validate_unique()`: Custom validation for global rules (location=None) to handle NULL uniqueness
+- `validate_unique()`: Custom validation for global rules (location=None, tenant=None) to handle NULL uniqueness
 - `clean()`: Template syntax validation and record-type-specific field requirements
 
 ## Model Meta Options
@@ -49,6 +50,7 @@ UniqueConstraint(
 ### Foreign Key Relationships
 - `content_type` → `django_content_type` (CASCADE)
 - `location` → `dcim_location` (PROTECT)
+- `tenant` → `tenancy_tenant` (PROTECT)
 
 ### Reverse Relationships
 - `dnsrulerecord_set`: DNSRuleRecord objects that reference this rule
@@ -69,3 +71,4 @@ UniqueConstraint(
 - [DNSRuleRecord](dnsrulerecord.md): Links rules to created DNS records
 - [ContentType](https://docs.djangoproject.com/en/stable/ref/contrib/contenttypes/): Django framework for generic relationships
 - [Location](https://docs.nautobot.com/projects/core/en/stable/models/dcim/location/): Nautobot location hierarchy
+- [Tenant](https://docs.nautobot.com/projects/core/en/stable/models/tenancy/tenant/): Nautobot tenant model

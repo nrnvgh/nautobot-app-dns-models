@@ -11,6 +11,7 @@ from nautobot.core.utils.data import render_jinja2
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer
 from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, IPAddressToInterface, Namespace, Prefix
+from nautobot.tenancy.models import Tenant, TenantGroup
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
@@ -33,6 +34,10 @@ class DNSRuleEngineTestCase(TestCase):
             location_type=cls.location_type,
             status=Status.objects.get_for_model(Location).first(),
         )
+
+        # Create tenant infrastructure
+        cls.tenant_group = TenantGroup.objects.create(name="Test Tenant Group")
+        cls.tenant = Tenant.objects.create(name="Test Tenant", tenant_group=cls.tenant_group)
 
         # Create device infrastructure
         cls.manufacturer = Manufacturer.objects.create(name="Test Manufacturer")
@@ -494,6 +499,163 @@ class DNSRuleEngineTestCase(TestCase):
         rule_names = {rule.name for rule in rules}
         expected_names = {location_a_rule.name, location_cname_rule.name, location_mx_rule.name}
         self.assertEqual(rule_names, expected_names)
+
+    def test_get_applicable_rules_tenant_precedence_location_first(self):
+        """Test location-first precedence: Location+Tenant > Location > Tenant > Global."""
+        # Create rules with different scoping levels
+        DNSRule.objects.create(
+            name="global-a-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=None,
+            tenant=None,
+            zone_template="global.example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-global",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+
+        DNSRule.objects.create(
+            name="tenant-a-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=None,
+            tenant=self.tenant,
+            zone_template="tenant.example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-tenant",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+
+        DNSRule.objects.create(
+            name="location-a-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=self.location,
+            tenant=None,
+            zone_template="location.example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-location",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+
+        location_tenant_rule = DNSRule.objects.create(
+            name="location-tenant-a-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=self.location,
+            tenant=self.tenant,
+            zone_template="location-tenant.example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-location-tenant",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+
+        # Create device with both location and tenant
+        device_with_both = Device.objects.create(
+            name="test-device-scoped",
+            device_type=self.device_type,
+            location=self.location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=Status.objects.get_for_model(Device).first(),
+        )
+
+        rules = self.engine._get_applicable_rules(device_with_both)
+
+        # Should get the most specific rule (location+tenant)
+        self.assertEqual(rules.count(), 1)
+        self.assertEqual(rules.first().name, location_tenant_rule.name)
+
+    def test_get_applicable_rules_tenant_precedence_mixed_scoping(self):
+        """Test mixed scoping: Location A rule + Tenant CNAME rule for same object."""
+        # Create location-specific A rule
+        location_a_rule = DNSRule.objects.create(
+            name="location-a-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=self.location,
+            tenant=None,
+            zone_template="location.example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-loc",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+
+        # Create tenant-specific CNAME rule
+        tenant_cname_rule = DNSRule.objects.create(
+            name="tenant-cname-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=None,
+            tenant=self.tenant,
+            zone_template="tenant.example.com",
+            record_type="CNAME",
+            name_template="{{ obj.name }}-alias",
+            value_template="{{ obj.name }}.example.com",
+        )
+
+        # Create device with both location and tenant
+        device_with_both = Device.objects.create(
+            name="test-device-mixed",
+            device_type=self.device_type,
+            location=self.location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=Status.objects.get_for_model(Device).first(),
+        )
+
+        rules = self.engine._get_applicable_rules(device_with_both)
+
+        # Should get both rules (different record types)
+        self.assertEqual(rules.count(), 2)
+        rule_names = {rule.name for rule in rules}
+        expected_names = {location_a_rule.name, tenant_cname_rule.name}
+        self.assertEqual(rule_names, expected_names)
+
+    def test_get_applicable_rules_tenant_fallback_scenarios(self):
+        """Test various fallback scenarios for tenant/location precedence."""
+        # Create global rule as fallback
+        global_rule = DNSRule.objects.create(
+            name="global-fallback-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=None,
+            tenant=None,
+            zone_template="global.example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-global",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+
+        # Test 1: Device with location but no tenant → should get global rule
+        device_location_only = Device.objects.create(
+            name="test-device-loc-only",
+            device_type=self.device_type,
+            location=self.location,
+            tenant=None,
+            role=self.device_role,
+            status=Status.objects.get_for_model(Device).first(),
+        )
+
+        rules = self.engine._get_applicable_rules(device_location_only)
+        self.assertEqual(rules.count(), 1)
+        self.assertEqual(rules.first().name, global_rule.name)
+
+        # Test 2: Device with tenant but no location → should get global rule
+        device_tenant_only = Device.objects.create(
+            name="test-device-tenant-only",
+            device_type=self.device_type,
+            location=self.location,  # Has location for creation, will clear tenant
+            tenant=self.tenant,
+            role=self.device_role,
+            status=Status.objects.get_for_model(Device).first(),
+        )
+        # Simulate device with tenant but in different location (no location-scoped rules)
+        device_tenant_only.location = Location.objects.create(
+            name="Different Location",
+            location_type=self.location_type,
+            status=Status.objects.get_for_model(Location).first(),
+        )
+        device_tenant_only.save()
+
+        rules = self.engine._get_applicable_rules(device_tenant_only)
+        self.assertEqual(rules.count(), 1)
+        self.assertEqual(rules.first().name, global_rule.name)
+
 
 class DNSRuleIntegrationTestCase(TestCase):
     """Integration tests for DNS rule processing with real objects and signals."""

@@ -367,6 +367,7 @@ class DNSRuleTable(BaseTable):
     enabled = tables.BooleanColumn()
     content_type = tables.Column()
     location = tables.LinkColumn()
+    tenant = tables.LinkColumn()
     record_type = tables.Column()
     actions = ButtonsColumn(models.DNSRule)
 
@@ -381,6 +382,7 @@ class DNSRuleTable(BaseTable):
             "enabled",
             "content_type",
             "location",
+            "tenant",
             "record_type",
             "actions",
         )

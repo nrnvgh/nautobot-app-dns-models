@@ -10,8 +10,9 @@ from nautobot.apps.forms import (
 )
 from nautobot.core.forms import add_blank_choice
 from nautobot.core.forms.widgets import StaticSelect2
-from nautobot.dcim.form_mixins import LocatableModelFormMixin, LocatableModelFilterFormMixin
+from nautobot.dcim.form_mixins import LocatableModelFilterFormMixin, LocatableModelFormMixin
 from nautobot.extras.forms import NautobotFilterForm
+from nautobot.tenancy.forms import TenancyFilterForm, TenancyForm
 
 from nautobot_dns_models import models
 
@@ -520,7 +521,7 @@ class DNSRuleFormDisabled(NautobotModelForm):
         self.fields["record_type"].choices = add_blank_choice(record_type_choices)
 
 
-class DNSRuleForm(LocatableModelFormMixin, NautobotModelForm):
+class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
     """DNSRule creation/edit form with dynamic field display."""
 
     content_type = forms.ModelChoiceField(
@@ -544,7 +545,24 @@ class DNSRuleForm(LocatableModelFormMixin, NautobotModelForm):
         """Meta attributes."""
 
         model = models.DNSRule
-        fields = "__all__"
+        fields = [
+            "name",
+            "description",
+            "enabled",
+            "content_type",
+            "location",
+            "tenant_group",
+            "tenant",
+            "record_type",
+            "zone_template",
+            "name_template",
+            "value_template",
+            "preference_template",
+            "priority_template",
+            "weight_template",
+            "port_template",
+            "tags",
+        ]
 
     class Media:
         """Media for dynamic form behavior."""
@@ -597,7 +615,7 @@ class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         ]
 
 
-class DNSRuleFilterForm(LocatableModelFilterFormMixin, NautobotFilterForm):
+class DNSRuleFilterForm(LocatableModelFilterFormMixin, TenancyFilterForm, NautobotFilterForm):
     """Filter form for DNSRule searches."""
 
     q = forms.CharField(

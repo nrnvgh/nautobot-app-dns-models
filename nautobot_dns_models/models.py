@@ -479,6 +479,14 @@ class DNSRule(PrimaryModel):
         db_index=True,
         help_text="Scope rule to specific location. Leave blank for global rule.",
     )
+    tenant = models.ForeignKey(
+        "tenancy.Tenant",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Scope rule to specific tenant. Leave blank for global rule.",
+    )
 
     # Templates
     zone_template = models.TextField(help_text="Jinja2 template for DNS zone name")
@@ -504,9 +512,9 @@ class DNSRule(PrimaryModel):
         verbose_name = "DNS Rule"
         constraints = [
             models.UniqueConstraint(
-                fields=["content_type", "record_type", "location"],
+                fields=["content_type", "record_type", "location", "tenant"],
                 condition=models.Q(enabled=True),
-                name="unique_enabled_rule_per_content_record_location",
+                name="unique_enabled_rule_per_content_record_location_tenant",
             ),
         ]
 
@@ -516,9 +524,9 @@ class DNSRule(PrimaryModel):
 
     def validate_unique(self, exclude=None):
         """
-        Handle uniqueness for global rules (location=None).
+        Handle uniqueness for global rules (location=None, tenant=None).
 
-        UniqueConstraint handles location-scoped rules automatically,
+        UniqueConstraint handles scoped rules automatically,
         but we need manual validation for global rules due to NULL behavior.
         """
         # Missing required fields is a larger issue that will be handled automatically, but since we
@@ -528,13 +536,20 @@ class DNSRule(PrimaryModel):
             super().validate_unique(exclude)
             return
 
-        # Only handle the global rules case (location=None) and only for enabled rules
-        # Location-scoped rules are handled by the database UniqueConstraint with condition
+        # Only handle the global rules case (location=None AND tenant=None) and only for enabled rules
+        # Scoped rules are handled by the database UniqueConstraint with condition
         if (
             self.location is None
+            and self.tenant is None
             and self.enabled
             and DNSRule.objects.exclude(pk=self.pk)
-            .filter(content_type=self.content_type, record_type=self.record_type, location__isnull=True, enabled=True)
+            .filter(
+                content_type=self.content_type,
+                record_type=self.record_type,
+                location__isnull=True,
+                tenant__isnull=True,
+                enabled=True,
+            )
             .exists()
         ):
             raise ValidationError(
