@@ -1,5 +1,4 @@
 # A Record Model
-# A Record Model
 
 The A Record model is used to represent IPv4 address records in DNS. It maps a hostname to an IPv4 address.
 

@@ -63,6 +63,13 @@ When a source object is deleted or no longer matches rule criteria:
 2. Delete the associated DNS records
 3. Delete the DNSRuleRecord entries
 
+### Location-Based Rule Changes
+When an object's location changes (e.g., device moves to different datacenter):
+1. Location-specific rules may no longer apply to the object
+2. New location-specific rules may now apply
+3. DNSRuleRecord entries help identify which records need cleanup vs creation
+4. Global rules continue to apply regardless of location changes
+
 ## Relationship Diagram
 
 ```
