@@ -2,7 +2,7 @@
 
 import logging
 from collections import defaultdict
-from typing import Any, Dict
+from typing import Any
 
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
@@ -43,6 +43,26 @@ RECORD_MODEL_MAPPING = {
 class DNSRuleEngine:
     """Engine for processing DNS rules and creating DNS records."""
 
+    def delete_dns_records_for_object(self, source_obj: Any) -> None:
+        """
+        Delete all DNS records created from a source object.
+
+        Args:
+            source_obj: The source object whose DNS records should be deleted
+        """
+        content_type = ContentType.objects.get_for_model(source_obj)
+        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
+
+        for rule_record in rule_records:
+            try:
+                dns_record = rule_record.dns_record
+                if dns_record:
+                    dns_record.delete()
+                    logger.info(f"Deleted DNS record {dns_record} for {source_obj}")
+                rule_record.delete()
+            except Exception as e:
+                logger.error(f"Failed to delete DNS record for {source_obj}: {e}")
+
     def process_object(self, source_obj: Any, created: bool = False) -> None:
         """
         Process an object against all applicable DNS rules.
@@ -80,13 +100,17 @@ class DNSRuleEngine:
                 logger.debug(
                     f"UPDATE scenario with no existing records - this may indicate first-time DNS processing for {source_obj}"
                 )
-            self.create_dns_records_for_object(source_obj, rules)
+            self._create_dns_records_for_object(source_obj, rules)
         else:
             # Update existing DNS records for modified objects
             logger.debug(f"Taking UPDATE path for {source_obj} (existing_records={existing_count})")
-            self.update_dns_records_for_object(source_obj, rules)
+            self._update_dns_records_for_object(source_obj, rules)
 
-    def create_dns_records_for_object(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
+    #
+    # Internal methods
+    #
+
+    def _create_dns_records_for_object(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
         """
         Create DNS records for an object by processing all applicable rules.
 
@@ -101,11 +125,10 @@ class DNSRuleEngine:
 
         for rule in applicable_rules:
             try:
-                created_records = self.create_dns_record_from_rule(rule, source_obj)
+                created_records = self._create_dns_record_from_rule(rule, source_obj)
                 if not created_records:
                     logger.debug(f"No records created from rule {rule.name} for {source_obj}")
-                else:
-                    logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
+
             except (
                 TemplateError,
                 DNSTemplateEmptyError,
@@ -116,7 +139,7 @@ class DNSRuleEngine:
                 logger.warning(f"Rule {rule.name} failed for {source_obj}: {exc}")
                 continue
 
-    def create_dns_record_from_rule(self, rule: DNSRule, source_obj: Any) -> list[Any]:
+    def _create_dns_record_from_rule(self, rule: DNSRule, source_obj: Any) -> list[Any]:
         """
         Create one or more DNS records based on a rule and source object.
 
@@ -148,7 +171,7 @@ class DNSRuleEngine:
         logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
         return created_records
 
-    def update_dns_records_for_object(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
+    def _update_dns_records_for_object(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
         """
         Update DNS records for an object by reconciling current vs desired state.
 
@@ -168,17 +191,15 @@ class DNSRuleEngine:
             try:
                 logger.debug(f"Reconciling records for rule {rule.name} on {source_obj}")
                 self._reconcile_records_for_rule(rule, source_obj)
-            except (
-                TemplateError,
-                DNSTemplateEmptyError,
-                DNSZone.DoesNotExist,
-                ValueError,
-            ) as exc:
-                # Expected template/data errors - don't stop other rules
-                logger.warning(f"Update failed for rule {rule.name} on {source_obj}: {exc}")
-                # Clean up existing records for this failed rule
+            except (TemplateError, DNSTemplateEmptyError) as exc:
+                logger.warning(f"Template error for rule {rule.name} on {source_obj}: {exc} - cleaning up records")
                 self._cleanup_records_for_rule(rule, source_obj)
-                continue
+            except (DNSZone.DoesNotExist, ValueError) as exc:
+                logger.error(f"Infrastructure error for rule {rule.name} on {source_obj}: {exc} - cleaning up records to prevent transaction failure")
+                self._cleanup_records_for_rule(rule, source_obj)
+            except Exception as exc:
+                logger.critical(f"Unexpected error for rule {rule.name} on {source_obj}: {exc} - cleaning up records")
+                self._cleanup_records_for_rule(rule, source_obj)
 
     def _get_object_location(self, source_obj: Any) -> Any:
         """
@@ -330,38 +351,72 @@ class DNSRuleEngine:
         return DNSRule.objects.filter(pk__in=final_rule_pks)
 
     def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> None:
-        """Reconcile DNS records for a single rule against current object state."""
-        # STEP 1: Determine what SHOULD exist (target state)
-        desired_record_data = self._calculate_desired_record_data(rule, source_obj)
-        logger.debug(f"Rule {rule.name}: desired record data: {desired_record_data}")
-
-        # STEP 2: Get what currently exists
+        """
+        Reconcile DNS records using differential updates to preserve existing records.
+        
+        Uses content-based comparison to identify what records need to be:
+        - Kept (already exist and are correct)
+        - Deleted (exist but no longer needed)  
+        - Created (needed but don't exist)
+        
+        This approach preserves existing DNS record IDs when possible.
+        
+        All exceptions result in cleanup to prevent transaction failures.
+        """
+        logger.debug(f"Reconciling records for rule {rule.name} on {source_obj}")
+        
+        # STEP 1: Get current state
         existing_tracking_records = self._get_existing_tracking_records(rule, source_obj)
-        logger.debug(f"Rule {rule.name}: existing tracking records: {existing_tracking_records}")
-        # STEP 3: Compare and reconcile
-        existing_count = existing_tracking_records.count()
-        desired_count = len(desired_record_data)
-
-        logger.debug(f"Rule {rule.name}: existing={existing_count}, desired={desired_count}")
-
-        if desired_count == 0:
-            # No records should exist - clean up everything
-            logger.info(
-                f"No records needed for {rule.name} on {source_obj} - cleaning up {existing_count} existing records"
-            )
-            self._cleanup_records_for_rule(rule, source_obj)
-        elif existing_count == desired_count:
-            # Same count - update existing records in place
-            logger.debug(f"Updating {existing_count} existing records in place for {rule.name}")
-            self._update_existing_records(existing_tracking_records, desired_record_data)
-        else:
-            # Count changed - delete and recreate is cleanest approach
-            logger.info(
-                f"Record count changed for {rule.name} on {source_obj} ({existing_count}→{desired_count}) - recreating"
-            )
-            self._cleanup_records_for_rule(rule, source_obj)
-            if desired_record_data:  # Only create if there's data
-                self._create_records_from_data(rule, source_obj, desired_record_data)
+        
+        # STEP 2: Calculate desired state
+        desired_record_data = self._calculate_desired_record_data(rule, source_obj)
+        
+        # STEP 3: Build content-based lookup maps
+        existing_records_by_content = {}
+        for tracking_record in existing_tracking_records:
+            dns_record = tracking_record.dns_record
+            content_key = self._get_record_content_key(dns_record)
+            existing_records_by_content[content_key] = tracking_record
+        
+        desired_records_by_content = {}
+        for record_data in desired_record_data:
+            content_key = self._get_record_content_key_from_data(record_data)
+            desired_records_by_content[content_key] = record_data
+        
+        # STEP 4: Identify differences using set operations
+        existing_keys = set(existing_records_by_content.keys())
+        desired_keys = set(desired_records_by_content.keys())
+        
+        records_to_keep = existing_keys & desired_keys      # Intersection - no change needed
+        records_to_delete = existing_keys - desired_keys    # Only in existing - delete
+        records_to_create = desired_keys - existing_keys    # Only in desired - create
+        
+        logger.debug(
+            f"Differential reconciliation for {rule.name}: "
+            f"keep={len(records_to_keep)}, delete={len(records_to_delete)}, create={len(records_to_create)}"
+        )
+        
+        # STEP 5: Apply minimal changes
+        
+        # Delete obsolete records
+        for content_key in records_to_delete:
+            tracking_record = existing_records_by_content[content_key]
+            logger.info(f"Deleting obsolete record for {rule.name}: {content_key}")
+            self._delete_tracking_and_dns_record(tracking_record)
+        
+        # Keep existing records (log but no action needed)
+        if records_to_keep:
+            logger.debug(f"Preserving {len(records_to_keep)} existing records for {rule.name}")
+        
+        # Create missing records
+        if records_to_create:
+            records_to_create_data = [desired_records_by_content[key] for key in records_to_create]
+            logger.info(f"Creating {len(records_to_create_data)} new records for {rule.name}")
+            self._create_records_from_data(rule, source_obj, records_to_create_data)
+        
+        # Log summary
+        total_after = len(records_to_keep) + len(records_to_create)
+        logger.debug(f"Reconciliation complete for {rule.name}: {total_after} total records")
 
     def _calculate_desired_record_data(self, rule: DNSRule, source_obj: Any) -> list[dict[str, Any]]:
         """Calculate what DNS record data should exist (without creating records)."""
@@ -391,33 +446,6 @@ class DNSRuleEngine:
             rule=rule, content_type=ContentType.objects.get_for_model(source_obj), object_id=source_obj.id
         )
 
-    def _update_existing_records(
-        self, tracking_records: models.QuerySet, desired_record_data: list[dict[str, Any]]
-    ) -> None:
-        """Update existing records when count matches desired count."""
-        tracking_records_list = list(tracking_records)  # Evaluate QuerySet once
-
-        for tracking_record, desired_data in zip(tracking_records_list, desired_record_data):
-            dns_record = tracking_record.dns_record
-
-            if dns_record is None:
-                # Handle missing DNS records gracefully - recreate the DNS record
-                logger.warning(f"DNS record missing for tracking record {tracking_record} - recreating")
-                record_class = self._get_record_class(tracking_record.rule.record_type)
-                dns_record = record_class.objects.create(**desired_data)
-
-                # Update tracking record to point to new DNS record
-                tracking_record.dns_record_content_type = ContentType.objects.get_for_model(dns_record)
-                tracking_record.dns_record_object_id = dns_record.id
-                tracking_record.save()
-                logger.debug(f"Recreated missing DNS record for {tracking_record}")
-            else:
-                # Update existing DNS record
-                for field, value in desired_data.items():
-                    setattr(dns_record, field, value)
-                dns_record.save()
-                logger.debug(f"Updated DNS record {dns_record}")
-
     def _cleanup_records_for_rule(self, rule: DNSRule, source_obj: Any) -> None:
         """Clean up all DNS records for a specific rule+object combination."""
         tracking_records = self._get_existing_tracking_records(rule, source_obj)
@@ -429,11 +457,13 @@ class DNSRuleEngine:
             dns_record = tracking_record.dns_record
 
             # Delete tracking record first
+            logger.debug(f"Deleting tracking record {tracking_record} for {rule.name} on {source_obj}")
             tracking_record.delete()
             deleted_tracking_count += 1
 
             # Then delete actual DNS record if it exists
             if dns_record:
+                logger.debug(f"Deleting DNS record {dns_record} for {rule.name} on {source_obj}")
                 dns_record.delete()
                 deleted_dns_count += 1
 
@@ -501,27 +531,7 @@ class DNSRuleEngine:
             raise ValueError(f'Unknown record type "{record_type}"')
         return record_class
 
-    def delete_dns_records_for_object(self, source_obj: Any) -> None:
-        """
-        Delete all DNS records created from a source object.
-
-        Args:
-            source_obj: The source object whose DNS records should be deleted
-        """
-        content_type = ContentType.objects.get_for_model(source_obj)
-        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
-
-        for rule_record in rule_records:
-            try:
-                dns_record = rule_record.dns_record
-                if dns_record:
-                    dns_record.delete()
-                    logger.info(f"Deleted DNS record {dns_record} for {source_obj}")
-                rule_record.delete()
-            except Exception as e:
-                logger.error(f"Failed to delete DNS record for {source_obj}: {e}")
-
-    def _render_template(self, template_str: str, context: Dict[str, Any], field_name: str) -> str:
+    def _render_template(self, template_str: str, context: dict[str, Any], field_name: str) -> str:
         """
         Render a Jinja2 template with the given context.
 
@@ -553,6 +563,58 @@ class DNSRuleEngine:
             raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
 
         return result
+
+    def _get_record_content_key(self, dns_record) -> str:
+        """Generate a content-based key for record comparison."""
+        record_type = dns_record.__class__.__name__
+        base_key = f"{record_type}:{dns_record.name}:{dns_record.zone_id}"
+        
+        if hasattr(dns_record, 'address_id'):  # A/AAAA records
+            return f"{base_key}:{dns_record.address_id}"
+        elif hasattr(dns_record, 'alias'):     # CNAME records
+            return f"{base_key}:{dns_record.alias}"
+        elif hasattr(dns_record, 'server'):    # MX/NS records
+            preference = getattr(dns_record, 'preference', '')
+            return f"{base_key}:{dns_record.server}:{preference}"
+        elif hasattr(dns_record, 'ptrdname'):  # PTR records
+            return f"{base_key}:{dns_record.ptrdname}"
+        elif hasattr(dns_record, 'text'):      # TXT records
+            return f"{base_key}:{dns_record.text}"
+        elif hasattr(dns_record, 'target'):    # SRV records
+            return f"{base_key}:{dns_record.priority}:{dns_record.weight}:{dns_record.port}:{dns_record.target}"
+        else:
+            return f"{base_key}:unknown"
+
+    def _get_record_content_key_from_data(self, record_data: dict) -> str:
+        """Generate content key from record data dict."""
+        if 'address_id' in record_data:
+            record_type = "ARecord"
+            return f"{record_type}:{record_data['name']}:{record_data['zone'].id}:{record_data['address_id']}"
+        elif 'alias' in record_data:
+            return f"CNAMERecord:{record_data['name']}:{record_data['zone'].id}:{record_data['alias']}"
+        elif 'server' in record_data:
+            preference = record_data.get('preference', '')
+            record_type = "MXRecord" if 'preference' in record_data else "NSRecord"
+            return f"{record_type}:{record_data['name']}:{record_data['zone'].id}:{record_data['server']}:{preference}"
+        elif 'ptrdname' in record_data:
+            return f"PTRRecord:{record_data['name']}:{record_data['zone'].id}:{record_data['ptrdname']}"
+        elif 'text' in record_data:
+            return f"TXTRecord:{record_data['name']}:{record_data['zone'].id}:{record_data['text']}"
+        elif 'target' in record_data:
+            return f"SRVRecord:{record_data['name']}:{record_data['zone'].id}:{record_data['priority']}:{record_data['weight']}:{record_data['port']}:{record_data['target']}"
+        else:
+            return f"UnknownRecord:{record_data['name']}:{record_data['zone'].id}:unknown"
+
+    def _delete_tracking_and_dns_record(self, tracking_record) -> None:
+        """Delete both the DNS record and its tracking record."""
+        dns_record = tracking_record.dns_record
+        logger.debug(f"Deleting DNS record {dns_record} and tracking record {tracking_record}")
+        
+        # Delete the actual DNS record
+        dns_record.delete()
+        
+        # Delete the tracking record
+        tracking_record.delete()
 
     def _build_record_data_variations(
         self, rule: DNSRule, context: dict[str, Any], base_record_data: dict[str, Any]
@@ -603,7 +665,7 @@ class DNSRuleEngine:
             return [record_data]
 
     def _add_record_type_fields_single(
-        self, rule: DNSRule, context: Dict[str, Any], record_data: Dict[str, Any]
+        self, rule: DNSRule, context: dict[str, Any], record_data: dict[str, Any]
     ) -> None:
         """
         Add record-type specific fields to the record data.
