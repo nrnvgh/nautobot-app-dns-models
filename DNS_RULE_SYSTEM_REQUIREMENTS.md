@@ -380,6 +380,11 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Character Transform Config**: Add DNS character validation and transformation options
 - [ ] **Template Field Naming**: Revisit field naming conventions (value_template vs content_template)
 - [ ] **Custom Relationship DNS Rules**: Investigate scenarios where IPs have custom relationships (e.g., IP-to-Circuit) - determine if Circuit-based rules can leverage these relationships or if IP-based rules are needed for such cases
+- [ ] **Template Safety Documentation**: Document risks of using non-guaranteed fields in templates and provide mitigation strategies
+  - **Risk**: Templates using optional fields (interface.role, device.primary_ip4) can cause DNS record deletion when fields become unavailable
+  - **Current Behavior**: Rule engine removes all DNS records for an object when any template fails to render
+  - **Mitigation Strategies**: Use conditional templates, default filters, or separate rules for optional vs required fields
+  - **Examples**: Safe patterns like `{{ obj.role.name|default:"unknown" }}` vs risky patterns like `{{ obj.role.name }}`
 
 #### 4.2.7 Architectural Investigations
 - [ ] **Separate DNSRule Classes Architecture**: Investigate splitting DNSRule into type-specific classes (ADNSRule, MXDNSRule, SRVDNSRule, etc.)
