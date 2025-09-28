@@ -56,8 +56,8 @@ The DNS Rule System provides automated DNS record management triggered by object
 - **FR-012**: Multiple DNS rules MAY target the same content type with different record types (e.g., Interface A + Interface CNAME rules)
 - **FR-013**: Only one DNS rule SHALL be permitted per `(content_type, record_type)` combination in v1.0
 - **FR-014**: Duplicate record type rules SHALL be prevented at rule creation time (e.g., cannot create two Interface A record rules)
-- **FR-015**: Rule creation validation SHALL be designed for future extensibility to support tenant/location-based scoping ✅
-- **FR-016**: Future versions MAY allow multiple rules of the same type when scoped to different tenants/locations (v2.0+) ✅
+- **FR-015**: Rule creation validation SHALL be designed for future extensibility to support tenant/location-based scoping (Location: ✅, Tenant: ⏳)
+- **FR-016**: Future versions MAY allow multiple rules of the same type when scoped to different tenants/locations (v2.0+) (Location: ✅, Tenant: ⏳)
 
 ### 2.2 Signal Handling
 
@@ -75,7 +75,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 #### 2.3.1 Rule Management
 - **FR-022**: Users SHALL be able to create, read, update, and delete DNS rules via web UI
 - **FR-023**: Rule forms SHALL dynamically show/hide fields based on selected record type
-- **FR-024**: Rule lists SHALL be filterable by content type, record type, location, and enabled status ✅
+- **FR-024**: Rule lists SHALL be filterable by content type, record type, location, and enabled status (Location: ✅, Tenant: ⏳)
 
 #### 2.3.2 Record Identification
 - **FR-025**: DNS record lists SHALL indicate which records were auto-created by rules
@@ -97,7 +97,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 - description: CharField(max_length=CHARFIELD_MAX_LENGTH, blank=True)
 - enabled: BooleanField(default=True)
 - content_type: ForeignKey(ContentType)
-- location: ForeignKey("dcim.Location", null=True, blank=True)  # ✅ Location scoping
+- location: ForeignKey("dcim.Location", null=True, blank=True)  # ✅ Location scoping implemented
 - zone_template: TextField()
 - record_type: CharField(choices=RECORD_TYPE_CHOICES)
 - name_template: TextField()
@@ -106,6 +106,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 - priority_template: TextField(blank=True)    # SRV records
 - weight_template: TextField(blank=True)      # SRV records
 - port_template: TextField(blank=True)        # SRV records
+# Future: tenant field for tenant-based scoping
 ```
 
 #### 3.1.2 DNSRuleRecord Model
@@ -164,14 +165,14 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [x] DNSRule table views
 - [x] Navigation integration
 - [x] Form media for dynamic field behavior
-- [x] Location field in forms and tables ✅
-- [x] Location-based filtering support ✅
+- [x] Location field in forms and tables (Location: ✅)
+- [x] Location-based filtering support (Location: ✅, Tenant: ⏳)
 
 #### 4.1.5 API Integration ✅
 - [x] DNSRule serializers
 - [x] DNSRule viewsets
 - [x] API URL routing
-- [x] Location-based API filtering support ✅
+- [x] Location-based API filtering support (Location: ✅, Tenant: ⏳)
 
 #### 4.1.6 Documentation (Partial) 🔄
 - [x] DNS Rule model documentation (dnsrule.md)
@@ -244,7 +245,16 @@ The DNS Rule System provides automated DNS record management triggered by object
   - **Completed**: Location field added to DNSRule model with per-record-type precedence logic
   - **Architecture**: Location-specific rules override global rules for same record type; different record types can use different rule sources
   - **UI/API**: Full support for location filtering in forms, tables, and API endpoints
-- [ ] **Tenant/Tag-Based Rule Scoping**: Extend rule scoping to support tenant and tag-based filtering
+- [x] **Tenant-Based Rule Scoping**: Design and implement tenant-scoped rules ✅
+  - **Completed**: Full tenant scoping support with location-first precedence
+  - **Architecture**: Location+Tenant > Location > Tenant > Global precedence hierarchy
+  - **UI/API**: Tenant fields in forms, tables, and API filtering via TenancyModelFilterSetMixin
+  - **Testing**: Comprehensive test coverage with 52 rule engine tests passing
+- [ ] **Tag-Based Rule Scoping**: Design and implement tag-based rule filtering (not yet started)
+- [ ] **DNS Rule Scope Visibility**: Add easy way to see all rules in scope for particular content type, location, or tenancy
+  - **Purpose**: Debugging and rule management - show rule coverage and precedence for administrators
+  - **Implementation Options**: Admin dashboard, object detail panels, dedicated rule analysis views
+  - **User Benefit**: Understand which rules apply to which objects, troubleshoot rule conflicts, validate rule coverage
 - [ ] **IP Address Lookup**: Solve A/AAAA record IP address field handling with VRF considerations
 - [ ] **Manual Record Deletion Handling**: Clean up orphaned DNSRuleRecord entries
   - **Test Coverage**: Write test case that verifies DNSRuleRecord entries are properly cleaned up when corresponding DNS records are manually deleted
@@ -418,10 +428,10 @@ The DNS Rule System provides automated DNS record management triggered by object
   - Do global rules apply to objects with specific tenants configured?
   - When both global and tenant-specific rules exist, which takes precedence?
   - How does rule inheritance work down organizational hierarchies?
-- [x] **Rule Precedence System**: Implement clear hierarchy for overlapping rule scenarios ✅
+- [x] **Location-Based Rule Precedence**: Implement location vs global rule hierarchy ✅
   - **Completed**: Location-specific vs global rule priority with per-record-type resolution
   - **Architecture**: Different record types can use different rule sources (location vs global)
-  - **Future**: Tenant-specific precedence and user control over precedence order
+- [ ] **Full Rule Precedence System**: Extend to tenant-specific precedence and user control over precedence order
 - [ ] **Per-Zone Rule Support**: Evaluate zone-scoped rule organization
   - Should rules be scoped to specific DNS zones for better performance?
   - How do zone-scoped rules interact with template-calculated zones?

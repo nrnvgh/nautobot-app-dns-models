@@ -215,14 +215,52 @@ class DNSRuleEngine:
         # Object type is not location-aware
         return None
 
+    def _get_object_tenant(self, source_obj: Any) -> Any:
+        """
+        Extract tenant from source object for tenant-scoped rule resolution.
+
+        Tenant extraction logic:
+        - Device: device.tenant (optional field in Nautobot)
+        - Interface: interface.device.tenant (inherited from device)
+        - VirtualMachine: vm.tenant (future)
+        - VMInterface: vminterface.virtual_machine.tenant (future)
+        - Service: service.tenant (future)
+        - Other objects: None (no tenant awareness)
+
+        Args:
+            source_obj: The object to extract tenant from
+
+        Returns:
+            Tenant object or None if object has no tenant or type is not tenant-aware
+        """
+        # Device objects have direct tenant (optional field)
+        if hasattr(source_obj, "tenant"):
+            return source_obj.tenant
+
+        # Interface objects get tenant from device (device.tenant is optional)
+        if hasattr(source_obj, "device") and hasattr(source_obj.device, "tenant"):
+            return source_obj.device.tenant
+
+        # TODO: Add future model tenant extraction:
+        # - VirtualMachine: return source_obj.tenant if hasattr(source_obj, "tenant")
+        # - VMInterface: return source_obj.virtual_machine.tenant
+        # - Service: return source_obj.tenant (for anycast services)
+
+        # Object type is not tenant-aware or has no tenant assigned
+        return None
+
     def _get_applicable_rules(self, source_obj: Any) -> models.QuerySet:
         """
         Get all DNS rules that apply to the given source object.
 
-        Location-scoped rule resolution with per-record-type precedence:
-        1. For each record type, prefer location-specific rules over global rules
-        2. If no location-specific rule exists for a record type, use global rule
-        3. Multiple record types can have different rule sources (location vs global)
+        Tenant+Location-scoped rule resolution with per-record-type precedence:
+        1. For each record type, prefer most specific rule in this order:
+           a. Location+Tenant specific (most specific)
+           b. Location specific (location-wide, any tenant)
+           c. Tenant specific (tenant-wide, any location)
+           d. Global (any tenant, any location)
+        2. Different record types can use different rule sources
+        3. Location-first precedence: locations are more specific than tenants
 
         Args:
             source_obj: The object to find applicable rules for
@@ -232,42 +270,63 @@ class DNSRuleEngine:
         """
         content_type = ContentType.objects.get_for_model(source_obj)
         object_location = self._get_object_location(source_obj)
-        
-        # If object has no location, only global rules can apply
-        if object_location is None:
-            logger.debug(f"Using global rules for {source_obj} (no location)")
+        object_tenant = self._get_object_tenant(source_obj)
+
+        # Early return for objects with no location or tenant - only global rules can apply
+        if object_location is None and object_tenant is None:
+            logger.debug(f"Using global rules for {source_obj} (no location, no tenant)")
             return DNSRule.objects.filter(
-                content_type=content_type,
-                location__isnull=True,
-                enabled=True
+                content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
             )
-        
-        # Get all potentially applicable rules in one query
-        all_rules = DNSRule.objects.filter(
-            content_type=content_type,
-            enabled=True
-        ).filter(
-            models.Q(location=object_location) | models.Q(location__isnull=True)
+
+        # Build query for all potentially applicable rules
+        base_query = DNSRule.objects.filter(content_type=content_type, enabled=True)
+
+        # Get all rules that could apply based on location and tenant
+        location_conditions = models.Q(location=object_location) | models.Q(location__isnull=True)
+        tenant_conditions = models.Q(tenant=object_tenant) | models.Q(tenant__isnull=True)
+
+        all_rules = base_query.filter(location_conditions & tenant_conditions)
+
+        # Group rules by record type and precedence level
+        rules_by_type = defaultdict(
+            lambda: {
+                "location_tenant": [],  # Most specific
+                "location": [],  # Location-wide
+                "tenant": [],  # Tenant-wide
+                "global": [],  # Least specific
+            }
         )
-        
-        # Group by record_type using defaultdict
-        rules_by_type = defaultdict(lambda: {"location": [], "global": []})
-        
+
         for rule in all_rules:
-            if rule.location == object_location:
-                rules_by_type[rule.record_type]["location"].append(rule)
-            else:  # rule.location is None
-                rules_by_type[rule.record_type]["global"].append(rule)
-        
-        # For each record type, prefer location-specific rules
+            record_type = rule.record_type
+
+            if rule.location == object_location and rule.tenant == object_tenant:
+                rules_by_type[record_type]["location_tenant"].append(rule)
+            elif rule.location == object_location and rule.tenant is None:
+                rules_by_type[record_type]["location"].append(rule)
+            elif rule.location is None and rule.tenant == object_tenant:
+                rules_by_type[record_type]["tenant"].append(rule)
+            else:  # rule.location is None and rule.tenant is None
+                rules_by_type[record_type]["global"].append(rule)
+
+        # For each record type, select highest precedence rule (location-first)
         final_rule_pks = []
-        for rules in rules_by_type.values():
-            if rules["location"]:
+        for record_type, rules in rules_by_type.items():
+            if rules["location_tenant"]:
+                final_rule_pks.extend([r.pk for r in rules["location_tenant"]])
+                logger.debug(f"Using location+tenant rule for {source_obj} record type {record_type}")
+            elif rules["location"]:
                 final_rule_pks.extend([r.pk for r in rules["location"]])
-            else:
+                logger.debug(f"Using location rule for {source_obj} record type {record_type}")
+            elif rules["tenant"]:
+                final_rule_pks.extend([r.pk for r in rules["tenant"]])
+                logger.debug(f"Using tenant rule for {source_obj} record type {record_type}")
+            elif rules["global"]:
                 final_rule_pks.extend([r.pk for r in rules["global"]])
-        
-        # Return QuerySet filtered to selected rules, maintaining model ordering
+                logger.debug(f"Using global rule for {source_obj} record type {record_type}")
+
+        # Return QuerySet filtered to selected rules
         return DNSRule.objects.filter(pk__in=final_rule_pks)
 
     def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> None:
