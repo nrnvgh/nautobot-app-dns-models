@@ -5,6 +5,7 @@ import logging
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
 from nautobot.dcim.models import Device, Interface
+from nautobot.ipam.models import Service
 
 from nautobot_dns_models.rule_engine import dns_rule_engine
 
@@ -81,10 +82,10 @@ def has_model_field_changes(instance, debug_context="object"):
 
 @receiver(pre_save, sender=Device)
 @receiver(pre_save, sender=Interface)
+@receiver(pre_save, sender=Service)
 # TODO: Add signal handlers for future models:
 # - VirtualMachine (location via cluster.location)
 # - Cluster (location changes affect VMs)
-# - Service (for anycast IP assignments)
 # - InterfaceRedundancyGroup (for redundant IP assignments)
 def capture_object_change_state(sender, instance, **kwargs):
     """
@@ -108,40 +109,42 @@ def capture_object_change_state(sender, instance, **kwargs):
 
 
 @receiver(post_save, sender=Interface)
+@receiver(post_save, sender=Service)
 # TODO: Add post_save handlers for future models:
 # - VirtualMachine, VMInterface (virtualization support)
-# - Service (anycast IP assignments)
 # - InterfaceRedundancyGroup (redundant IP assignments)
-def handle_interface_save(sender, instance, created, **kwargs):
+# TODO: Test module-based interfaces to ensure location/tenant extraction works correctly:
+# - Interface in Module: interface.parent should walk up to device via module hierarchy
+# - Interface in nested Module: interface.parent should handle multi-level module nesting
+def handle_object_save(sender, instance, created, **kwargs):
     """
-    Handle Interface save events to trigger DNS rule processing.
+    Handle Interface and Service save events to trigger DNS rule processing.
 
-    Only processes DNS rules if interface fields changed (determined by pre_save handler)
-    or if this is a newly created interface. Location-scoped rules are automatically
-    resolved based on interface.device.location.
+    Only processes DNS rules if object fields changed (determined by pre_save handler)
+    or if this is a newly created object. Location-scoped rules are automatically
+    resolved based on the object's location (interface.device.location,
+    service.device.location, or service.virtual_machine.cluster.location).
 
     Args:
-        sender: The model class that was saved (Interface)
-        instance: The actual Interface instance that was saved
-        created: Boolean indicating if this was a new Interface
+        sender: The model class that was saved (Interface, Service)
+        instance: The actual object instance that was saved
+        created: Boolean indicating if this was a new object
         **kwargs: Additional signal arguments
     """
     # Check if DNS processing is needed (set by pre_save handler)
     should_process = created or getattr(instance, "_dns_needs_processing", False)
 
-    logger.debug(f"[SIGNAL] [handle_interface_save] {instance} / {created=} / should_process={should_process}")
+    logger.debug(f"[SIGNAL] [handle_object_save] {instance} / {created=} / should_process={should_process}")
 
     if should_process:
         try:
             dns_rule_engine.process_object(instance, created=created)
         except Exception as exc:
             # Log the error but don't let it break the original object save
-            logger.error(
-                f"[SIGNAL] [handle_interface_save] Failed to process DNS rules for Interface {instance}: {exc}"
-            )
+            logger.error(f"[SIGNAL] [handle_object_save] Failed to process DNS rules for {instance}: {exc}")
     else:
         logger.debug(
-            f"[SIGNAL] [handle_interface_save] Skipping DNS processing for {instance} - no relevant field changes"
+            f"[SIGNAL] [handle_object_save] Skipping DNS processing for {instance} - no relevant field changes"
         )
 
 
@@ -199,18 +202,19 @@ def handle_device_save(sender, instance, created, **kwargs):
 
 @receiver(post_delete, sender=Device)
 @receiver(post_delete, sender=Interface)
+@receiver(post_delete, sender=Service)
 # TODO: Add post_delete handlers for future models:
 # - VirtualMachine, VMInterface, Cluster
-# - Service, InterfaceRedundancyGroup
+# - InterfaceRedundancyGroup
 def handle_object_delete(sender, instance, **kwargs):
     """
     Handle object delete events to clean up associated DNS records.
 
     Location-aware cleanup: Removes DNS records created by location-scoped
-    rules when objects are deleted.
+    rules when objects (Device, Interface, Service) are deleted.
 
     Args:
-        sender: The model class that was deleted
+        sender: The model class that was deleted (Device, Interface, Service)
         instance: The actual instance that was deleted
         **kwargs: Additional signal arguments
     """
@@ -224,23 +228,24 @@ def handle_object_delete(sender, instance, **kwargs):
 
 
 @receiver(m2m_changed, sender=Interface.ip_addresses.through)
+@receiver(m2m_changed, sender=Service.ip_addresses.through)
 # TODO: Add m2m_changed handlers for future models:
 # - VMInterface.ip_addresses.through (virtualization support)
-# - Service.ip_addresses.through (anycast IP assignments)
 # - InterfaceRedundancyGroup.ip_addresses.through (redundant IP assignments)
 def handle_m2m_changed(sender, instance, action, pk_set, **kwargs):
     """
     Handle many-to-many relationship changes to trigger DNS rule processing.
 
     Location-aware processing: IP assignments trigger DNS rule evaluation
-    using location-scoped rules based on the interface's device location.
+    using location-scoped rules based on the object's location (interface.device.location,
+    service.device.location, or service.virtual_machine.cluster.location).
 
-    This is specifically needed for Interface.ip_addresses changes where
-    the post_save signal fires before the M2M relationship is updated.
+    This is specifically needed for Interface.ip_addresses and Service.ip_addresses
+    changes where the post_save signal fires before the M2M relationship is updated.
 
     Args:
-        sender: The intermediate model (e.g., Interface.ip_addresses.through)
-        instance: The instance being modified
+        sender: The intermediate model (e.g., Interface.ip_addresses.through, Service.ip_addresses.through)
+        instance: The instance being modified (Interface or Service)
         action: The type of update (e.g., 'post_add', 'post_remove', 'post_clear')
         pk_set: Set of primary keys affected
         **kwargs: Additional signal arguments

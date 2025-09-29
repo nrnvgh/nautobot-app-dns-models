@@ -9,11 +9,37 @@ DNS Rules use Jinja2 templates to dynamically generate DNS record content based 
 
 All templates have access to the triggering object as `obj` and can traverse Django ORM relationships:
 
+### `Interface` Examples
 ```jinja2
 {{ obj.name }}                    # Object name
-{{ obj.device.name }}             # Related device name (e.g. for interfaces)
+{{ obj.device.name }}             # Related device name
 {{ obj.device.location.name }}    # Device location name
+```
+
+### `Device` Examples
+```jinja
 {{ obj.primary_ip4.address }}     # Primary IP address object (e.g. for devices)
+```
+
+### Service Object Examples
+
+Service objects provide access to their parent (device or virtual machine) and service-specific fields:
+
+```jinja2
+# Service basic fields
+{{ obj.name }}                    # Service name
+{{ obj.protocol }}                # Service protocol (HTTP, SSH, etc.)
+{{ obj.ports }}                   # List of port numbers
+
+# Device-attached service
+{{ obj.device.name }}             # Parent device name
+{{ obj.device.location.name }}    # Device location
+
+# VM-attached service  
+{{ obj.virtual_machine.name }}    # Parent VM name
+{{ obj.virtual_machine.cluster.location.name }}  # VM cluster location
+{{ obj.virtual_machine.tenant.name }}            # VM tenant
+{{ obj.virtual_machine.cluster.tenant.name }}    # VM cluster tenant (fallback)
 ```
 
 ## Required Templates
@@ -87,9 +113,30 @@ Value Template: {{ obj.device.name | dns_normalize }}.mgmt.example.com
 
 ### Service Templates
 
-**Load Balancer VIP**:
+**Basic Service A Record**:
 ```jinja2
 Zone Template: services.example.com
+Name Template: {{ obj.name | dns_normalize }}
+Value Template: {{ obj.ip_addresses.all() | ip_address }}
+```
+
+**Service with Parent Context**:
+```jinja2
+# Device-attached service
+Zone Template: {{ obj.device.location.name | lower }}.example.com
+Name Template: {{ obj.name | dns_normalize }}.{{ obj.device.name | dns_normalize }}
+Value Template: {{ obj.ip_addresses.all() | ip_address }}
+
+# VM-attached service  
+Zone Template: {{ obj.virtual_machine.cluster.location.name | lower }}.example.com
+Name Template: {{ obj.name | dns_normalize }}.{{ obj.virtual_machine.name | dns_normalize }}
+Value Template: {{ obj.ip_addresses.all() | ip_address }}
+```
+
+**Conditional Service Templates**:
+```jinja2
+# Handle both device and VM-attached services
+Zone Template: {% if obj.device %}{{ obj.device.location.name | dns_normalize }}{% else %}{{ obj.virtual_machine.cluster.location.name | dns_normalize }}{% endif %}.example.com
 Name Template: {{ obj.name | dns_normalize }}
 Value Template: {{ obj.ip_addresses.all() | ip_address }}
 ```

@@ -2,12 +2,17 @@
 
 import logging
 from collections.abc import Iterable
+from datetime import datetime
 
 from django_jinja import library
 from nautobot.ipam.models import IPAddress
 
 logger = logging.getLogger(__name__)
 
+@library.filter
+def append_timestamp(value):
+    """Append a random string to a value."""
+    return f"{value} ({datetime.now().strftime('%a %b %d %H:%M:%S')})"
 
 @library.filter
 def ip_address(ip_obj, version=None):
@@ -78,5 +83,14 @@ def ip_address(ip_obj, version=None):
 
 @library.filter
 def dns_normalize(s):
-    """Normalize a value so it's DNS compliant."""
-    return s.replace("/", "-").replace(".", "-").lower()
+    """
+    Normalize a value so it's DNS compliant.
+    
+    Replaces /, ., _, and spaces with - and lowercases the string.
+    """
+    characters_to_replace = "/._ "
+    translation_table = str.maketrans(  
+        characters_to_replace,
+        "-" * len(characters_to_replace)
+    )
+    return s.translate(translation_table).lower()
