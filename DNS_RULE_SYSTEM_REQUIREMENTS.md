@@ -312,6 +312,12 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Device Primary IP Change Testing**: Test that Device DNS records are properly updated/deleted when primary IP fields are cleared due to interface IP removal
 - [ ] **AAAA Record Removal Testing**: Test that AAAA (IPv6) records are automatically deleted when IPv6 addresses are removed from interfaces
 - [ ] **Multiple IP Interface Testing**: Test interface IP removal scenarios where interface has multiple IPs (remove one, others remain)
+- [ ] **Module-Based Interface Testing**: Test interfaces installed in modules to ensure location/tenant extraction works correctly
+  - **Interface in Module**: Verify `interface.parent` correctly walks up module hierarchy to reach device for location/tenant resolution
+  - **Interface in Nested Module**: Test multi-level module nesting scenarios where interface → module → parent_module → device
+  - **Location/Tenant Inheritance**: Ensure module-based interfaces inherit location/tenant from their ultimate parent device
+  - **Template Context**: Verify Jinja templates can access device properties through module hierarchy
+  - **Signal Processing**: Confirm DNS rule processing works for module-based interface changes
 - [ ] **DNSRuleRecord Cleanup Testing**: Test that DNSRuleRecord tracking entries are properly cleaned up when DNS records are deleted due to template failures
 - [ ] **External Data Validation**: Ensure validation of template-rendered data with limited control (MX priority, SRV weights, port numbers, etc.)
 - [ ] **DNS Rule Validation Conflicts**: Understand behavior when DNS rules generate records that violate existing DNS record model validation
@@ -375,6 +381,18 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **IPAddress Signal Handling**: Skipped for 1.0 as most IP-related changes are covered by Device/Interface/VM signals; may warrant revisiting if direct IPAddress rule targeting or IP-specific metadata usage emerges
 
 #### 4.2.6 Future Enhancements
+
+**HIGH PRIORITY:**
+- [ ] **Template Whitespace Handling**: Implement whitespace stripping for multiline template renders and/or document the pitfalls of unintended whitespace in DNS record values. Multiline templates can introduce unwanted spaces/newlines that break DNS records.
+
+**MEDIUM PRIORITY (Needed for 1.0):**
+- [ ] **Documentation Cleanup Pass**: Review and polish all user documentation for clarity, accuracy, and completeness before 1.0 release
+  - Update examples to reflect current implementation
+  - Ensure consistency across all documentation files
+  - Verify all template examples work correctly
+  - Add missing sections or clarifications based on implementation experience
+
+**MEDIUM PRIORITY (Future):**
 - [ ] **Model File Organization**: Consider splitting models.py into records.py and rules.py
 - [ ] **DNS Lowercase Config**: Add configuration option to force DNS records to lowercase
 - [ ] **Character Transform Config**: Add DNS character validation and transformation options
