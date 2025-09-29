@@ -380,11 +380,30 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Character Transform Config**: Add DNS character validation and transformation options
 - [ ] **Template Field Naming**: Revisit field naming conventions (value_template vs content_template)
 - [ ] **Custom Relationship DNS Rules**: Investigate scenarios where IPs have custom relationships (e.g., IP-to-Circuit) - determine if Circuit-based rules can leverage these relationships or if IP-based rules are needed for such cases
-- [ ] **Template Safety Documentation**: Document risks of using non-guaranteed fields in templates and provide mitigation strategies
+- [x] **Template Safety Documentation**: Document risks of using non-guaranteed fields in templates and provide mitigation strategies
   - **Risk**: Templates using optional fields (interface.role, device.primary_ip4) can cause DNS record deletion when fields become unavailable
   - **Current Behavior**: Rule engine removes all DNS records for an object when any template fails to render
   - **Mitigation Strategies**: Use conditional templates, default filters, or separate rules for optional vs required fields
   - **Examples**: Safe patterns like `{{ obj.role.name|default:"unknown" }}` vs risky patterns like `{{ obj.role.name }}`
+- [ ] **Large-Scale DNS Update Job**: Implement Nautobot job for bulk DNS record updates based on user-supplied criteria
+  - **Purpose**: Enable administrators to perform large-scale DNS updates without individual object modifications
+  - **Scope Options**: 
+    - **Global**: Process all objects matching rule criteria across entire system
+    - **Tenant-Scoped**: Process objects within specific tenant(s) - `"run all rules for TENANT_X"`
+    - **Location-Scoped**: Process objects within specific location(s) - `"run all rules for LOCATION_Y"`
+    - **Rule-Specific**: Execute specific rule(s) with optional scoping - `"run RULE_Z in LOCATION_Y"`
+    - **Record-Type-Specific**: Process all A records, CNAME records, etc. with optional scoping
+  - **Use Cases**: 
+    - **Migration Scenarios**: Bulk DNS updates during infrastructure migrations or reorganizations
+    - **Template Updates**: Re-process DNS records after rule template modifications
+    - **Cleanup Operations**: Regenerate DNS records after data corrections or imports
+    - **Selective Processing**: Target specific subsets of infrastructure for DNS updates
+  - **Implementation Considerations**:
+    - **Job Parameters**: Tenant selection, location selection, rule selection, dry-run mode
+    - **Progress Tracking**: Job progress reporting for large-scale operations
+    - **Error Handling**: Graceful handling of individual record failures without stopping entire job
+    - **Performance**: Batch processing to avoid overwhelming the system
+    - **Logging**: Detailed logging of changes made for audit purposes
 
 #### 4.2.7 Architectural Investigations
 - [ ] **Separate DNSRule Classes Architecture**: Investigate splitting DNSRule into type-specific classes (ADNSRule, MXDNSRule, SRVDNSRule, etc.)
