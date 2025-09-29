@@ -154,6 +154,41 @@ web-server-01    IN A    192.168.1.100
 
 **Result**: Interface with 3 IP addresses creates 3 separate A records.
 
+### Service DNS Records
+
+**Scenario**: Automatically create DNS records for services (load balancers, web services, databases).
+
+#### Service A Records
+
+**Rule Configuration**:
+
+- Content Type: `ipam | service`
+- Location: (blank for global)
+- Record Type: A Record
+- Zone Template: `services.example.com`
+- Name Template: `{{ obj.name | dns_normalize }}`
+- Value Template: `{{ obj.ip_addresses.all() | ip_address }}`
+
+**Result**: Service "web-lb" with IPs 10.1.1.100 and 10.1.1.101 creates:
+```
+# Zone: services.example.com
+web-lb    IN A    10.1.1.100
+web-lb    IN A    10.1.1.101
+```
+
+#### Service Location and Tenant Inheritance
+
+Services inherit location and tenant from their parent object:
+
+- **Device-attached Service**: Inherits `device.location` and `device.tenant`
+- **VM-attached Service**: Inherits `virtual_machine.location` (from cluster) and `virtual_machine.tenant` (with `cluster.tenant` fallback)
+
+**Example**: Service attached to VM in "ACME Corp" tenant with cluster in "London" location will match:
+- Location+Tenant rules for London + ACME Corp (highest precedence)
+- Location rules for London (if no location+tenant rule)
+- Tenant rules for ACME Corp (if no location rule)
+- Global rules (lowest precedence)
+
 ## Template Filters
 
 ### IP Address Filter

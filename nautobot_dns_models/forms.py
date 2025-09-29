@@ -579,9 +579,10 @@ class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
             | django_models.Q(app_label="dcim", model="interface")
             | django_models.Q(app_label="virtualization", model="virtualmachine")
             | django_models.Q(app_label="virtualization", model="vminterface")
+            | django_models.Q(app_label="ipam", model="service")
         ).order_by("app_label", "model"),
         widget=StaticSelect2(),
-        help_text="Type of object this rule applies to (Device, Interface, VM, VM Interface)",
+        help_text="Type of object this rule applies to",
     )
 
     record_type = forms.ChoiceField(

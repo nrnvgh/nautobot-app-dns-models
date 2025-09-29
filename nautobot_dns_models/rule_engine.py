@@ -189,13 +189,14 @@ class DNSRuleEngine:
 
         for rule in applicable_rules:
             try:
-                logger.debug(f"Reconciling records for rule {rule.name} on {source_obj}")
                 self._reconcile_records_for_rule(rule, source_obj)
             except (TemplateError, DNSTemplateEmptyError) as exc:
                 logger.warning(f"Template error for rule {rule.name} on {source_obj}: {exc} - cleaning up records")
                 self._cleanup_records_for_rule(rule, source_obj)
             except (DNSZone.DoesNotExist, ValueError) as exc:
-                logger.error(f"Infrastructure error for rule {rule.name} on {source_obj}: {exc} - cleaning up records to prevent transaction failure")
+                logger.error(
+                    f"Infrastructure error for rule {rule.name} on {source_obj}: {exc} - cleaning up records to prevent transaction failure"
+                )
                 self._cleanup_records_for_rule(rule, source_obj)
             except Exception as exc:
                 logger.critical(f"Unexpected error for rule {rule.name} on {source_obj}: {exc} - cleaning up records")
@@ -208,9 +209,9 @@ class DNSRuleEngine:
         Location extraction logic:
         - Device: device.location (required field in Nautobot)
         - Interface: interface.device.location (device.location is required)
-        - VirtualMachine: vm.cluster.location (future)
-        - VMInterface: vminterface.virtual_machine.cluster.location (future)
-        - Service: None (global scope for anycast) (future)
+        - Service: service.device.location OR service.virtual_machine.location (which is just a proxy for cluster.location)
+        - VirtualMachine: vm.location (which is just a proxy for cluster.location) (future)
+        - VMInterface: vminterface.virtual_machine.location (which is just a proxy for cluster.location) (future)
         - InterfaceRedundancyGroup: None (complex multi-location) (future)
 
         Args:
@@ -224,13 +225,19 @@ class DNSRuleEngine:
             return source_obj.location
 
         # Interface objects get location from device (device.location is required)
-        if hasattr(source_obj, "device"):
+        # Service objects get location from device or virtual_machine; 'device' is not guaranteed to be set
+        if hasattr(source_obj, "device") and source_obj.device:
             return source_obj.device.location
+
+        # Service objects attached to VM get location via VM's location property
+        # VirtualMachine objects would also use this path (future)
+        if hasattr(source_obj, "virtual_machine") and source_obj.virtual_machine:
+            # VM.location property returns cluster.location (may be None if cluster has no location)
+            return source_obj.virtual_machine.location
 
         # TODO: Add future model location extraction:
         # - VirtualMachine: return source_obj.cluster.location if hasattr(source_obj, "cluster")
         # - VMInterface: return source_obj.virtual_machine.cluster.location
-        # - Service: return None (global scope for anycast)
         # - InterfaceRedundancyGroup: return None (complex multi-location scenario)
 
         # Object type is not location-aware
@@ -243,9 +250,9 @@ class DNSRuleEngine:
         Tenant extraction logic:
         - Device: device.tenant (optional field in Nautobot)
         - Interface: interface.device.tenant (inherited from device)
-        - VirtualMachine: vm.tenant (future)
-        - VMInterface: vminterface.virtual_machine.tenant (future)
-        - Service: service.tenant (future)
+        - Service: service.device.tenant OR service.virtual_machine.tenant (with cluster.tenant fallback)
+        - VirtualMachine: vm.tenant (with cluster.tenant fallback) (future)
+        - VMInterface: vminterface.virtual_machine.tenant (with cluster.tenant fallback) (future)
         - Other objects: None (no tenant awareness)
 
         Args:
@@ -258,14 +265,18 @@ class DNSRuleEngine:
         if hasattr(source_obj, "tenant"):
             return source_obj.tenant
 
-        # Interface objects get tenant from device (device.tenant is optional)
-        if hasattr(source_obj, "device") and hasattr(source_obj.device, "tenant"):
-            return source_obj.device.tenant
+        # Interface objects get tenant from device (device.tenant is optional, may return None)
+        if hasattr(source_obj, "device") and source_obj.device:
+            return source_obj.device.tenant  # May be None - falls back to global rules
+
+        # Service objects get tenant from device or virtual_machine (tenant is optional, may return None)
+        if hasattr(source_obj, "virtual_machine") and source_obj.virtual_machine:
+            # VM tenant takes precedence, fall back to cluster tenant if VM has no tenant
+            return source_obj.virtual_machine.tenant or source_obj.virtual_machine.cluster.tenant
 
         # TODO: Add future model tenant extraction:
         # - VirtualMachine: return source_obj.tenant if hasattr(source_obj, "tenant")
         # - VMInterface: return source_obj.virtual_machine.tenant
-        # - Service: return source_obj.tenant (for anycast services)
 
         # Object type is not tenant-aware or has no tenant assigned
         return None
@@ -353,67 +364,69 @@ class DNSRuleEngine:
     def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> None:
         """
         Reconcile DNS records using differential updates to preserve existing records.
-        
+
         Uses content-based comparison to identify what records need to be:
         - Kept (already exist and are correct)
-        - Deleted (exist but no longer needed)  
+        - Deleted (exist but no longer needed)
         - Created (needed but don't exist)
-        
+
         This approach preserves existing DNS record IDs when possible.
-        
+
         All exceptions result in cleanup to prevent transaction failures.
         """
         logger.debug(f"Reconciling records for rule {rule.name} on {source_obj}")
-        
+
         # STEP 1: Get current state
         existing_tracking_records = self._get_existing_tracking_records(rule, source_obj)
-        
+
         # STEP 2: Calculate desired state
         desired_record_data = self._calculate_desired_record_data(rule, source_obj)
-        
+
         # STEP 3: Build content-based lookup maps
         existing_records_by_content = {}
         for tracking_record in existing_tracking_records:
             dns_record = tracking_record.dns_record
             content_key = self._get_record_content_key(dns_record)
+            print(f"Existing record content key: '{content_key}'")
             existing_records_by_content[content_key] = tracking_record
-        
+
         desired_records_by_content = {}
         for record_data in desired_record_data:
             content_key = self._get_record_content_key_from_data(record_data)
+            print(f"Desired record content key: {content_key}")
             desired_records_by_content[content_key] = record_data
-        
+
         # STEP 4: Identify differences using set operations
         existing_keys = set(existing_records_by_content.keys())
         desired_keys = set(desired_records_by_content.keys())
-        
-        records_to_keep = existing_keys & desired_keys      # Intersection - no change needed
-        records_to_delete = existing_keys - desired_keys    # Only in existing - delete
-        records_to_create = desired_keys - existing_keys    # Only in desired - create
-        
+
+        records_to_keep = existing_keys & desired_keys  # Intersection - no change needed
+        records_to_delete = existing_keys - desired_keys  # Only in existing - delete
+        records_to_create = desired_keys - existing_keys  # Only in desired - create
+
         logger.debug(
             f"Differential reconciliation for {rule.name}: "
             f"keep={len(records_to_keep)}, delete={len(records_to_delete)}, create={len(records_to_create)}"
         )
-        
+
         # STEP 5: Apply minimal changes
-        
+
         # Delete obsolete records
         for content_key in records_to_delete:
             tracking_record = existing_records_by_content[content_key]
             logger.info(f"Deleting obsolete record for {rule.name}: {content_key}")
             self._delete_tracking_and_dns_record(tracking_record)
-        
+
         # Keep existing records (log but no action needed)
         if records_to_keep:
             logger.debug(f"Preserving {len(records_to_keep)} existing records for {rule.name}")
-        
+
         # Create missing records
         if records_to_create:
             records_to_create_data = [desired_records_by_content[key] for key in records_to_create]
             logger.info(f"Creating {len(records_to_create_data)} new records for {rule.name}")
             self._create_records_from_data(rule, source_obj, records_to_create_data)
-        
+
         # Log summary
         total_after = len(records_to_keep) + len(records_to_create)
         logger.debug(f"Reconciliation complete for {rule.name}: {total_after} total records")
@@ -568,39 +581,39 @@ class DNSRuleEngine:
         """Generate a content-based key for record comparison."""
         record_type = dns_record.__class__.__name__
         base_key = f"{record_type}:{dns_record.name}:{dns_record.zone_id}"
-        
-        if hasattr(dns_record, 'address_id'):  # A/AAAA records
+
+        if hasattr(dns_record, "address_id"):  # A/AAAA records
             return f"{base_key}:{dns_record.address_id}"
-        elif hasattr(dns_record, 'alias'):     # CNAME records
+        elif hasattr(dns_record, "alias"):  # CNAME records
             return f"{base_key}:{dns_record.alias}"
-        elif hasattr(dns_record, 'server'):    # MX/NS records
-            preference = getattr(dns_record, 'preference', '')
+        elif hasattr(dns_record, "server"):  # MX/NS records
+            preference = getattr(dns_record, "preference", "")
             return f"{base_key}:{dns_record.server}:{preference}"
-        elif hasattr(dns_record, 'ptrdname'):  # PTR records
+        elif hasattr(dns_record, "ptrdname"):  # PTR records
             return f"{base_key}:{dns_record.ptrdname}"
-        elif hasattr(dns_record, 'text'):      # TXT records
+        elif hasattr(dns_record, "text"):  # TXT records
             return f"{base_key}:{dns_record.text}"
-        elif hasattr(dns_record, 'target'):    # SRV records
+        elif hasattr(dns_record, "target"):  # SRV records
             return f"{base_key}:{dns_record.priority}:{dns_record.weight}:{dns_record.port}:{dns_record.target}"
         else:
             return f"{base_key}:unknown"
 
     def _get_record_content_key_from_data(self, record_data: dict) -> str:
         """Generate content key from record data dict."""
-        if 'address_id' in record_data:
+        if "address_id" in record_data:
             record_type = "ARecord"
             return f"{record_type}:{record_data['name']}:{record_data['zone'].id}:{record_data['address_id']}"
-        elif 'alias' in record_data:
+        elif "alias" in record_data:
             return f"CNAMERecord:{record_data['name']}:{record_data['zone'].id}:{record_data['alias']}"
-        elif 'server' in record_data:
-            preference = record_data.get('preference', '')
-            record_type = "MXRecord" if 'preference' in record_data else "NSRecord"
+        elif "server" in record_data:
+            preference = record_data.get("preference", "")
+            record_type = "MXRecord" if "preference" in record_data else "NSRecord"
             return f"{record_type}:{record_data['name']}:{record_data['zone'].id}:{record_data['server']}:{preference}"
-        elif 'ptrdname' in record_data:
+        elif "ptrdname" in record_data:
             return f"PTRRecord:{record_data['name']}:{record_data['zone'].id}:{record_data['ptrdname']}"
-        elif 'text' in record_data:
+        elif "text" in record_data:
             return f"TXTRecord:{record_data['name']}:{record_data['zone'].id}:{record_data['text']}"
-        elif 'target' in record_data:
+        elif "target" in record_data:
             return f"SRVRecord:{record_data['name']}:{record_data['zone'].id}:{record_data['priority']}:{record_data['weight']}:{record_data['port']}:{record_data['target']}"
         else:
             return f"UnknownRecord:{record_data['name']}:{record_data['zone'].id}:unknown"
@@ -609,10 +622,10 @@ class DNSRuleEngine:
         """Delete both the DNS record and its tracking record."""
         dns_record = tracking_record.dns_record
         logger.debug(f"Deleting DNS record {dns_record} and tracking record {tracking_record}")
-        
+
         # Delete the actual DNS record
         dns_record.delete()
-        
+
         # Delete the tracking record
         tracking_record.delete()
 
