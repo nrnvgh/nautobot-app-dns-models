@@ -236,7 +236,9 @@ The DNS Rule System provides automated DNS record management triggered by object
   - **Safety**: DNS failures can no longer poison main object transactions
 - [ ] **Enhanced Interface IP Handling**: Production-ready multiple IP scenarios (replaces POC implementation)
 - [x] **Device Primary IP Handling**: Support Device.primary_ip4/primary_ip6 DNS record creation
-- [ ] **VM/VMInterface Signal Handling**: Multiple record support for virtualization (1.0 priority)  
+- [x] **VM/VMInterface Signal Handling**: Multiple record support for virtualization (1.0 priority) ✅
+  - **Completed**: Full VirtualMachine and VMInterface signal handling with location/tenant extraction via cluster relationships
+  - **Architecture**: Unified signal architecture supporting both physical (Device/Interface) and virtual (VirtualMachine/VMInterface) infrastructure  
 - [x] **Device Rename Cascade Handling**: Update all DNS records when device names change (vital for 1.0)
   - **Completed**: Implemented comprehensive signal deduplication with field change detection for Device and Interface models
   - **Architecture**: Smart change detection using has_model_field_changes() helper, cascade processing for interface DNS records when device fields change
@@ -292,8 +294,14 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Auto-Created Record Tagging**: Design how to mark auto-created DNS records (tags, status fields, etc.) and whether tag names should be configurable
 - [ ] **IP Removal Handling**: Investigate better ways to handle IP removal than catching template exceptions - explore pre-validation approaches
 - [ ] **Signal Optimization**: Optimize signal handling to only trigger for content types that have configured DNS rules
-- [ ] **Signal Coverage for 1.0 Release**: Implement signal receivers for VirtualMachine, VMInterface (1.0 priority), with Service/VLAN/Cluster as maybe 1.0. Consider Location, Rack/RackGroup for post-1.0
-- [ ] **InterfaceRedundancyGroup and Service DNS Rules**: Evaluate DNS rule support for InterfaceRedundancyGroup and Service objects since they can accept IP assignments
+- [x] **Signal Coverage for 1.0 Release**: Implement signal receivers for VirtualMachine, VMInterface, Service (1.0 priority) as maybe 1.0. Consider Location, Rack/RackGroup/VLAN/Cluster for post-1.0 ✅
+  - **Completed**: VirtualMachine, VMInterface, and Service signal handling implemented with location/tenant extraction
+  - **Architecture**: Enhanced signal architecture with cascade processing for parent-child relationships (Device↔Interface, VirtualMachine↔VMInterface)
+  - **Service Support**: Full signal handling for Service objects with device/virtual_machine location extraction
+  - **Remaining**: VLAN/Cluster signal handling evaluation for 1.0 release
+- [x] **Service DNS Rules**: Evaluate DNS rule support for Service objects since they can accept IP assignments ✅
+  - **Completed**: Full Service DNS rule support implemented with comprehensive testing
+- [ ] **InterfaceRedundancyGroup DNS Rules**: Evaluate DNS rule support for InterfaceRedundancyGroup objects since they can accept IP assignments
   - **Location Extraction**: Determine location resolution for these object types (Service may not have direct location, InterfaceRedundancyGroup location via member interfaces?)
   - **Anycast Address Handling**: Design patterns for handling anycast IP addresses that may be assigned to multiple objects across different locations
   - **Use Cases**: Service load balancer VIPs, redundancy group virtual IPs, shared service addresses
