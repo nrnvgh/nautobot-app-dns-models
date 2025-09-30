@@ -1706,7 +1706,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
 
     def test_service_differential_record_reconciliation(self):
         """Test Service record reconciliation preserves existing record IDs."""
-        service_rule = DNSRule.objects.create(
+        DNSRule.objects.create(
             name="service-reconciliation-rule",
             content_type=self.service_content_type,
             record_type="A",
@@ -1748,13 +1748,18 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
         initial_records = ARecord.objects.filter(name="web-service", zone=self.dns_zone)
         self.assertEqual(initial_records.count(), 1, "Initial DNS record should be created")
 
+        #
+        # We need to store the ID of the initial record because it will be deleted when we save
+        # the service, rendeing the queryset useless
+        initial_record_id = initial_records.first().id
+
         # Change the service name
         self.service_device_attached.name = "api-gateway"
         self.service_device_attached.save()
 
         # Verify original record UUID no longer exists
         with self.assertRaises(ARecord.DoesNotExist):
-            ARecord.objects.get(id=initial_records.first().id)
+            ARecord.objects.get(id=initial_record_id)
 
         # Verify new DNS record is created with updated name
         new_records = ARecord.objects.filter(name="api-gateway", zone=self.dns_zone)
