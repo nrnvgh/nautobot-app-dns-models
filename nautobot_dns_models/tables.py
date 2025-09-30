@@ -11,16 +11,18 @@ class DNSRecordTable(BaseTable):  # pylint: disable=nb-no-model-found
     """Base table for DNS records list view."""
 
     pk = ToggleColumn()
-    name = tables.Column(linkify=True)
+    name = tables.LinkColumn()
     zone = tables.LinkColumn()
     ttl = tables.Column(accessor="ttl", verbose_name="TTL")
+    source_object = tables.LinkColumn()
+    dns_rule = tables.LinkColumn(verbose_name="DNS Rule")
 
 
 class DNSZoneTable(BaseTable):
     """Table for DNS Zone list view."""
 
     pk = ToggleColumn()
-    name = tables.Column(linkify=True)
+    name = tables.LinkColumn()
     actions = ButtonsColumn(
         models.DNSZone,
         # Option for modifying the default action buttons on each row:
@@ -364,7 +366,7 @@ class DNSRuleTable(BaseTable):
     """Table for DNS Rule list view."""
 
     pk = ToggleColumn()
-    name = tables.Column(linkify=True)
+    name = tables.LinkColumn()
     enabled = BooleanColumn()
     content_type = tables.Column()
     location = tables.LinkColumn()
