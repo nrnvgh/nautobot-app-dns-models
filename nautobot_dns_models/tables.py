@@ -99,8 +99,6 @@ class ARecordTable(DNSRecordTable):
     """Table for list view."""
 
     address = tables.LinkColumn()
-    source_object = tables.LinkColumn()
-    dns_rule = tables.LinkColumn()
     actions = ButtonsColumn(
         models.ARecord,
         # Option for modifying the default action buttons on each row:
@@ -162,6 +160,8 @@ class AAAARecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -199,6 +199,8 @@ class CNAMERecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -236,6 +238,8 @@ class MXRecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -273,6 +277,8 @@ class TXTRecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -310,6 +316,8 @@ class PTRRecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -347,6 +355,8 @@ class SRVRecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
