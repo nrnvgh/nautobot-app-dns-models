@@ -386,6 +386,13 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Template Whitespace Handling**: Implement whitespace stripping for multiline template renders and/or document the pitfalls of unintended whitespace in DNS record values. Multiline templates can introduce unwanted spaces/newlines that break DNS records.
 
 **MEDIUM PRIORITY (Needed for 1.0):**
+- [ ] **Template Design Best Practices Documentation**: Create comprehensive guide for DNS rule template design
+  - Document safe vs risky template patterns (optional field handling, relationship traversal)
+  - Provide device naming convention recommendations for DNS compatibility
+  - Include zone template design patterns and examples
+  - Cover performance considerations and operational best practices
+  - Document common pitfalls (whitespace issues, case sensitivity, special characters)
+  - Create template testing and validation guidelines
 - [ ] **Documentation Cleanup Pass**: Review and polish all user documentation for clarity, accuracy, and completeness before 1.0 release
   - Update examples to reflect current implementation
   - Ensure consistency across all documentation files
@@ -393,6 +400,55 @@ The DNS Rule System provides automated DNS record management triggered by object
   - Add missing sections or clarifications based on implementation experience
 
 **MEDIUM PRIORITY (Future):**
+- [ ] **InterfaceRedundancyGroup DNS Rules**: Implement DNS rule support for InterfaceRedundancyGroup objects with virtual IP addresses. The problems discussed below mean this will not be implemented soon.
+  - **Model Characteristics & Unique Challenges**: 
+    - Single `virtual_ip` ForeignKey (not ManyToMany like Interface/Service) - requires different IP processing logic
+    - Multiple member interfaces via `InterfaceRedundancyGroupAssociation` with priority - complex relationship traversal
+    - No direct tenant field - must derive from member interfaces with potential conflicts
+    - Supports HSRP/VRRP-style redundancy protocols spanning multiple devices/locations
+  - **Multi-Location Complexity (Major Challenge)**:
+    - **Problem**: Redundancy groups can span devices in different locations, breaking location-scoped rule assumptions
+    - **Primary Interface Strategy**: Use highest priority interface's location (`interface_redundancy_group_associations.order_by('-priority').first().interface.device.location`)
+    - **Consensus Strategy**: Only allow location-scoped rules if all member interfaces share same location
+    - **Conservative Strategy**: Return None for location (no location-scoped rules) to avoid ambiguity
+    - **Impact**: Location extraction strategy affects which DNS rules apply to the redundancy group
+  - **Tenant Extraction Complexity**:
+    - **Primary Interface Approach**: Use highest priority interface's tenant (`primary_interface.device.tenant`)
+    - **Consensus Approach**: Only return tenant if all member interfaces share same tenant
+    - **Fallback Strategy**: Return None if no clear tenant consensus exists
+    - **Edge Cases**: Handle scenarios where member interfaces have different tenants or no tenants
+  - **Signal Handling Complexity**:
+    - **Direct Changes**: `pre_save/post_save/post_delete` for InterfaceRedundancyGroup changes
+    - **Membership Changes**: `m2m_changed` for `InterfaceRedundancyGroup.interfaces.through` - when interfaces added/removed
+    - **Priority Changes**: Consider `InterfaceRedundancyGroupAssociation` signals for priority changes affecting primary interface selection
+    - **Cascade Processing**: Interface changes should trigger redundancy group DNS rule reprocessing (complex dependency graph)
+    - **Performance Impact**: Membership changes could trigger processing of multiple redundancy groups
+  - **Implementation Phases**:
+    - **Phase 1 (Conservative)**: Primary interface location/tenant, single virtual_ip processing, basic signal handling
+    - **Phase 2 (Enhanced)**: Validation for same-location member interfaces, consensus-based extraction, full cascade processing
+  - **Template Context Considerations**: 
+    - `obj.virtual_ip` for the IP address (single object, not collection)
+    - `obj.interfaces.all` for member interfaces (enables location/tenant validation in templates)
+    - `obj.protocol` and `obj.protocol_group_id` for redundancy protocol information
+  - **Architectural Impact**: May require extending location/tenant extraction logic to handle consensus-based resolution patterns
+- [ ] **Cluster DNS Signal Support**: Implement signal handling for Cluster changes to cascade DNS updates to VirtualMachines and VMInterfaces
+  - **Current State**: VirtualMachine and VMInterface DNS rules already work correctly with location/tenant extraction via cluster relationships
+    - VirtualMachine location: `vm.cluster.location` (via property)
+    - VirtualMachine tenant: `vm.tenant` with `vm.cluster.tenant` fallback
+    - VMInterface location/tenant: inherited through virtual_machine → cluster relationships
+  - **What Cluster Signals Would Add**:
+    - **Cascade Updates**: When cluster location/tenant changes, automatically update DNS records for ALL VMs and VMInterfaces in that cluster
+    - **Large-Scale Changes**: Support data center migrations, tenant reorganizations, infrastructure consolidation
+    - **Operational Scenarios**: Cluster moves between locations, tenant reassignments affecting entire clusters
+  - **Implementation Complexity**: Relatively simple signal handler with cascade processing
+  - **Performance Impact**: 
+    - **High Value**: Large clusters (50+ VMs) with frequent location/tenant changes
+    - **Performance Cost**: Could trigger processing of hundreds of VMs/VMInterfaces per cluster change
+    - **Database Load**: Significant SQL activity during cascade processing
+  - **Value Assessment**:
+    - **Implement if**: Large virtualization environments, frequent cluster changes, need guaranteed DNS consistency
+    - **Skip if**: Small/stable clusters, rare cluster property changes, acceptable manual DNS updates
+  - **Implementation**: Single signal handler processing all VMs and their VMInterfaces when cluster properties change
 - [ ] **Model File Organization**: Consider splitting models.py into records.py and rules.py
 - [ ] **DNS Lowercase Config**: Add configuration option to force DNS records to lowercase
 - [ ] **Character Transform Config**: Add DNS character validation and transformation options
@@ -471,13 +527,132 @@ The DNS Rule System provides automated DNS record management triggered by object
 - Template rendering performance
 - Database query optimization validation
 
-## 7. Future Considerations
+## 7. Template Design Best Practices
 
-### 7.1 Configuration Options
+### 7.1 Template Safety and Reliability
+
+#### 7.1.1 Handling Optional Fields
+- **Problem**: Templates using optional fields can cause DNS record deletion when fields become unavailable
+- **Risk**: Current behavior removes all DNS records for an object when any template fails to render
+- **Best Practices**:
+  - Use conditional templates with default values: `{{ obj.role.name|default:"unknown" }}`
+  - Avoid risky patterns: `{{ obj.role.name }}` (fails if role is None)
+  - Test templates with objects that have missing optional fields
+  - Consider separate rules for optional vs required fields
+
+#### 7.1.2 Relationship Traversal Safety
+- **Safe Patterns**:
+  ```jinja2
+  {{ obj.device.name|default:"no-device" }}
+  {{ obj.interface.device.location.name|default:"no-location" }}
+  ```
+- **Risky Patterns**:
+  ```jinja2
+  {{ obj.device.name }}  # Fails if device is None
+  {{ obj.interface.device.location.name }}  # Fails at any None link
+  ```
+
+#### 7.1.3 Field Availability Validation
+- **Required Fields**: Use fields that are guaranteed to exist (name, pk, etc.)
+- **Optional Fields**: Always provide defaults or use conditional logic
+- **Foreign Keys**: Check for None before traversal or use defaults
+- **Many-to-Many**: Use `.exists()` checks before accessing collections
+
+### 7.2 DNS Naming Conventions
+
+#### 7.2.1 Device Naming Best Practices
+- **Consistent Naming**: Establish device naming standards that work well in DNS
+- **DNS-Safe Characters**: Avoid special characters that require escaping
+- **Predictable Patterns**: Use naming that enables consistent template design
+- **Examples**:
+  ```jinja2
+  # Good: Predictable device names
+  {{ obj.device.name }}.{{ obj.device.location.name }}.example.com
+  
+  # Better: With safety defaults
+  {{ obj.device.name|default:"unknown" }}.{{ obj.device.location.name|default:"global" }}.example.com
+  ```
+
+#### 7.2.2 Zone Template Design
+- **Consistent Zones**: Use predictable zone patterns based on location/tenant
+- **Hierarchical Design**: Consider subdomain organization
+- **Examples**:
+  ```jinja2
+  # Location-based zones
+  {{ obj.device.location.name|default:"global" }}.example.com
+  
+  # Tenant-based zones  
+  {{ obj.device.tenant.name|default:"shared" }}.example.com
+  
+  # Combined approach
+  {{ obj.device.location.name|default:"global" }}.{{ obj.device.tenant.name|default:"shared" }}.example.com
+  ```
+
+### 7.3 Template Performance Considerations
+
+#### 7.3.1 Relationship Optimization
+- **Minimize Deep Traversal**: Avoid excessive relationship chains
+- **Consider Caching**: Be aware that relationship traversal triggers database queries
+- **Batch-Friendly Patterns**: Design templates that work well with bulk operations
+
+#### 7.3.2 Filter Usage Guidelines
+- **IP Address Filters**: Use `| ip_address` filter for A/AAAA records
+- **String Manipulation**: Use built-in Jinja filters for text processing
+- **Custom Filters**: Leverage DNS-specific filters provided by the plugin
+
+### 7.4 Operational Best Practices
+
+#### 7.4.1 Template Testing Strategy
+- **Test with Real Data**: Validate templates against actual objects in your environment
+- **Edge Case Testing**: Test with objects missing optional fields
+- **Bulk Testing**: Verify templates work correctly across large object sets
+- **Version Control**: Track template changes and test before deployment
+
+#### 7.4.2 Rule Organization
+- **Descriptive Names**: Use clear, descriptive rule names
+- **Documentation**: Document complex template logic in rule descriptions
+- **Scoping Strategy**: Use location/tenant scoping appropriately
+- **Record Type Separation**: Consider separate rules for different record types
+
+#### 7.4.3 Monitoring and Maintenance
+- **Error Monitoring**: Monitor DNS rule processing logs for template failures
+- **Regular Audits**: Periodically review DNS records for accuracy
+- **Template Updates**: Plan for template updates when data models change
+- **Rollback Strategy**: Have procedures for reverting problematic template changes
+
+### 7.5 Common Pitfalls and Solutions
+
+#### 7.5.1 Template Whitespace Issues
+- **Problem**: Multiline templates can introduce unwanted whitespace in DNS records
+- **Solution**: Use Jinja whitespace control or single-line templates
+- **Example**:
+  ```jinja2
+  # Problematic (introduces newlines)
+  {{ obj.device.name }}
+  .{{ obj.device.location.name }}
+  .example.com
+  
+  # Better (single line)
+  {{ obj.device.name }}.{{ obj.device.location.name }}.example.com
+  ```
+
+#### 7.5.2 Case Sensitivity Considerations
+- **DNS Standards**: DNS is case-insensitive but consistency is important
+- **Template Design**: Consider consistent casing in templates
+- **Future Enhancement**: Configuration options for automatic case normalization
+
+#### 7.5.3 Special Character Handling
+- **DNS Compliance**: Ensure generated names comply with DNS character restrictions
+- **Character Substitution**: Plan for handling special characters in source data
+- **Validation**: Consider validation of generated DNS names
+
+## 8. Future Considerations
+
+### 8.1 Configuration Options
 - Global vs rule-level DNS record formatting options for things like enforcing lower-case
 - Character transformation rules for DNS compliance for things like `/` -> `-`
 
-### 7.2 Advanced Rule Scoping and Inheritance
+### 8.2 Advanced Rule Scoping and Inheritance
 - [x] **Location Rule Scoping**: Implement location-based rule hierarchies ✅
   - **Completed**: Global rules apply to all objects; location-specific rules override global rules per record type
   - **Architecture**: Per-record-type precedence - location A rule + global CNAME rule both apply to same object
@@ -495,25 +670,25 @@ The DNS Rule System provides automated DNS record management triggered by object
   - How do zone-scoped rules interact with template-calculated zones?
   - Organization benefits vs complexity trade-offs
 
-### 7.3 Advanced Features  
+### 8.3 Advanced Features  
 - Rule condition logic (beyond content type matching); location, vrf, tags, etc.
 - Bulk rule operations
 - Rule import/export functionality
 - Template validation and testing tools
 
-### 7.4 Monitoring and Observability
+### 8.4 Monitoring and Observability
 - Rule execution metrics
 - Template rendering performance monitoring
 - DNS record lifecycle tracking
 
-## 8. Dependencies
+## 9. Dependencies
 
-### 8.1 External Dependencies
+### 9.1 External Dependencies
 - Nautobot 2.4+
 - Django contenttypes framework
 - Jinja2 templating engine
 
-### 8.2 Internal Dependencies
+### 9.2 Internal Dependencies
 - Existing DNS record models
 - Nautobot signal system
 - Nautobot utilities (render_jinja2, forms, etc.)

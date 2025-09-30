@@ -210,8 +210,8 @@ class DNSRuleEngine:
         - Device: device.location (required field in Nautobot)
         - Interface: interface.device.location (device.location is required)
         - Service: service.device.location OR service.virtual_machine.location (which is just a proxy for cluster.location)
-        - VirtualMachine: vm.location (which is just a proxy for cluster.location) (future)
-        - VMInterface: vminterface.virtual_machine.location (which is just a proxy for cluster.location) (future)
+        - VirtualMachine: vm.cluster.location
+        - VMInterface: vminterface.virtual_machine.location (which is just a proxy for cluster.location)
         - InterfaceRedundancyGroup: None (complex multi-location) (future)
 
         Args:
@@ -230,14 +230,16 @@ class DNSRuleEngine:
             return source_obj.device.location
 
         # Service objects attached to VM get location via VM's location property
-        # VirtualMachine objects would also use this path (future)
+        # VMInterface objects also use this path
         if hasattr(source_obj, "virtual_machine") and source_obj.virtual_machine:
             # VM.location property returns cluster.location (may be None if cluster has no location)
             return source_obj.virtual_machine.location
 
+        # VirtualMachine objects get location from cluster
+        if hasattr(source_obj, "cluster") and source_obj.cluster:
+            return source_obj.cluster.location
+
         # TODO: Add future model location extraction:
-        # - VirtualMachine: return source_obj.cluster.location if hasattr(source_obj, "cluster")
-        # - VMInterface: return source_obj.virtual_machine.cluster.location
         # - InterfaceRedundancyGroup: return None (complex multi-location scenario)
 
         # Object type is not location-aware
@@ -251,8 +253,8 @@ class DNSRuleEngine:
         - Device: device.tenant (optional field in Nautobot)
         - Interface: interface.device.tenant (inherited from device)
         - Service: service.device.tenant OR service.virtual_machine.tenant (with cluster.tenant fallback)
-        - VirtualMachine: vm.tenant (with cluster.tenant fallback) (future)
-        - VMInterface: vminterface.virtual_machine.tenant (with cluster.tenant fallback) (future)
+        - VirtualMachine: vm.tenant (with cluster.tenant fallback)
+        - VMInterface: vminterface.virtual_machine.tenant (with cluster.tenant fallback)
         - Other objects: None (no tenant awareness)
 
         Args:
@@ -270,13 +272,19 @@ class DNSRuleEngine:
             return source_obj.device.tenant  # May be None - falls back to global rules
 
         # Service objects get tenant from device or virtual_machine (tenant is optional, may return None)
+        # VMInterface objects also use this path
         if hasattr(source_obj, "virtual_machine") and source_obj.virtual_machine:
             # VM tenant takes precedence, fall back to cluster tenant if VM has no tenant
             return source_obj.virtual_machine.tenant or source_obj.virtual_machine.cluster.tenant
 
+        # VirtualMachine objects have direct tenant with cluster.tenant fallback
+        if hasattr(source_obj, "cluster") and source_obj.cluster:
+            # For VirtualMachine objects, check if they have a tenant field first
+            vm_tenant = getattr(source_obj, "tenant", None)
+            return vm_tenant or source_obj.cluster.tenant
+
         # TODO: Add future model tenant extraction:
-        # - VirtualMachine: return source_obj.tenant if hasattr(source_obj, "tenant")
-        # - VMInterface: return source_obj.virtual_machine.tenant
+        # - InterfaceRedundancyGroup: return None (complex multi-tenant scenario)
 
         # Object type is not tenant-aware or has no tenant assigned
         return None
