@@ -49,8 +49,8 @@ The DNS Rule System provides automated DNS record management triggered by object
 
 #### 2.1.4 Record Linking and Tracking
 - [x] **FR-009**: Auto-created DNS records SHALL be linked to their source objects via DNSRuleRecord
-- [ ] **FR-010**: Manual DNS record deletion SHALL leave orphaned DNSRuleRecord entries for cleanup
-- [ ] **FR-011**: Record recreation SHALL be attempted if DNS record is missing but DNSRuleRecord exists
+- [ ] **FR-010**: Manual DNS record deletion SHALL NOT leave orphaned DNSRuleRecord entries for cleanup
+- [ ] **FR-011**: Record recreation MAY be attempted if DNS record is missing but DNSRuleRecord exists (job?)
 
 #### 2.1.5 Rule Uniqueness and Conflict Management
 - [x] **FR-012**: Multiple DNS rules MAY target the same content type with different record types (e.g., Interface A + Interface CNAME rules)
@@ -67,7 +67,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **FR-019**: System SHALL respond to `m2m_changed` signals for many-to-many relationship changes
 
 #### 2.2.2 Recursion Prevention
-- [ ] **FR-020**: System SHALL NOT process DNS models to prevent infinite recursion
+- [ ] ~~**FR-020**: System SHALL NOT process DNS models to prevent infinite recursion~~
 - [ ] **FR-021**: Signal processing errors SHALL be logged without affecting the original operation
 
 ### 2.3 User Interface
@@ -84,8 +84,8 @@ The DNS Rule System provides automated DNS record management triggered by object
 ### 2.4 API Integration
 
 #### 2.4.1 REST API
-- [x] **FR-027**: DNS rules SHALL be fully manageable via REST API ✅
-- [x] **FR-028**: API responses SHALL include rule linkage information for DNS records ✅
+- [x] **FR-027**: DNS rules SHALL be fully manageable via REST API 
+- [x] **FR-028**: API responses SHALL include rule linkage information for DNS records 
 
 ## 3. Technical Requirements
 
@@ -123,17 +123,17 @@ The DNS Rule System provides automated DNS record management triggered by object
 ### 3.2 Processing Engine
 
 #### 3.2.1 DNSRuleEngine Class
-- **TR-001**: SHALL implement singleton pattern for global access
-- **TR-002**: SHALL handle template rendering with error isolation
-- **TR-003**: SHALL support all DNS record types with appropriate field mapping
-- **TR-004**: SHALL log all operations with appropriate detail levels
+- [ ] **TR-001**: SHALL implement singleton pattern for global access
+- [ ] **TR-002**: SHALL handle template rendering with error isolation
+- [ ] **TR-003**: SHALL support all DNS record types with appropriate field mapping
+- [ ] **TR-004**: SHALL log all operations with appropriate detail levels
 
 ### 3.3 Integration Points
 
 #### 3.3.1 Nautobot Integration
-- **TR-005**: SHALL use Nautobot's `render_jinja2` function for template processing
-- **TR-006**: SHALL follow Nautobot's form, view, and table patterns
-- **TR-007**: SHALL integrate with Nautobot's navigation system
+- [x] **TR-005**: SHALL use Nautobot's `render_jinja2` function for template processing
+- [x] **TR-006**: SHALL follow Nautobot's form, view, and table patterns
+- [ ] **TR-007**: SHALL integrate with Nautobot's navigation system
 
 ## 4. Implementation Status
 
@@ -200,11 +200,11 @@ The DNS Rule System provides automated DNS record management triggered by object
   - **Completed**: Fixed StaticSelect2 widget event handling with select2:change and select2:select events
 - [x] **Interface IP Handling**: Basic single record from interface IPs (POC complete)
 - [x] **Test Case Development**: Create comprehensive test cases for interface IP assignments (single record)
-- [x] **Rule Uniqueness Validation**: Implement `(content_type, record_type)` uniqueness constraint ✅
+- [x] **Rule Uniqueness Validation**: Implement `(content_type, record_type)` uniqueness constraint
   - **Completed**: UniqueConstraint on (content_type, record_type, location, tenant) with enabled=True condition
   - **Implementation**: Database-level constraint + validate_unique() method for user-friendly errors
   - **Scope**: Exceeds original requirement by supporting location/tenant scoping
-- [x] **DNSRuleRecordSerializer**: Add missing API serializer for DNSRuleRecord model ✅  
+- [x] **DNSRuleRecordSerializer**: Add missing API serializer for DNSRuleRecord model
 - [x] **Template Exception Testing**: Verify _render_template catches correct exception types and graceful handling
 - [x] **Performance Testing Framework**: Create comprehensive performance test suite for DNS rule system
   - **Completed**: Built test_performance.py with baseline, SQL analysis, and statistical measurement across 128 IP assignments
@@ -294,7 +294,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Auto-Created Record Tagging**: Design how to mark auto-created DNS records (tags, status fields, etc.) and whether tag names should be configurable
 - [ ] **IP Removal Handling**: Investigate better ways to handle IP removal than catching template exceptions - explore pre-validation approaches
 - [ ] **Signal Optimization**: Optimize signal handling to only trigger for content types that have configured DNS rules
-- [x] **Signal Coverage for 1.0 Release**: Implement signal receivers for VirtualMachine, VMInterface, Service (1.0 priority) as maybe 1.0. Consider Location, Rack/RackGroup/VLAN/Cluster for post-1.0 ✅
+- [x] **Signal Coverage for 1.0 Release**: Implement signal receivers for VirtualMachine, VMInterface, Service (1.0 priority) as maybe 1.0. Consider Location, Rack/RackGroup/VLAN/Cluster for post-1.0
   - **Completed**: VirtualMachine, VMInterface, and Service signal handling implemented with location/tenant extraction
   - **Architecture**: Enhanced signal architecture with cascade processing for parent-child relationships (Device↔Interface, VirtualMachine↔VMInterface)
   - **Service Support**: Full signal handling for Service objects with device/virtual_machine location extraction
@@ -334,7 +334,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 #### 4.2.4 User Experience Enhancements
 - [ ] **Smart IP Version Detection**: Explore automatic IP version detection for ip_address filter
   - **Context Enhancement**: Add rule information to template context for smart filtering
-  - **Filter Intelligence**: Enable `{{ obj.ip_addresses.all | ip_address }}` without manual version parameters
+  - **Filter Intelligence**: Enable `{{ obj.ip_addresses.all() | ip_address }}` without manual version parameters
   - **Implementation Options**: Enhanced context vs thread-local state vs specialized filter variants
   - **User Benefit**: Eliminate need for manual `| ip_address(4)` vs `| ip_address(6)` specification
 - [ ] **User Template Test Rendering**: Provide UI functionality for users to test render DNS rule templates with specific objects
@@ -353,11 +353,8 @@ The DNS Rule System provides automated DNS record management triggered by object
   - **Proposed Solution**: Compare ForeignKey ID fields instead - use getattr(obj, f"{field.name}_id", None) to detect relationship changes without triggering SQL queries
   - **Optimization Targets**: Rule processing performance, bulk DNS record operations, relationship lookups, transaction duration reduction
   - **Benefits**: Reduced database load, faster template rendering, improved scalability, shorter transaction lock times
-- [ ] **RFC-Compliant CNAME Handling**: Improve CNAME record handling to comply with RFC 1912 section 2.4
-  - **Current Issue**: CNAME records may coexist with other record types at same name (violates RFC)
-  - **RFC 1912 Section 2.4**: CNAME records must not coexist with other record types at the same name
-  - **RFC 2181 Section 10.1**: Additional implications for future record type implementations
-  - **Implementation**: Add validation to prevent CNAME conflicts, consider impact on multi-record scenarios
+- [ ] **RFC-Compliant CNAME Handling**: ~~Improve CNAME record handling to comply with RFC 1912 section 2.4~~
+  - No longer needed; tracked [issue #123](https://github.com/nautobot/nautobot-app-dns-models/issues/123)
 - [ ] **UI DNS Error Feedback**: Extend UI to show DNS processing errors and status
   - **Purpose**: Provide users clean feedback about DNS rule failures without exposing raw exceptions
   - **Implementation Options**: Custom object detail panels, status indicators, background job integration
@@ -392,6 +389,12 @@ The DNS Rule System provides automated DNS record management triggered by object
 
 **HIGH PRIORITY:**
 - [ ] **Template Whitespace Handling**: Implement whitespace stripping for multiline template renders and/or document the pitfalls of unintended whitespace in DNS record values. Multiline templates can introduce unwanted spaces/newlines that break DNS records.
+- [ ] **Bulk Actions**: Verify that bulk actions work sanely; what happens if we add IPs to 100 interfaces?
+- [ ] **Record Support**: Which records do we want in 1.0? Which can we confidentally say will be useful?
+- [ ] **FR-025 and FR-026**: Indicators of automatic vs manual creation
+- [ ] **ip_address filter**: Eliminate need for this entirely; handle in internally, complete with ip version autodetection if needed
+- [ ] **dns_normalize filter**: eliminate need for this, maybe keep it around.
+  - configure normalization at...? Rule level? Zone level? Globally?
 
 **MEDIUM PRIORITY (Needed for 1.0):**
 - [ ] **Template Design Best Practices Documentation**: Create comprehensive guide for DNS rule template design
