@@ -395,13 +395,13 @@ class DNSRuleEngine:
         for tracking_record in existing_tracking_records:
             dns_record = tracking_record.dns_record
             content_key = self._get_record_content_key(dns_record)
-            print(f"Existing record content key: '{content_key}'")
+            logger.debug(f"Existing record content key: '{content_key}'")
             existing_records_by_content[content_key] = tracking_record
 
         desired_records_by_content = {}
         for record_data in desired_record_data:
             content_key = self._get_record_content_key_from_data(record_data)
-            print(f"Desired record content key: {content_key}")
+            logger.debug(f"Desired record content key: {content_key}")
             desired_records_by_content[content_key] = record_data
 
         # STEP 4: Identify differences using set operations
