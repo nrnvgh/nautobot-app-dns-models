@@ -654,13 +654,49 @@ The DNS Rule System provides automated DNS record management triggered by object
 - **Character Substitution**: Plan for handling special characters in source data
 - **Validation**: Consider validation of generated DNS names
 
-## 8. Future Considerations
+## 8. Known Issues and Bugs
 
-### 8.1 Configuration Options
+### 8.1 UI Display Issues
+- **BUG-001**: DNS Rule Record List View - `source_object` and `dns_rule` columns are not visible for some DNS record content types
+  - **Affected**: MX records (confirmed), other record types status unknown
+  - **Working**: A records (confirmed)
+  - **Impact**: Users cannot see which rule created which DNS record or what source object triggered the creation
+  - **Workaround**: Information is available via API and detail views
+  - **Priority**: Medium - affects user experience but doesn't break functionality
+
+### 8.2 API Performance Issues
+- **BUG-002**: DNSRuleRecord API N+1 Query Problem - API calls trigger excessive database queries
+  - **Current State**: 24 queries for 5 DNSRuleRecord results (baseline measurement)
+  - **Root Causes**: 
+    - ContentType N+1: Same `dcim.device` ContentType queried 5 times individually
+    - ARecord N+1: Individual ARecord queries instead of bulk prefetch
+    - Missing query optimization in DNSRuleRecordViewSet
+  - **Impact**: Poor API performance, especially with large datasets
+  - **Priority**: High - Required for v1.0
+  - **Solution Plan**:
+    1. Add `select_related("rule", "content_type", "dns_record_content_type")` for direct FK relationships
+    2. Add `prefetch_related("source_object", "dns_record")` for generic FK relationships  
+    3. Optimize ContentType handling in DNSRule to accept objects/IDs (separate issue)
+    4. Re-test to confirm query count reduction
+
+- **BUG-003**: ContentType String Handling Inefficiency - String-based ContentType operations may trigger unnecessary SQL queries
+  - **Issue**: DNSRule ContentType handling may be inefficient when using string format (`"dcim.device"`)
+  - **Impact**: Additional database queries for ContentType lookups during rule operations
+  - **Priority**: High - Required for v1.0
+  - **Investigation Needed**: Confirm if string->ID conversion triggers SQL queries
+  - **Solution Plan**:
+    1. Allow DNSRule.content_type to accept ContentType objects/IDs for ORM operations
+    2. Maintain string format support for API usability (`"dcim.device"` format)
+    3. Ensure ContentType dropdown in DNSRule form works properly
+    4. Resolve previous form field attribute conflicts
+
+## 9. Future Considerations
+
+### 9.1 Configuration Options
 - Global vs rule-level DNS record formatting options for things like enforcing lower-case
 - Character transformation rules for DNS compliance for things like `/` -> `-`
 
-### 8.2 Advanced Rule Scoping and Inheritance
+### 9.2 Advanced Rule Scoping and Inheritance
 - [x] **Location Rule Scoping**: Implement location-based rule hierarchies ✅
   - **Completed**: Global rules apply to all objects; location-specific rules override global rules per record type
   - **Architecture**: Per-record-type precedence - location A rule + global CNAME rule both apply to same object
@@ -678,25 +714,58 @@ The DNS Rule System provides automated DNS record management triggered by object
   - How do zone-scoped rules interact with template-calculated zones?
   - Organization benefits vs complexity trade-offs
 
-### 8.3 Advanced Features  
+### 9.3 Advanced Features  
 - Rule condition logic (beyond content type matching); location, vrf, tags, etc.
 - Bulk rule operations
 - Rule import/export functionality
 - Template validation and testing tools
 
-### 8.4 Monitoring and Observability
+### 9.4 Monitoring and Observability
 - Rule execution metrics
 - Template rendering performance monitoring
 - DNS record lifecycle tracking
 
-## 9. Dependencies
+### 9.5 Performance Testing and Profiling System
+- **REQ-PERF-001**: Implement automated performance profiling system for all database operations
+  - **Scope**: Profile all actions that trigger database operations (API calls, signal handlers, bulk operations)
+  - **Storage**: Store query profiles in versioned files with each commit/release
+  - **Comparison**: Automated comparison system for new commits/releases vs baseline
+  - **Benefits**: 
+    - Know exact query profile at any given time
+    - Quantify performance improvements/regressions
+    - Prevent N+1 query reintroduction
+    - Track optimization effectiveness over time
+  - **Implementation**: Extend existing test infrastructure to capture and store SQL query patterns, timing, and counts
+  - **Integration**: Include in CI/CD pipeline for automated performance regression detection
+  - **Note**: Consider [`django-queryhunter`](https://github.com/PaulGilmartin/django-queryhunter) library for advanced query analysis and N+1 detection
 
-### 9.1 External Dependencies
+### 9.6 DNS Record Class Auto-Detection System
+- **REQ-ARCH-001**: Implement dynamic DNS record class discovery and configuration generation
+  - **Problem**: DNS record types are currently defined in multiple places with variations:
+    - `RECORD_TYPE_CHOICES` in `models.py`
+    - Static model lists in `api/serializers.py`
+    - Record type mappings in `rule_engine.py`
+    - Manual maintenance required when adding new record types
+  - **Solution**: Create centralized auto-detection system
+    - **Discovery**: Automatically detect available DNS record classes (ARecord, CNAMERecord, etc.)
+    - **Generation**: Dynamically generate `RECORD_TYPE_CHOICES` and `RECORD_MODEL_MAPPING` from discovered classes
+    - **Consolidation**: Single source of truth for all DNS record type configurations
+    - **Modularity**: Extract into separate module (e.g., `dns_record_registry.py`)
+  - **Benefits**:
+    - Eliminate duplicate/inconsistent definitions across files
+    - Automatic support for new record types without manual updates
+    - Reduced maintenance burden
+    - Consistent behavior across API, models, and rule engine
+  - **Implementation**: Inspect DNS record model classes at runtime and build configuration dictionaries
+
+## 10. Dependencies
+
+### 10.1 External Dependencies
 - Nautobot 2.4+
 - Django contenttypes framework
 - Jinja2 templating engine
 
-### 9.2 Internal Dependencies
+### 10.2 Internal Dependencies
 - Existing DNS record models
 - Nautobot signal system
 - Nautobot utilities (render_jinja2, forms, etc.)

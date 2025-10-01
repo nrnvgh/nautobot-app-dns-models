@@ -1571,3 +1571,45 @@ class DNSRuleRecordTestCase(TestCase):
         # Query should return both records for the same device
         device_records = DNSRuleRecord.objects.filter(content_type=self.content_type_device, object_id=self.device.id)
         self.assertEqual(device_records.count(), 2)
+
+    def test_single_source_object_per_dns_record_constraint(self):
+        """Test that the same source object cannot be linked to the same DNS record twice."""
+        # Create a test DNS rule
+        test_rule = DNSRule.objects.create(
+            name="test-rule-2",
+            content_type=self.content_type_device,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-alt",
+            value_template="{{ obj.primary_ip4 | ip_address }}",
+            enabled=True,
+        )
+
+        # Create the first DNSRuleRecord (should succeed)
+        rule_record1 = DNSRuleRecord.objects.create(
+            rule=self.dns_rule,
+            content_type=self.content_type_device,
+            object_id=self.device.id,
+            dns_record_content_type=self.content_type_a_record,
+            dns_record_object_id=self.a_record.id,
+        )
+
+        # Verify only one record exists before attempting duplicate
+        matching_records_before = DNSRuleRecord.objects.filter(
+            content_type=self.content_type_device,
+            object_id=self.device.id,
+            dns_record_content_type=self.content_type_a_record,
+            dns_record_object_id=self.a_record.id,
+        )
+        self.assertEqual(matching_records_before.count(), 1)
+        self.assertEqual(rule_record1.rule, self.dns_rule)
+
+        # Attempting to link the same source object to the same DNS record should fail
+        with self.assertRaises(IntegrityError):
+            DNSRuleRecord.objects.create(
+                rule=test_rule,  # Different rule
+                content_type=self.content_type_device,
+                object_id=self.device.id,  # Same source object - should cause failure
+                dns_record_content_type=self.content_type_a_record,
+                dns_record_object_id=self.a_record.id,  # Same DNS record - should cause failure
+            )

@@ -698,6 +698,11 @@ class DNSRule(PrimaryModel):
                     # Step 1: Basic syntax validation (fast check)
                     validate_jinja2(template_content)
 
+                    # XXX remove this; in it's current form, it's problematic. For example,
+                    # XXX it will fail if the template contains a reference to a field that
+                    # XXX is not present on the source object, which is entirely possible.
+                    # XXX Smartening it sufficiently would, I think, be a significant effort.
+
                     # Step 2: Full compilation and runtime testing via helper
                     error_message = self._validate_template_compilation_and_runtime(template_content, field_name)
                     if error_message:
@@ -788,10 +793,7 @@ class DNSRuleRecord(BaseModel):
     """Links source objects to DNS records created by rules."""
 
     rule = models.ForeignKey(
-        DNSRule, 
-        on_delete=models.CASCADE, 
-        related_name="rule_records",
-        help_text="DNS rule that created this record"
+        DNSRule, on_delete=models.CASCADE, related_name="rule_records", help_text="DNS rule that created this record"
     )
     content_type = models.ForeignKey(
         ContentType, on_delete=models.CASCADE, help_text="Content type of the source object"
@@ -808,7 +810,10 @@ class DNSRuleRecord(BaseModel):
     class Meta:
         """Meta attributes for DNSRuleRecord."""
 
-        unique_together = [["rule", "content_type", "object_id", "dns_record_content_type", "dns_record_object_id"]]
+        # Ensure each DNS record can only be managed by a single source object.
+        # This prevents duplicate DNSRuleRecord entries and eliminates the need for DISTINCT
+        # clauses in JOIN queries (e.g. DNSRuleRecordViewSet.queryset).
+        unique_together = [["content_type", "object_id", "dns_record_content_type", "dns_record_object_id"]]
         verbose_name = "DNS Rule Record"
         verbose_name_plural = "DNS Rule Records"
 
