@@ -84,8 +84,8 @@ The DNS Rule System provides automated DNS record management triggered by object
 ### 2.4 API Integration
 
 #### 2.4.1 REST API
-- [ ] **FR-027**: DNS rules SHALL be fully manageable via REST API
-- [ ] **FR-028**: API responses SHALL include rule linkage information for DNS records
+- [x] **FR-027**: DNS rules SHALL be fully manageable via REST API ✅
+- [x] **FR-028**: API responses SHALL include rule linkage information for DNS records ✅
 
 ## 3. Technical Requirements
 
@@ -204,7 +204,7 @@ The DNS Rule System provides automated DNS record management triggered by object
   - **Completed**: UniqueConstraint on (content_type, record_type, location, tenant) with enabled=True condition
   - **Implementation**: Database-level constraint + validate_unique() method for user-friendly errors
   - **Scope**: Exceeds original requirement by supporting location/tenant scoping
-- [ ] **DNSRuleRecordSerializer**: Add missing API serializer for DNSRuleRecord model  
+- [x] **DNSRuleRecordSerializer**: Add missing API serializer for DNSRuleRecord model ✅  
 - [x] **Template Exception Testing**: Verify _render_template catches correct exception types and graceful handling
 - [x] **Performance Testing Framework**: Create comprehensive performance test suite for DNS rule system
   - **Completed**: Built test_performance.py with baseline, SQL analysis, and statistical measurement across 128 IP assignments
