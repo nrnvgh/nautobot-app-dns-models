@@ -37,7 +37,7 @@ When multiple rules exist for the same content type and record type, the system 
 A single rule can create multiple DNS records:
 
 - Interface with multiple IP addresses → multiple A records
-- Template filters like `{{ obj.ip_addresses.all() | ip_address }}` create one record per IP
+- Template filters like `{{ obj.ip_addresses.all() }}` create one record per IP
 
 ## Creating DNS Rules
 
@@ -62,7 +62,7 @@ Templates use Jinja2 syntax with access to the triggering object as `obj`:
 
 - **Basic fields**: `{{ obj.name }}`, `{{ obj.description }}`
 - **Related objects**: `{{ obj.device.name }}`, `{{ obj.device.location.name }}`
-- **Filters**: `{{ obj.name | dns_normalize }}`, `{{ obj.primary_ip4 | ip_address }}`
+- **Filters**: `{{ obj.name | dns_normalize }}`, `{{ obj.primary_ip4 }}`
 
 ## Common Use Cases
 
@@ -77,7 +77,7 @@ Templates use Jinja2 syntax with access to the triggering object as `obj`:
 - Record Type: A Record
 - Zone Template: `example.com`
 - Name Template: `{{ obj.name }}`
-- Value Template: `{{ obj.primary_ip4 | ip_address }}`
+- Value Template: `{{ obj.primary_ip4 }}`
 
 **Result**: Device "web-server-01" with IP 192.168.1.100 creates:
 ```
@@ -150,7 +150,7 @@ web-server-01    IN A    192.168.1.100
 **Rule Configuration**:
 
 - Content Type: `dcim | interface`
-- Value Template: `{{ obj.ip_addresses.all() | ip_address }}`
+- Value Template: `{{ obj.ip_addresses.all() }}`
 
 **Result**: Interface with 3 IP addresses creates 3 separate A records.
 
@@ -167,7 +167,7 @@ web-server-01    IN A    192.168.1.100
 - Record Type: A Record
 - Zone Template: `services.example.com`
 - Name Template: `{{ obj.name | dns_normalize }}`
-- Value Template: `{{ obj.ip_addresses.all() | ip_address }}`
+- Value Template: `{{ obj.ip_addresses.all() }}`
 
 **Result**: Service "web-lb" with IPs 10.1.1.100 and 10.1.1.101 creates:
 ```
@@ -195,9 +195,9 @@ Services inherit location and tenant from their parent object:
 
 Convert IP address objects to UUIDs for A/AAAA record values:
 
-- **Single IP**: `{{ obj.primary_ip4 | ip_address }}`
-- **Multiple IPs**: `{{ obj.ip_addresses.all() | ip_address }}`
-- **Filtered IPs**: `{{ obj.ip_addresses.filter(role='primary') | ip_address }}`
+- **Single IP**: `{{ obj.primary_ip4 }}`
+- **Multiple IPs**: `{{ obj.ip_addresses.all() }}`
+- **Filtered IPs**: `{{ obj.ip_addresses.filter(role="primary") }}`
 
 ### DNS Normalize Filter
 
@@ -247,13 +247,11 @@ When objects move between locations:
 
 **Common Issues**:
 
-- Missing IP addresses: `{{ obj.primary_ip4 | ip_address }}` when device has no primary IP
+- Missing IP addresses: `{{ obj.primary_ip4  }}` when device has no primary IP
 - Invalid object references: `{{ obj.nonexistent_field }}`
-- Missing filters: A/AAAA records require `| ip_address` filter
 
 **Resolution**:
 
-- Add conditional logic: `{% if obj.primary_ip4 %}{{ obj.primary_ip4 | ip_address }}{% endif %}`
 - Test templates with representative objects before deployment
 
 ## Best Practices
@@ -267,7 +265,6 @@ When objects move between locations:
 ### Template Design
 
 - Always use `| dns_normalize` for object names in DNS records
-- Use `| ip_address` filter for all A/AAAA record values
 - Include conditional logic for optional fields
 
 ### Rule Organization

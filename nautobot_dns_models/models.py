@@ -8,7 +8,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from jinja2 import TemplateAssertionError, TemplateError, TemplateSyntaxError
+from jinja2 import TemplateError, TemplateSyntaxError
 from nautobot.apps.constants import CHARFIELD_MAX_LENGTH
 from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
 from nautobot.apps.utils import validate_jinja2
@@ -698,15 +698,10 @@ class DNSRule(PrimaryModel):
                     # Step 1: Basic syntax validation (fast check)
                     validate_jinja2(template_content)
 
-                    # XXX remove this; in it's current form, it's problematic. For example,
-                    # XXX it will fail if the template contains a reference to a field that
-                    # XXX is not present on the source object, which is entirely possible.
-                    # XXX Smartening it sufficiently would, I think, be a significant effort.
-
-                    # Step 2: Full compilation and runtime testing via helper
-                    error_message = self._validate_template_compilation_and_runtime(template_content, field_name)
-                    if error_message:
-                        errors[field_name] = error_message
+                    # NOTE: We explored full runtime validation here, but it introduced
+                    # NOTE: more issues than it solved (missing/optional fields, etc.).
+                    # NOTE: Alternative approaches may be possible; see:
+                    # NOTE: https://github.com/nautobot/nautobot/issues/7852
 
                 except TemplateSyntaxError as exc:
                     # Basic syntax errors (unclosed tags, invalid operators, etc.)
@@ -742,51 +737,6 @@ class DNSRule(PrimaryModel):
 
         if errors:
             raise ValidationError(errors)
-
-    #
-    # In principle, this logic could be added to the Nautobot core. May not work for every case
-    # where jinja2 is rendered, but certainly will for any where the jinja is tied to a content type.
-    # OTOH, this does assume that the first object in the queryset is guarenteed to have any field
-    # that any template is using, which may be...optimistic.
-    def _validate_template_compilation_and_runtime(self, template_content: str, field_name: str) -> str | None:
-        """
-        Validate template compilation and runtime execution.
-
-        Args:
-            template_content: The template string to validate
-            field_name: The field name (for error context)
-
-        Returns:
-            Error message if validation fails, None if successful
-        """
-        # TODO move this to the top of the file /if/ we keep this method.
-        from nautobot.apps.utils import render_jinja2
-
-        try:
-            # Get sample object for realistic testing
-            sample_obj = None
-
-            model_class = self.content_type.model_class()
-            if model_class:
-                sample_obj = model_class.objects.first()
-
-            # Test render with sample object or empty context
-            context = {"obj": sample_obj} if sample_obj else {}
-            result = render_jinja2(template_content, context)
-
-            if sample_obj:
-                logger.debug(f"Template {field_name} rendered successfully with {model_class.__name__}: '{result}'")
-            else:
-                logger.debug(f"Template {field_name} compiled successfully (no sample object available)")
-
-            return None  # Success
-
-        except TemplateAssertionError as exc:
-            # Filter errors (non-existent filters, invalid filter usage)
-            return f"Template filter error: {exc}"
-        except TemplateError as exc:
-            # Other Jinja2 template errors
-            return f"Template error: {exc}"
 
 
 class DNSRuleRecord(BaseModel):
