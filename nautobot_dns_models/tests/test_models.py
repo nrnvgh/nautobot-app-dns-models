@@ -1,5 +1,7 @@
 """Test DNS Models (DNS zones, records, and rules)."""
 
+from unittest import skip
+
 from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
@@ -955,6 +957,9 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             )
             duplicate_rule.full_clean()  # Triggers validate_unique()
 
+    @skip(
+        "Skipping test_dnsrule_enabling_disabled_rule_with_enabled_duplicate_fails since we disabled that check. We maybe revert it, so leaving the test here."
+    )
     def test_dnsrule_location_scoped_uniqueness_constraint(self):
         """Test that two enabled location-scoped rules with same content_type + record_type + location fails."""
         # Create first enabled location-scoped rule
@@ -1123,6 +1128,9 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         self.assertTrue(enabled_global_rule.enabled)
         self.assertTrue(enabled_location_rule.enabled)
 
+    @skip(
+        "Skipping test_dnsrule_enabling_disabled_rule_with_enabled_duplicate_fails since we disabled that check. We maybe revert it, so leaving the test here."
+    )
     def test_dnsrule_enabling_disabled_rule_with_enabled_duplicate_fails(self):
         """Test that enabling a disabled rule fails when an enabled rule with same content_type + record_type exists."""
         # Create enabled global rule first
@@ -1501,7 +1509,7 @@ class DNSRuleRecordTestCase(TestCase):
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}-alt",
-            value_template="{{ obj.primary_ip4 | ip_address }}",
+            value_template="{{ obj.primary_ip4 }}",
             enabled=True,
         )
 

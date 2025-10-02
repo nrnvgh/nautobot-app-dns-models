@@ -98,7 +98,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
         print("\n=== IP Assignment Performance (Absolute Baseline - No DNS Handlers) ===")
 
         # Temporarily disconnect all DNS signal handlers
-        post_save.disconnect(signals.handle_interface_save, sender=Interface)
+        post_save.disconnect(signals.handle_object_save, sender=Interface)
         m2m_changed.disconnect(signals.handle_m2m_changed, sender=Interface.ip_addresses.through)
 
         try:
@@ -130,7 +130,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
 
         finally:
             # Always reconnect handlers for other tests
-            post_save.connect(signals.handle_interface_save, sender=Interface)
+            post_save.connect(signals.handle_object_save, sender=Interface)
             m2m_changed.connect(signals.handle_m2m_changed, sender=Interface.ip_addresses.through)
 
     def test_ip_assignment_performance_without_dns_rules(self):
@@ -185,7 +185,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
             zone_template="perf.test.internal",
             record_type="A",
             name_template="{{ obj.name }}.{{ obj.device.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         # Clear query log
@@ -198,6 +198,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
         with transaction.atomic():
             for interface, ip_address in zip(self.interfaces, self.ip_addresses):
                 interface.ip_addresses.add(ip_address)
+                print("\n")
 
         end_time = time.perf_counter()
 
@@ -255,7 +256,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
             zone_template="perf.test.internal",
             record_type="A",
             name_template="{{ obj.name }}.{{ obj.device.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         # Measure individual assignment times
@@ -295,7 +296,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
         print("\n=== SQL Analysis: Single IP Assignment (Absolute Baseline - No DNS Handlers) ===")
 
         # Temporarily disconnect DNS signal handlers
-        post_save.disconnect(signals.handle_interface_save, sender=Interface)
+        post_save.disconnect(signals.handle_object_save, sender=Interface)
         m2m_changed.disconnect(signals.handle_m2m_changed, sender=Interface.ip_addresses.through)
 
         try:
@@ -325,7 +326,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
 
         finally:
             # Always reconnect handlers
-            post_save.connect(signals.handle_interface_save, sender=Interface)
+            post_save.connect(signals.handle_object_save, sender=Interface)
             m2m_changed.connect(signals.handle_m2m_changed, sender=Interface.ip_addresses.through)
 
     def test_single_ip_assignment_sql_analysis_no_rules(self):
@@ -368,7 +369,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
             zone_template="perf.test.internal",
             record_type="A",
             name_template="{{ obj.name }}.{{ obj.device.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         print("\n=== SQL Analysis: Single IP Assignment (With DNS Rules) ===")

@@ -60,10 +60,10 @@ Record-specific templates (MX preference, SRV priority/weight/port) are required
 
 **Usage**:
 
-- `{{ obj.primary_ip4 | ip_address }}` - Creates 1 A record
-- `{{ obj.ip_addresses.all() | ip_address }}` - Creates 1 record per IP address  
-- `{{ obj.ip_addresses.first() | ip_address }}` - Creates 1 record from first IP
-- `{{ obj.ip_addresses.filter(role='primary') | ip_address }}` - Creates 1 record per filtered IP
+- `{{ obj.primary_ip4 }}` - Creates 1 A record
+- `{{ obj.ip_addresses.all() }}` - Creates 1 record per IP address  
+- `{{ obj.ip_addresses.first() }}` - Creates 1 record from first IP
+- `{{ obj.ip_addresses.filter(role="primary") }}` - Creates 1 record per filtered IP
 
 ### DNS Normalize Filter
 
@@ -85,14 +85,14 @@ Record-specific templates (MX preference, SRV priority/weight/port) are required
 ```jinja2
 Zone Template: example.com
 Name Template: {{ obj.name | dns_normalize }}
-Value Template: {{ obj.primary_ip4 | ip_address }}
+Value Template: {{ obj.primary_ip4 }}
 ```
 
 **Location-Aware Device Record**:
 ```jinja2
 Zone Template: {{ obj.location.name | lower }}.example.com
 Name Template: {{ obj.name | dns_normalize }}
-Value Template: {{ obj.primary_ip4 | ip_address }}
+Value Template: {{ obj.primary_ip4 }}
 ```
 
 ### Interface Templates
@@ -101,7 +101,7 @@ Value Template: {{ obj.primary_ip4 | ip_address }}
 ```jinja2
 Zone Template: example.com
 Name Template: {{ obj.name | dns_normalize }}.{{ obj.device.name | dns_normalize }}
-Value Template: {{ obj.ip_addresses.all() | ip_address }}
+Value Template: {{ obj.ip_addresses.all() }}
 ```
 
 **Interface CNAME to Device**:
@@ -117,7 +117,7 @@ Value Template: {{ obj.device.name | dns_normalize }}.mgmt.example.com
 ```jinja2
 Zone Template: services.example.com
 Name Template: {{ obj.name | dns_normalize }}
-Value Template: {{ obj.ip_addresses.all() | ip_address }}
+Value Template: {{ obj.ip_addresses.all() }}
 ```
 
 **Service with Parent Context**:
@@ -125,12 +125,12 @@ Value Template: {{ obj.ip_addresses.all() | ip_address }}
 # Device-attached service
 Zone Template: {{ obj.device.location.name | lower }}.example.com
 Name Template: {{ obj.name | dns_normalize }}.{{ obj.device.name | dns_normalize }}
-Value Template: {{ obj.ip_addresses.all() | ip_address }}
+Value Template: {{ obj.ip_addresses.all() }}
 
 # VM-attached service  
 Zone Template: {{ obj.virtual_machine.cluster.location.name | lower }}.example.com
 Name Template: {{ obj.name | dns_normalize }}.{{ obj.virtual_machine.name | dns_normalize }}
-Value Template: {{ obj.ip_addresses.all() | ip_address }}
+Value Template: {{ obj.ip_addresses.all() }}
 ```
 
 **Conditional Service Templates**:
@@ -138,7 +138,7 @@ Value Template: {{ obj.ip_addresses.all() | ip_address }}
 # Handle both device and VM-attached services
 Zone Template: {% if obj.device %}{{ obj.device.location.name | dns_normalize }}{% else %}{{ obj.virtual_machine.cluster.location.name | dns_normalize }}{% endif %}.example.com
 Name Template: {{ obj.name | dns_normalize }}
-Value Template: {{ obj.ip_addresses.all() | ip_address }}
+Value Template: {{ obj.ip_addresses.all() }}
 ```
 
 ## Record Type-Specific Templates
@@ -194,7 +194,7 @@ _http._tcp.web-server-01    IN SRV    10 5 80 web-server-01.example.com.
 **Handle Optional Fields**:
 ```jinja2
 {% if obj.primary_ip4 %}
-{{ obj.primary_ip4 | ip_address }}
+{{ obj.primary_ip4 }}
 {% else %}
 # No primary IP configured
 {% endif %}
@@ -248,18 +248,6 @@ Templates are validated when rules are saved:
 
 ## Common Template Errors
 
-### Missing IP Address Filter
-
-**Problem**:
-```jinja2
-Value Template: {{ obj.primary_ip4 }}  # Missing | ip_address filter
-```
-
-**Solution**:
-```jinja2
-Value Template: {{ obj.primary_ip4 | ip_address }}
-```
-
 ### Undefined Variables
 
 **Problem**:
@@ -280,9 +268,13 @@ Value Template: {{ obj.primary_ip4 | ip_address }}
 ```
 
 **Solution**:
+The rendering engine expects a Nautobot `IPAddress` object, so referencing the `.address` attribute, which isn't an `IPAddress` object, will do no good. Use this:
+
 ```jinja2
-{% if obj.primary_ip4 %}{{ obj.primary_ip4 | ip_address }}{% endif %}
+{{ obj.primary_ip4 }}
 ```
+
+...and one of two things will happen. Either an `IPAddress` in the `.primary_ip4` field or it isn't. If it is, the template render will complete successfully and a DNS record will be created. If there's `.primary_ip4` is not set, the template render will fail and no DNS record will be created.
 
 ## Performance Considerations
 
@@ -292,7 +284,6 @@ Value Template: {{ obj.primary_ip4 | ip_address }}
 - Use efficient Django ORM patterns
 
 ### Filter Usage
-- Always use `| ip_address` for A/AAAA records (required)
 - Use `| dns_normalize` for names (recommended)
 - Minimize custom filter chains
 

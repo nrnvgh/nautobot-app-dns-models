@@ -558,7 +558,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 | ip_address }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         DNSRule.objects.create(
@@ -580,7 +580,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             zone_template="internal.com",
             record_type="AAAA",
             name_template="{{ obj.name }}-internal",
-            value_template="{{ obj.primary_ip6 | ip_address }}",
+            value_template="{{ obj.primary_ip6 }}",
         )
 
         cls.create_data = [
@@ -687,7 +687,7 @@ class DNSRuleRecordAPITestCase(APIViewTestCases.APIViewTestCase):
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 | ip_address }}",
+            value_template="{{ obj.primary_ip4 }}",
             enabled=True,
         )
 

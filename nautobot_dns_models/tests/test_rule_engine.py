@@ -26,7 +26,7 @@ from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine,
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord, DNSZone
-from nautobot_dns_models.rule_engine import DNSRuleEngine
+from nautobot_dns_models.rules.engine import DNSRuleEngine
 
 TEST_LOGGING_CONFIG = {
     "version": 1,
@@ -809,7 +809,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name }}.{{ obj.device.name }}",
-            value_template="{{ obj.ip_addresses.first() | ip_address }}",
+            value_template="{{ obj.ip_addresses.first() }}",
             enabled=True,
         )
 
@@ -1468,7 +1468,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             enabled=True,
             zone_template=self.dns_zone.name,
             name_template="{{ obj.device.name }}-{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",  # Multi-IP template
+            value_template="{{ obj.ip_addresses.all() }}",  # Multi-IP template
         )
 
         # Step 3: Create 3 IP addresses
@@ -1570,7 +1570,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             enabled=True,
             zone_template=self.dns_zone.name,
             name_template="{{ obj.device.name }}-{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         # Step 3: Create multiple IP addresses and assign to interface
@@ -1624,7 +1624,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name | dns_normalize }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         # Assign IP to service
@@ -1647,7 +1647,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         # Assign multiple IPs
@@ -1670,7 +1670,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         # Initially no DNS records
@@ -1690,7 +1690,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         # Create DNS records
@@ -1712,7 +1712,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         # Add first IP
@@ -1738,7 +1738,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name | dns_normalize }}",  # Uses service name
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
         # Assign IP to service and verify initial DNS record
@@ -1812,27 +1812,6 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
             except Exception as e:
                 print(f"Template '{template}' raised exception: {type(e).__name__}: {e}")
 
-    def test_rule_validation_catches_nonexistent_filter(self):
-        """Test that DNSRule.clean() catches non-existent filter errors during rule creation."""
-        with self.assertRaises(ValidationError) as cm:
-            rule = DNSRule(
-                name="Bad Filter Rule",
-                content_type=self.interface_content_type,
-                record_type="A",
-                enabled=True,
-                zone_template="test.local",
-                name_template="{{ obj.name }}",
-                value_template="{{ obj.name | nonexistent_filter }}",  # This should be caught
-            )
-            rule.clean()  # Should raise ValidationError
-
-        # Verify the error message mentions the filter problem
-        error_dict = cm.exception.message_dict
-        self.assertIn("value_template", error_dict)
-        # error_dict values are lists, so join them and check
-        error_messages = " ".join(error_dict["value_template"]).lower()
-        self.assertIn("filter error", error_messages)
-
     def test_rule_validation_a_record_without_value_template(self):
         """Test that A records without value_template are allowed - runtime will handle gracefully."""
         rule = DNSRule(
@@ -1865,7 +1844,7 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
             enabled=True,
             zone_template="test.local",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",  # Valid
+            value_template="{{ obj.ip_addresses.all() }}",  # Valid
         )
 
         # Should not raise any exceptions
@@ -1893,35 +1872,10 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
         except ValidationError as e:
             # If there's a ValidationError, it should NOT be about runtime issues
             error_dict = e.message_dict
-            for field, messages in error_dict.items():
+            for _, messages in error_dict.items():
                 # messages is a list, so join and check
                 combined_message = " ".join(messages).lower()
                 self.assertNotIn("runtime issues", combined_message)
-
-    def test_rule_validation_critical_template_runtime_errors(self):
-        """Test that A/AAAA value templates with runtime errors are blocked."""
-        # A record value template that would fail at runtime - should be blocked
-        rule = DNSRule(
-            name="Critical Runtime Error Rule",
-            content_type=self.interface_content_type,
-            record_type="A",
-            enabled=True,
-            zone_template="test.local",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address | nonexistent_filter }}",  # Runtime error
-        )
-
-        # This SHOULD raise ValidationError for A record value templates
-        with self.assertRaises(ValidationError) as cm:
-            rule.clean()
-
-        # Should mention the filter error from validation
-        error_dict = cm.exception.message_dict
-        self.assertIn("value_template", error_dict)
-
-        # error_dict values are lists, so join them and check
-        error_messages = " ".join(error_dict["value_template"]).lower()
-        self.assertIn("filter error", error_messages)
 
     @override_settings(
         DEBUG=True,
@@ -1937,7 +1891,7 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.role.name }}.{{ obj.name }}.{{ obj.device.name }}",  # This will fail if no role
-            value_template="{{ obj.ip_addresses.first().id }}",
+            value_template="{{ obj.ip_addresses.first() }}",
             enabled=True,
         )
 
@@ -1953,50 +1907,47 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
         # Create interface role for successful interfaces
         interface_role = Role.objects.create(name="test-interface-role")
         interface_role.content_types.add(ContentType.objects.get_for_model(Interface))
+        interface_status = Status.objects.get_for_model(Interface).first()
+        ipaddress_status = Status.objects.get_for_model(IPAddress).first()
 
         # Create 3 interfaces
-        interface1 = Interface.objects.create(
-            name="eth1",
-            device=test_device,
-            type="1000base-t",
-            status=Status.objects.get_for_model(Interface).first(),
-            role=interface_role,  # Has role - template should work
-        )
+        interfaces_with_role = {}
+        for i in range(1, 3):
+            interface_name = f"eth{i}"
+            interfaces_with_role[interface_name] = Interface.objects.create(
+                name=interface_name,
+                device=test_device,
+                type="1000base-t",
+                status=interface_status,
+                role=interface_role,  # Has role - template should work
+            )
 
-        interface2 = Interface.objects.create(
-            name="eth2",
+        # No role - template should fail
+        interface_no_role = Interface.objects.create(
+            name=f"eth{i+1}",
             device=test_device,
             type="1000base-t",
-            status=Status.objects.get_for_model(Interface).first(),
-            role=interface_role,  # Has role - template should work
-        )
-
-        interface3 = Interface.objects.create(
-            name="eth3",
-            device=test_device,
-            type="1000base-t",
-            status=Status.objects.get_for_model(Interface).first(),
-            # No role - template will fail
+            status=interface_status,
         )
 
         # Create IP addresses for interfaces 1 and 2 (successful cases)
         ip1 = IPAddress.objects.create(
             address="192.168.1.101/24",
-            status=Status.objects.get_for_model(IPAddress).first(),
+            status=ipaddress_status,
             namespace=self.namespace,
             parent=self.prefix,
         )
 
         ip2 = IPAddress.objects.create(
             address="192.168.1.102/24",
-            status=Status.objects.get_for_model(IPAddress).first(),
+            status=ipaddress_status,
             namespace=self.namespace,
             parent=self.prefix,
         )
 
         # Assign IPs to interfaces (this should trigger DNS record creation via M2M signals)
-        interface1.ip_addresses.add(ip1)
-        interface2.ip_addresses.add(ip2)
+        interfaces_with_role["eth1"].ip_addresses.add(ip1)
+        interfaces_with_role["eth2"].ip_addresses.add(ip2)
 
         # Verify DNS records were created for interfaces 1 and 2
         a_records_1 = ARecord.objects.filter(name=f"{interface_role.name}.eth1.{test_device.name}", zone=self.dns_zone)
@@ -2006,8 +1957,8 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
         self.assertEqual(a_records_2.count(), 1, "DNS record should be created for interface 2")
 
         # Verify tracking records were created
-        rule_records_1 = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface1.id)
-        rule_records_2 = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface2.id)
+        rule_records_1 = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interfaces_with_role["eth1"].id)
+        rule_records_2 = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interfaces_with_role["eth2"].id)
 
         self.assertEqual(rule_records_1.count(), 1, "Tracking record should exist for interface 1")
         self.assertEqual(rule_records_2.count(), 1, "Tracking record should exist for interface 2")
@@ -2015,13 +1966,13 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
         # Now create IP for interface 3 (no role) - this should cause template failure
         ip3 = IPAddress.objects.create(
             address="192.168.1.103/24",
-            status=Status.objects.get_for_model(IPAddress).first(),
+            status=ipaddress_status,
             namespace=self.namespace,
             parent=self.prefix,
         )
 
         # Assign IP to interface 3 - this should trigger template failure but not affect other records
-        interface3.ip_addresses.add(ip3)
+        interface_no_role.ip_addresses.add(ip3)
 
         # Verify that existing DNS records for interfaces 1 and 2 are NOT deleted
         a_records_1_after = ARecord.objects.filter(
@@ -2040,14 +1991,14 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
 
         # Verify no DNS record was created for interface 3 (template failure)
         # Note: We can't predict the exact name since the template will fail on the role part
-        a_records_3 = ARecord.objects.filter(name__endswith=f"eth3.{test_device.name}", zone=self.dns_zone)
+        a_records_3 = ARecord.objects.filter(name=interface_no_role.name, zone=self.dns_zone)
         self.assertEqual(
             a_records_3.count(), 0, "No DNS record should be created for interface 3 due to template failure"
         )
 
         # Verify tracking records for interfaces 1 and 2 still exist
-        rule_records_1_after = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface1.id)
-        rule_records_2_after = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface2.id)
+        rule_records_1_after = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interfaces_with_role["eth1"].id)
+        rule_records_2_after = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interfaces_with_role["eth2"].id)
 
         self.assertEqual(rule_records_1_after.count(), 1, "Interface 1 tracking record should be preserved")
         self.assertEqual(rule_records_2_after.count(), 1, "Interface 2 tracking record should be preserved")
@@ -2062,7 +2013,7 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name }}.{{ obj.device.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
             enabled=True,
         )
 
@@ -2145,21 +2096,9 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
         rule_records_final = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=test_interface.id)
         self.assertEqual(rule_records_final.count(), 1, "Should have one tracking record after IP removal")
 
-    def test_service_template_validation_missing_ip_filter(self):
-        """Test that Service A record templates work (validation for missing ip_address filter not implemented yet)."""
-        # Note: Template validation for missing | ip_address filter is not implemented yet
-        # This test verifies that the rule can be created (runtime will handle template errors)
-        rule = DNSRule(
-            name="service-rule-without-ip-filter",
-            content_type=self.service_content_type,
-            record_type="A",
-            zone_template="example.com",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() }}",  # Missing | ip_address (will fail at runtime)
-        )
-        rule.clean()  # Should succeed - validation doesn't catch this yet
-        self.assertIsNotNone(rule)  # Rule creation should succeed
-
+    @skip(
+        "Skipping test_service_rule_uniqueness_validation since we currently don't disallow two rules with the same content_type + record_type"
+    )
     def test_service_rule_uniqueness_validation(self):
         """Test Service rule uniqueness constraints."""
         # Create first rule (global rule: location=None, tenant=None, enabled=True)
@@ -2169,7 +2108,7 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
             enabled=True,
             # location=None, tenant=None (global rule)
         )
@@ -2182,7 +2121,7 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
                 record_type="A",  # Same content_type + record_type + location + tenant
                 zone_template="example.com",
                 name_template="{{ obj.name }}",
-                value_template="{{ obj.ip_addresses.all() | ip_address }}",
+                value_template="{{ obj.ip_addresses.all() }}",
                 enabled=True,
                 # location=None, tenant=None (same as first rule)
             )

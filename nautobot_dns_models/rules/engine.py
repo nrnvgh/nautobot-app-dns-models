@@ -1,6 +1,7 @@
 """DNS Rule Processing Engine for Nautobot DNS Models."""
 
 import logging
+import uuid
 from collections import defaultdict
 from typing import Any
 
@@ -23,6 +24,7 @@ from nautobot_dns_models.models import (
     SRVRecord,
     TXTRecord,
 )
+from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
 logger = logging.getLogger(__name__)
 
@@ -441,7 +443,7 @@ class DNSRuleEngine:
 
     def _calculate_desired_record_data(self, rule: DNSRule, source_obj: Any) -> list[dict[str, Any]]:
         """Calculate what DNS record data should exist (without creating records)."""
-        context = {"obj": source_obj}
+        context = {"obj": wrap_for_template(source_obj)}
 
         # Build base record data - exceptions bubble up naturally
         base_record_data = {
@@ -458,8 +460,8 @@ class DNSRuleEngine:
         if rule.zone_template:
             zone_name = self._render_template(rule.zone_template, context, "zone_template")
             return DNSZone.objects.get(name=zone_name)
-        else:
-            return rule.zone_fixed
+
+        return rule.zone_fixed
 
     def _get_existing_tracking_records(self, rule: DNSRule, source_obj: Any) -> models.QuerySet:
         """Get existing tracking records for a rule+object combination."""
@@ -570,7 +572,7 @@ class DNSRuleEngine:
         """
         logger.debug(f"Rendering template: {template_str} with context: {context}")
         result = render_jinja2(template_str, context)  # Let jinja2 exceptions bubble
-        logger.debug(f"Template (({template_str})) rendered to result: {result}")
+        logger.debug(f"Template (({template_str})) rendered to result: '{result}'")
 
         # Check for falsy results (None, empty string, etc.)
         if not result:
@@ -590,41 +592,51 @@ class DNSRuleEngine:
         record_type = dns_record.__class__.__name__
         base_key = f"{record_type}:{dns_record.name}:{dns_record.zone_id}"
 
-        if hasattr(dns_record, "address_id"):  # A/AAAA records
-            return f"{base_key}:{dns_record.address_id}"
-        elif hasattr(dns_record, "alias"):  # CNAME records
-            return f"{base_key}:{dns_record.alias}"
-        elif hasattr(dns_record, "server"):  # MX/NS records
+        suffix = "unknown"
+        if hasattr(dns_record, "address_id"):  # A/AAAA
+            suffix = dns_record.address_id
+        elif hasattr(dns_record, "alias"):  # CNAME
+            suffix = dns_record.alias
+        elif hasattr(dns_record, "server"):  # MX/NS
             preference = getattr(dns_record, "preference", "")
-            return f"{base_key}:{dns_record.server}:{preference}"
-        elif hasattr(dns_record, "ptrdname"):  # PTR records
-            return f"{base_key}:{dns_record.ptrdname}"
-        elif hasattr(dns_record, "text"):  # TXT records
-            return f"{base_key}:{dns_record.text}"
-        elif hasattr(dns_record, "target"):  # SRV records
-            return f"{base_key}:{dns_record.priority}:{dns_record.weight}:{dns_record.port}:{dns_record.target}"
-        else:
-            return f"{base_key}:unknown"
+            suffix = f"{dns_record.server}:{preference}"
+        elif hasattr(dns_record, "ptrdname"):  # PTR
+            suffix = dns_record.ptrdname
+        elif hasattr(dns_record, "text"):  # TXT
+            suffix = dns_record.text
+        elif hasattr(dns_record, "target"):  # SRV
+            suffix = f"{dns_record.priority}:{dns_record.weight}:{dns_record.port}:{dns_record.target}"
+
+        return f"{base_key}:{suffix}"
 
     def _get_record_content_key_from_data(self, record_data: dict) -> str:
         """Generate content key from record data dict."""
+        zone_id = record_data["zone"].id
+        name = record_data["name"]
+
+        record_type = "UnknownRecord"
+        suffix = "unknown"
         if "address_id" in record_data:
             record_type = "ARecord"
-            return f"{record_type}:{record_data['name']}:{record_data['zone'].id}:{record_data['address_id']}"
+            suffix = record_data["address_id"]
         elif "alias" in record_data:
-            return f"CNAMERecord:{record_data['name']}:{record_data['zone'].id}:{record_data['alias']}"
+            record_type = "CNAMERecord"
+            suffix = record_data["alias"]
         elif "server" in record_data:
-            preference = record_data.get("preference", "")
             record_type = "MXRecord" if "preference" in record_data else "NSRecord"
-            return f"{record_type}:{record_data['name']}:{record_data['zone'].id}:{record_data['server']}:{preference}"
+            preference = record_data.get("preference", "")
+            suffix = f"{record_data['server']}:{preference}"
         elif "ptrdname" in record_data:
-            return f"PTRRecord:{record_data['name']}:{record_data['zone'].id}:{record_data['ptrdname']}"
+            record_type = "PTRRecord"
+            suffix = record_data["ptrdname"]
         elif "text" in record_data:
-            return f"TXTRecord:{record_data['name']}:{record_data['zone'].id}:{record_data['text']}"
+            record_type = "TXTRecord"
+            suffix = record_data["text"]
         elif "target" in record_data:
-            return f"SRVRecord:{record_data['name']}:{record_data['zone'].id}:{record_data['priority']}:{record_data['weight']}:{record_data['port']}:{record_data['target']}"
-        else:
-            return f"UnknownRecord:{record_data['name']}:{record_data['zone'].id}:unknown"
+            record_type = "SRVRecord"
+            suffix = f"{record_data['priority']}:{record_data['weight']}:{record_data['port']}:{record_data['target']}"
+
+        return f"{record_type}:{name}:{zone_id}:{suffix}"
 
     def _delete_tracking_and_dns_record(self, tracking_record) -> None:
         """Delete both the DNS record and its tracking record."""
@@ -671,8 +683,22 @@ class DNSRuleEngine:
 
                 record_variations = []
                 for address_id in address_ids:
+                    address_id = address_id.strip()
+                    if not address_id:
+                        logger.debug(f"Skipping record for rule {rule.name} due to empty address_id after stripping")
+                        continue
+                    try:
+                        uuid.UUID(address_id)
+                    except ValueError:
+                        logger.warning(
+                            "Skipping record for rule %s: invalid UUID '%s'",
+                            rule.name,
+                            address_id,
+                        )
+                        continue
+
                     record_data = base_record_data.copy()
-                    record_data["address_id"] = address_id.strip()
+                    record_data["address_id"] = address_id
                     record_variations.append(record_data)
                 return record_variations
             else:
@@ -768,4 +794,4 @@ class DNSRuleEngine:
 
 
 # Global instance for use by signal handlers
-dns_rule_engine = DNSRuleEngine()
+rule_engine = DNSRuleEngine()

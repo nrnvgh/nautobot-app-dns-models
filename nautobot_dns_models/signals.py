@@ -5,10 +5,12 @@ import logging
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
 from nautobot.dcim.models import Device, Interface
-from nautobot.virtualization.models import VirtualMachine, VMInterface
 from nautobot.ipam.models import Service
+from nautobot.virtualization.models import VirtualMachine, VMInterface
 
-from nautobot_dns_models.rule_engine import dns_rule_engine
+from nautobot_dns_models.rules.engine import rule_engine
+
+# logging.basicConfig(level=logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +81,6 @@ def has_model_field_changes(instance, debug_context="object"):
 # NOTE: do we want to explictly list other sender models here and, if so, which?
 # NOTE: We're waiting on resolution of https://github.com/nautobot/nautobot/issues/7728 for
 # NOTE: full signal handling.
-
 @receiver(pre_save, sender=Device)
 @receiver(pre_save, sender=Interface)
 @receiver(pre_save, sender=Service)
@@ -118,7 +119,7 @@ def capture_object_change_state(sender, instance, **kwargs):
 def handle_object_save(sender, instance, created, **kwargs):
     """
     Handle save events for objects that only need direct DNS rule processing.
-    
+
     This is for objects that don't have dependent child objects that need cascade processing.
     Currently handles: Interface, Service, VMInterface.
 
@@ -139,14 +140,14 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
     """
     Handle Device and VirtualMachine save events to trigger DNS rule processing with cascade updates.
 
-    This handler processes parent object DNS rules and also triggers cascade processing 
+    This handler processes parent object DNS rules and also triggers cascade processing
     of interface DNS rules when parent fields referenced in interface templates are changed.
 
     Supported relationships:
     - Device → Interface: Templates like {{ obj.device.* }} in Interface DNS rules
     - VirtualMachine → VMInterface: Templates like {{ obj.virtual_machine.* }} in VMInterface DNS rules
 
-    Location-aware processing: Parent location changes trigger cascade updates for all 
+    Location-aware processing: Parent location changes trigger cascade updates for all
     interfaces on that parent to handle location-scoped DNS rules.
 
     PERFORMANCE NOTE: Any parent field changes trigger processing of all interfaces
@@ -179,20 +180,24 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
             if interfaces:
                 # Get interface type name from first interface for logging
                 interface_type_name = interfaces[0]._meta.model_name
-                logger.debug(f"{model_name.title()} {instance} fields changed - processing all {interface_type_name}s for cascade updates")
+                logger.debug(
+                    f"{model_name.title()} {instance} fields changed - processing all {interface_type_name}s for cascade updates"
+                )
 
                 for interface in interfaces:
                     logger.debug(f"Processing {interface_type_name} {interface} due to {model_name} field changes")
-                    dns_rule_engine.process_object(interface, created=False)
+                    rule_engine.process_object(interface, created=False)
     except Exception as exc:
         # Log the error but don't let it break the original object save
-        logger.error(f"[handle_object_with_interfaces_save] Failed to process DNS rules for {model_name.title()} {instance}: {exc}")
+        logger.error(
+            f"[handle_object_with_interfaces_save] Failed to process DNS rules for {model_name.title()} {instance}: {exc}"
+        )
 
 
 def _process_dns_rules_if_needed(instance, created, context="save"):
     """
     Helper function to process DNS rules for an object if needed.
-    
+
     Args:
         instance: The object instance
         created: Boolean indicating if this was a new object
@@ -205,16 +210,12 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
 
     if should_process:
         try:
-            dns_rule_engine.process_object(instance, created=created)
+            rule_engine.process_object(instance, created=created)
         except Exception as exc:
             # Log the error but don't let it break the original object save
             logger.error(f"[SIGNAL] [{context}] Failed to process DNS rules for {instance}: {exc}")
     else:
-        logger.debug(
-            f"[SIGNAL] [{context}] Skipping DNS processing for {instance} - no relevant field changes"
-        )
-
-
+        logger.debug(f"[SIGNAL] [{context}] Skipping DNS processing for {instance} - no relevant field changes")
 
 
 @receiver(post_delete, sender=Device)
@@ -239,7 +240,7 @@ def handle_object_delete(sender, instance, **kwargs):
     logger.debug(f"[SIGNAL] [handle_object_delete] {sender} / {instance}")
 
     try:
-        dns_rule_engine.delete_dns_records_for_object(instance)
+        rule_engine.delete_dns_records_for_object(instance)
     except Exception as exc:
         # Log the error but don't let it break the original object deletion
         logger.error(f"Failed to clean up DNS records for {instance}: {exc}")
@@ -279,7 +280,7 @@ def handle_m2m_changed(sender, instance, action, pk_set, **kwargs):
     try:
         # Process the instance that had its relationships changed
         logger.debug(f"[SIGNAL] [handle_m2m_changed] Processing M2M change on {instance}")
-        dns_rule_engine.process_object(instance, created=False)
+        rule_engine.process_object(instance, created=False)
     except Exception as exc:
         # Log the error but don't let it break the original operation
         logger.error(f"[SIGNAL] [handle_m2m_changed] Failed to process DNS rules for M2M change on {instance}: {exc}")
