@@ -100,6 +100,13 @@ class BaseRuleEngineTestCase(TestCase):
             status=Status.objects.get_for_model(Prefix).first(),
         )
 
+        cls.ipv6_prefix = Prefix.objects.create(
+            network="2001:db8::",
+            prefix_length=64,
+            namespace=cls.namespace,
+            status=Status.objects.get_for_model(Prefix).first(),
+        )
+
         cls.ip_status = Status.objects.get_for_model(IPAddress).first()
         # Create IP address within the namespace and associate with parent prefix
         cls.ip_address = IPAddress.objects.create(
@@ -107,6 +114,13 @@ class BaseRuleEngineTestCase(TestCase):
             status=cls.ip_status,
             namespace=cls.namespace,
             parent=cls.prefix,
+        )
+
+        cls.ipv6_address = IPAddress.objects.create(
+            address="2001:db8::1/64",
+            status=cls.ip_status,
+            namespace=cls.namespace,
+            parent=cls.ipv6_prefix,
         )
 
         # Create Service test data
@@ -2151,3 +2165,109 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
                 # location=None, tenant=None (same as first rule)
             )
             rule.clean()  # This should trigger the uniqueness validation
+
+
+class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineTestCase):
+    """Integration checks for template proxies within the rule engine."""
+
+    def test_interface_first_renders_uuid(self):
+        """Interface value template using first() should render the first IP UUID."""
+        rule = DNSRule.objects.create(
+            name="interface-first",
+            content_type=self.interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+        )
+        self.interface.ip_addresses.set([self.ip_address, self.ip_address2])
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["address_id"], str(self.ip_address.pk))
+
+    def test_interface_last_empty(self):
+        """Interface last() should raise DNSTemplateEmptyError when no IPs exist."""
+        rule = DNSRule.objects.create(
+            name="interface-last-empty",
+            content_type=self.interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.last() }}",
+        )
+        self.interface.ip_addresses.clear()
+
+        with self.assertRaises(DNSTemplateEmptyError):
+            self._calc_desired_record_data(rule, self.interface)
+
+    def test_interface_filter_first_and_last(self):
+        """Interface filter(...).first()/last() should render UUIDs respecting the filter."""
+        rule = DNSRule.objects.create(
+            name="interface-filter",
+            content_type=self.interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.filter(ip_version=4).first() }} {{ obj.ip_addresses.filter(ip_version=4).last() }}",
+        )
+        self.interface.ip_addresses.set([self.ip_address, self.ip_address2])
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        # Expect two records: one for first() and one for last()
+        self.assertEqual(len(results), 2)
+        returned_ids = {record["address_id"] for record in results}
+        expected_ids = {str(self.ip_address.pk), str(self.ip_address2.pk)}
+        self.assertEqual(returned_ids, expected_ids)
+
+    def test_interface_filter_ipv4_only(self):
+        """Interface filter(ip_version=4) should ignore IPv6 addresses."""
+        rule = DNSRule.objects.create(
+            name="interface-filter-list",
+            content_type=self.interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.filter(ip_version=4) }}",
+        )
+        self.interface.ip_addresses.set([self.ip_address, self.ip_address2, self.ipv6_address])
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        returned_ids = {record["address_id"] for record in results}
+        expected_ids = {str(self.ip_address.pk), str(self.ip_address2.pk)}
+        self.assertEqual(returned_ids, expected_ids)
+
+    def test_service_filter_all(self):
+        """Service filter(...).all() should yield records for each matching IP UUID."""
+        rule = DNSRule.objects.create(
+            name="service-filter-all",
+            content_type=self.service_content_type,
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.filter(ip_version=4).all() }}",
+        )
+        self.service_device_attached.ip_addresses.set([self.ip_address, self.ip_address2])
+
+        results = self._calc_desired_record_data(rule, self.service_device_attached)
+        returned_ids = {record["address_id"] for record in results}
+        expected_ids = {str(self.ip_address.pk), str(self.ip_address2.pk)}
+        self.assertEqual(returned_ids, expected_ids)
+
+    def test_filter_skips_invalid_uuid_values(self):
+        """Invalid address IDs should be ignored when building record variations."""
+        rule = DNSRule.objects.create(
+            name="filter-invalid",
+            content_type=self.interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="invalid-uuid {{ obj.ip_addresses.all() }}",
+        )
+        # include valid IPs but template prepends an invalid literal
+        self.interface.ip_addresses.set([self.ip_address])
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        # Only the valid UUID should produce a record
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["address_id"], str(self.ip_address.pk))

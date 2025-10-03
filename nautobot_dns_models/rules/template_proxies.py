@@ -54,6 +54,8 @@ class TemplateProxyBase:
         return proxied
 
 
+## TODO: sanely handle the case when user uses ip_obj.address or ip_obj.host, even
+## TODO: if that's just to throw a loud error.
 class TemplateIPAddressProxy(TemplateProxyBase):
     """Proxy an IPAddress object so its string form yields the UUID."""
 
@@ -235,19 +237,19 @@ class DeviceTemplateProxy(TemplateProxyBase):
     def primary_ip(self) -> TemplateIPAddressProxy | None:
         """Return the primary IP UUID for any protocol family."""
         ip = getattr(self._obj, "primary_ip", None)
-        return TemplateIPAddressProxy(ip) if ip else None
+        return TemplateIPAddressProxy(ip)
 
     @cached_property
     def primary_ip4(self) -> TemplateIPAddressProxy | None:
         """Return the primary IPv4 UUID."""
         ip = getattr(self._obj, "primary_ip4", None)
-        return TemplateIPAddressProxy(ip) if ip else None
+        return TemplateIPAddressProxy(ip)
 
     @cached_property
     def primary_ip6(self) -> TemplateIPAddressProxy | None:
         """Return the primary IPv6 UUID."""
         ip = getattr(self._obj, "primary_ip6", None)
-        return TemplateIPAddressProxy(ip) if ip else None
+        return TemplateIPAddressProxy(ip)
 
 
 class InterfaceTemplateProxy(TemplateProxyBase):
