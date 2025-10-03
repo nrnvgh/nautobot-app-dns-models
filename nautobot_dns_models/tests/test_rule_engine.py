@@ -145,6 +145,31 @@ class BaseRuleEngineTestCase(TestCase):
         """Set up test data."""
         self.engine = DNSRuleEngine()
 
+    def _calc_desired_record_data(self, rule: DNSRule, obj) -> list[dict]:
+        """Helper for invoking the engine private API in tests."""
+        # pylint: disable=protected-access
+        return list(self.engine._calculate_desired_record_data(rule, obj))
+
+    def _render_template(self, template_str: str, context: dict, field_name: str):
+        """Wrapper around the engine's private _render_template helper."""
+        # pylint: disable=protected-access
+        return self.engine._render_template(template_str, context, field_name)
+
+    def _get_object_location(self, obj):
+        """Wrapper around engine object-location extraction."""
+        # pylint: disable=protected-access
+        return self.engine._get_object_location(obj)
+
+    def _get_object_tenant(self, obj):
+        """Wrapper around engine object-tenant extraction."""
+        # pylint: disable=protected-access
+        return self.engine._get_object_tenant(obj)
+
+    def _get_applicable_rules(self, obj):
+        """Wrapper around engine applicable rule resolution."""
+        # pylint: disable=protected-access
+        return self.engine._get_applicable_rules(obj)
+
 
 class TemplateRenderingTestCase(BaseRuleEngineTestCase):
     """Template rendering, syntax errors, undefined variables, error handling."""
@@ -199,27 +224,27 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
 
     def test_render_template_method_with_valid_template(self):
         """Test _render_template method with valid input."""
-        result = self.engine._render_template("Hello {{ name }}", {"name": "World"}, "test_field")
+        result = self._render_template("Hello {{ name }}", {"name": "World"}, "test_field")
         self.assertEqual(result, "Hello World")
 
     def test_render_template_method_with_undefined_variable(self):
         """Test _render_template method behavior with undefined variables."""
         # render_jinja2 returns empty string for undefined variables, which our method treats as an error
         with self.assertRaises(DNSTemplateEmptyError):
-            self.engine._render_template("{{ undefined_var }}", {}, "test_field")
+            self._render_template("{{ undefined_var }}", {}, "test_field")
 
     def test_render_template_method_with_syntax_error(self):
         """Test _render_template method behavior with syntax errors."""
         # render_jinja2 throws TemplateSyntaxError, which we catch and re-raise as TemplateError
         with self.assertRaises(TemplateError):
-            self.engine._render_template("{{ invalid }", {}, "test_field")
+            self._render_template("{{ invalid }", {}, "test_field")
 
     def test_render_template_method_with_none_attribute(self):
         """Test _render_template method behavior when accessing attributes on None."""
         # This is the real-world case: when an IP is removed, obj.primary_ip4 becomes None
         # render_jinja2 returns empty string, which our method treats as an error
         with self.assertRaises(DNSTemplateEmptyError):
-            self.engine._render_template(
+            self._render_template(
                 "{{ obj.primary_ip4.id }}",
                 {"obj": self.device},
                 "test_field",  # self.device has no primary_ip4 set
@@ -236,7 +261,7 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
             status=Status.objects.get_for_model(Interface).first(),
         )
         with self.assertRaises(TemplateError):
-            self.engine._render_template("{{ obj.ip_addresses[0].id }}", {"obj": empty_interface}, "test_field")
+            self._render_template("{{ obj.ip_addresses[0].id }}", {"obj": empty_interface}, "test_field")
 
     def test_render_template_method_empty_string_handling(self):
         """Test that empty string results are treated as errors."""
@@ -250,19 +275,19 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
         for template, context in test_cases:
             with self.subTest(template=template, context=context):
                 with self.assertRaises(DNSTemplateEmptyError):
-                    self.engine._render_template(template, context, "test_field")
+                    self._render_template(template, context, "test_field")
 
     def test_render_template_method_valid_non_empty_result(self):
         """Test that valid non-empty results work correctly."""
-        result = self.engine._render_template("{{ name }}", {"name": "test-value"}, "test_field")
+        result = self._render_template("{{ name }}", {"name": "test-value"}, "test_field")
         self.assertEqual(result, "test-value")
 
         # Test with zero (which is falsy but might be valid for MX/SRV fields)
-        result = self.engine._render_template("{{ count }}", {"count": 0}, "test_field")
+        result = self._render_template("{{ count }}", {"count": 0}, "test_field")
         self.assertEqual(result, "0")  # render_jinja2 converts 0 to "0" string
 
         # Test with False
-        result = self.engine._render_template("{{ flag }}", {"flag": False}, "test_field")
+        result = self._render_template("{{ flag }}", {"flag": False}, "test_field")
         self.assertEqual(result, "False")  # render_jinja2 converts False to "False" string
 
     def test_what_does_no_such_element_actually_look_like(self):
@@ -306,7 +331,7 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
         # Use real device object without primary_ip4 set
 
         with self.assertRaises(DNSTemplateEmptyError) as context:
-            self.engine._render_template("{{ obj.primary_ip4.id }}", {"obj": self.device}, "test_field")
+            self._render_template("{{ obj.primary_ip4.id }}", {"obj": self.device}, "test_field")
 
         # The error should mention that template rendered empty
         error_message = str(context.exception)
@@ -329,7 +354,7 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
         # Test the template that should trigger the DEBUG=True error pattern
         # The rule engine should catch the DebugUndefined error pattern and include it in the exception
         with self.assertRaises(DNSTemplateEmptyError) as context:
-            self.engine._render_template("{{ obj.role.id }}", {"obj": interface_no_role}, "test_field")
+            self._render_template("{{ obj.role.id }}", {"obj": interface_no_role}, "test_field")
 
         # In DEBUG=True with DebugUndefined, the error message should contain the pattern
         self.assertIn("{{ no such element:", str(context.exception))
@@ -378,13 +403,13 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
     def test_get_object_location_device(self):
         """Test _get_object_location returns device.location for Device objects."""
         # Test location extraction
-        result = self.engine._get_object_location(self.device)
+        result = self._get_object_location(self.device)
         self.assertEqual(result, self.location)
 
     def test_get_object_location_interface(self):
         """Test _get_object_location returns interface.device.location for Interface objects."""
         # Test location extraction from interface
-        result = self.engine._get_object_location(self.interface)
+        result = self._get_object_location(self.interface)
         self.assertEqual(result, self.location)
 
     def test_get_object_location_virtualmachine_not_implemented(self):
@@ -405,7 +430,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
 
         # Currently returns None - will return vm.cluster.location when TODO is implemented
         # TODO: Update this test to expect vm.cluster.location when VirtualMachine support is added
-        result = self.engine._get_object_location(vm)
+        result = self._get_object_location(vm)
         self.assertIsNone(result)  # Current behavior - should change to assertEqual(result, cluster.location)
 
     def test_get_applicable_rules_location_specific_rules_selected(self):
@@ -433,7 +458,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
             value_template="{{ obj.primary_ip4.id }}",
         )
 
-        rules = self.engine._get_applicable_rules(self.device)
+        rules = self._get_applicable_rules(self.device)
         self.assertEqual(rules.count(), 1)
         self.assertEqual(rules.first(), location_rule)
 
@@ -451,7 +476,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
             value_template="{{ obj.primary_ip4.id }}",
         )
 
-        rules = self.engine._get_applicable_rules(self.device)
+        rules = self._get_applicable_rules(self.device)
         self.assertEqual(rules.count(), 1)
         self.assertEqual(rules.first(), global_rule)
 
@@ -488,7 +513,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
             value_template="192.168.1.1",
         )
 
-        rules = self.engine._get_applicable_rules(vm)
+        rules = self._get_applicable_rules(vm)
         self.assertEqual(rules.count(), 1)
         self.assertEqual(rules.first(), global_rule)
 
@@ -527,7 +552,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
             value_template="{{ obj.primary_ip4.id }}",
         )
 
-        rules = self.engine._get_applicable_rules(self.device)
+        rules = self._get_applicable_rules(self.device)
 
         # Should get location-specific A rule + global CNAME rule (2 rules total)
         self.assertEqual(rules.count(), 2)
@@ -562,7 +587,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
             value_template="{{ obj.primary_ip4.id }}",
         )
 
-        rules = self.engine._get_applicable_rules(self.device)
+        rules = self._get_applicable_rules(self.device)
 
         # Should only get location-specific rule
         self.assertEqual(rules.count(), 1)
@@ -602,7 +627,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
             preference_template="10",
         )
 
-        rules = self.engine._get_applicable_rules(self.device)
+        rules = self._get_applicable_rules(self.device)
 
         # Should get all 3 location-specific rules
         self.assertEqual(rules.count(), 3)
@@ -667,7 +692,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
             status=Status.objects.get_for_model(Device).first(),
         )
 
-        rules = self.engine._get_applicable_rules(device_with_both)
+        rules = self._get_applicable_rules(device_with_both)
 
         # Should get the most specific rule (location+tenant)
         self.assertEqual(rules.count(), 1)
@@ -709,7 +734,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
             status=Status.objects.get_for_model(Device).first(),
         )
 
-        rules = self.engine._get_applicable_rules(device_with_both)
+        rules = self._get_applicable_rules(device_with_both)
 
         # Should get both rules (different record types)
         self.assertEqual(rules.count(), 2)
@@ -741,7 +766,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
             status=Status.objects.get_for_model(Device).first(),
         )
 
-        rules = self.engine._get_applicable_rules(device_location_only)
+        rules = self._get_applicable_rules(device_location_only)
         self.assertEqual(rules.count(), 1)
         self.assertEqual(rules.first().name, global_rule.name)
 
@@ -762,18 +787,18 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
         )
         device_tenant_only.save()
 
-        rules = self.engine._get_applicable_rules(device_tenant_only)
+        rules = self._get_applicable_rules(device_tenant_only)
         self.assertEqual(rules.count(), 1)
         self.assertEqual(rules.first().name, global_rule.name)
 
     def test_service_location_extraction(self):
         """Test location extraction for both Service attachment types."""
         # Device-attached service
-        location = self.engine._get_object_location(self.service_device_attached)
+        location = self._get_object_location(self.service_device_attached)
         self.assertEqual(location, self.location)
 
         # VM-attached service
-        location = self.engine._get_object_location(self.service_vm_attached)
+        location = self._get_object_location(self.service_vm_attached)
         self.assertEqual(location, self.location)
 
     def test_service_tenant_extraction_with_fallback(self):
@@ -793,7 +818,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
         )
 
         # Should get cluster tenant as fallback
-        tenant = self.engine._get_object_tenant(service_cluster_tenant)
+        tenant = self._get_object_tenant(service_cluster_tenant)
         self.assertEqual(tenant, self.tenant)
 
 
