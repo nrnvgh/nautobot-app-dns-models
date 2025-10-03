@@ -3,7 +3,7 @@
 import django_filters
 from django.db.models import F
 from django.db.models.functions import Coalesce
-from nautobot.apps.filters import NautobotFilterSet, SearchFilter
+from nautobot.apps.filters import BaseFilterSet, ContentTypeFilter, NautobotFilterSet, SearchFilter
 from nautobot.dcim.filters import LocatableModelFilterSetMixin
 from nautobot.tenancy.filters import TenancyModelFilterSetMixin
 from netaddr import IPAddress as NetIPAddress
@@ -214,4 +214,19 @@ class DNSRuleFilterSet(NautobotFilterSet, LocatableModelFilterSetMixin, TenancyM
         """Meta attributes for filter."""
 
         model = models.DNSRule
+        fields = "__all__"
+
+
+class DNSRuleRecordFilterSet(BaseFilterSet):
+    """Filter for DNSRuleRecord."""
+
+    content_type = ContentTypeFilter()
+
+    rule_name = django_filters.CharFilter(field_name="rule__name", lookup_expr="icontains")
+    rule_enabled = django_filters.BooleanFilter(field_name="rule__enabled")
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.DNSRuleRecord
         fields = "__all__"
