@@ -9,11 +9,19 @@ from nautobot.ipam.models import IPAddress
 
 logger = logging.getLogger(__name__)
 
+
 @library.filter
 def append_timestamp(value):
     """Append a random string to a value."""
     return f"{value} ({datetime.now().strftime('%a %b %d %H:%M:%S')})"
 
+
+#
+# TODO: Remove this filter? It's no longer strictly necessary, as the rendering engine will handle
+# TODO: these transformations internally. Leaving it here for now, barring the unforeseen, can be
+# TODO: removed in a future release.
+#
+# XXX: Bonus "bug": If ip_obj is  UUID string, it Just Works(tm). Which is kind of funny.
 @library.filter
 def ip_address(ip_obj, version=None):
     """
@@ -85,12 +93,9 @@ def ip_address(ip_obj, version=None):
 def dns_normalize(s):
     """
     Normalize a value so it's DNS compliant.
-    
+
     Replaces /, ., _, and spaces with - and lowercases the string.
     """
     characters_to_replace = "/._ "
-    translation_table = str.maketrans(  
-        characters_to_replace,
-        "-" * len(characters_to_replace)
-    )
+    translation_table = str.maketrans(characters_to_replace, "-" * len(characters_to_replace))
     return s.translate(translation_table).lower()
