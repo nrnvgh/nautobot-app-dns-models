@@ -751,7 +751,7 @@ The DNS Rule System provides automated DNS record management triggered by object
     - Manual maintenance required when adding new record types
   - **Solution**: Create centralized auto-detection system
     - **Discovery**: Automatically detect available DNS record classes (ARecord, CNAMERecord, etc.)
-    - **Generation**: Dynamically generate `RECORD_TYPE_CHOICES` and `RECORD_MODEL_MAPPING` from discovered classes
+    - **Generation**: Dynamically generate `RECORD_TYPE_CHOICES` and `RECORD_MODEL_MAPPING` from discovered classes (check DNSRecord.__subclasses__())
     - **Consolidation**: Single source of truth for all DNS record type configurations
     - **Modularity**: Extract into separate module (e.g., `dns_record_registry.py`)
   - **Benefits**:
