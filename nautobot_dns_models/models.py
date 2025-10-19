@@ -34,6 +34,12 @@ class DNSModel(PrimaryModel):
     """Abstract Model for Nautobot DNS Models."""
 
     #
+    # Fields to normalize or validate; populated by subclasses.
+    #
+    # NOTE: name is handled separately in the clean() method and should not be included here.
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = []
+
+    #
     # name is effectively a NOOP here; it's overridden in both subclasses but
     # is here so that linters don't complain about it being used in clean().
     name = models.CharField(max_length=200)
@@ -57,27 +63,46 @@ class DNSModel(PrimaryModel):
         Ensures each label in the name is ≤ 63 bytes (octets) in wire format and not empty.
         """
         super().clean()
+        errors = defaultdict(list)
 
-        if self._normalize_fields:
-            self.name = normalize_dns_name(self.name)
-        else:
-            self._validate_field_is_normalized(field_name="name")
+        self._normalize_or_validate_field("name", errors)
+
+        cleaned_fields = [x for x in self.FIELDS_TO_NORMALIZE_OR_VALIDATE if x not in ("name",)]
+        for field in cleaned_fields:
+            self._normalize_or_validate_field(field, errors)
 
         config_dns_validation_level = getattr(constance_config, "nautobot_dns_models__DNS_VALIDATION_LEVEL")
         if config_dns_validation_level == "wire-format":
-            label_list = self.name.split(".")
-            for label in label_list:
-                self._validate_dns_label(label, field="name")
+            self._validate_wire_format_for_field(field_name="name", errors=errors)
 
-    def _validate_field_is_normalized(self, field_name):
-        """Assert the fields are normalized."""
-        field_value = getattr(self, field_name)
-        if field_value != normalize_dns_name(field_value):
-            raise ValidationError({field_name: "Field is not normalized."})
+        if errors:
+            raise ValidationError(dict(errors))
 
     @property
-    def _normalize_fields(self):
+    def _normalize_dns_records_enabled(self):
+        """Return whether DNS records are normalized or validated."""
+        #
+        # This is a property so to make it easier to add per-rule normalization/validation later if needed.
         return getattr(constance_config, "nautobot_dns_models__NORMALIZE_DNS_RECORDS")
+
+    def _normalize_or_validate_field(self, field_name, errors):
+        """Normalize or validate the DNS records."""
+        field_value = getattr(self, field_name)
+        if self._normalize_dns_records_enabled:
+            setattr(self, field_name, normalize_dns_name(field_value))
+        else:
+
+            if field_value != normalize_dns_name(field_value):
+                errors[field_name].append("Field is not normalized.")
+
+    def _validate_wire_format_for_field(self, field_name, errors):
+        """Validate the wire format for the field."""
+        field_value = getattr(self, field_name)
+        for label in field_value.split("."):
+            try:
+                self._validate_dns_label(label, field_name)
+            except ValidationError as exc:
+                errors[field_name].extend(exc.messages)
 
     @staticmethod
     def _validate_dns_label(label, field="name"):
@@ -88,12 +113,10 @@ class DNSModel(PrimaryModel):
         """
         if not label:
             raise ValidationError({field: "Empty labels are not allowed"})
+
         length = dns_wire_label_length(label)
         if length > 63:
-            raise ValidationError(
-                {field: f"Label '{label}' exceeds the maximum length of 63 bytes (octets) in wire format."}
-            )
-        return length
+            raise ValidationError(f"Label '{label}' exceeds the maximum length of 63 bytes (octets) in wire format.")
 
 
 @extras_features(
@@ -320,6 +343,8 @@ class DNSRecord(DNSModel):
 class NSRecord(DNSRecord):
     """NS Record model."""
 
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["server"]
+
     server = models.CharField(max_length=200, help_text="FQDN of an authoritative Name Server.")
 
     class Meta:
@@ -455,6 +480,8 @@ class AAAARecord(DNSRecord):
 class CNAMERecord(DNSRecord):
     """CNAME Record model."""
 
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["alias"]
+
     alias = models.CharField(max_length=200, help_text="FQDN of the Alias.")
 
     class Meta:
@@ -463,14 +490,6 @@ class CNAMERecord(DNSRecord):
         unique_together = [["name", "alias", "zone"]]
         verbose_name = "CNAME Record"
         verbose_name_plural = "CNAME Records"
-
-    def clean(self):
-        super().clean()
-
-        if self._normalize_fields:
-            self.alias = normalize_dns_name(self.alias)
-        else:
-            self._validate_field_is_normalized(field_name="alias")
 
 
 @extras_features(
@@ -483,6 +502,8 @@ class CNAMERecord(DNSRecord):
 )
 class MXRecord(DNSRecord):
     """MX Record model."""
+
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["mail_server"]
 
     preference = models.IntegerField(
         validators=[MinValueValidator(0), MaxValueValidator(65535)],
@@ -531,6 +552,8 @@ class TXTRecord(DNSRecord):
 class PTRRecord(DNSRecord):
     """PTR Record model."""
 
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["ptrdname"]
+
     ptrdname = models.CharField(
         max_length=200, help_text="A domain name that points to some location in the domain name space."
     )
@@ -558,6 +581,8 @@ class PTRRecord(DNSRecord):
 class SRVRecord(DNSRecord):
     """SRV Record model."""
 
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["target"]
+
     priority = models.IntegerField(
         validators=[MinValueValidator(0), MaxValueValidator(65535)],
         default=0,
@@ -584,12 +609,6 @@ class SRVRecord(DNSRecord):
         verbose_name = "SRV Record"
         verbose_name_plural = "SRV Records"
     
-    def clean(self):
-        super().clean()
-        if self._normalize_fields:
-            self.target = normalize_dns_name(self.target)
-        else:
-            self._validate_field_is_normalized(field_name="target")
 
 # DNS Record type choices for DNSRule
 RECORD_TYPE_CHOICES = [

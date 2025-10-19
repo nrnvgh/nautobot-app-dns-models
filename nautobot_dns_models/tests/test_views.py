@@ -477,7 +477,7 @@ class MXRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
         cls.form_data = {
             "name": "test-record",
-            "mail_server": "test_mail.example.com",
+            "mail_server": "test-mail.example.com",
             "preference": 10,
             "ttl": 3600,
             "zone": zone.pk,
@@ -485,7 +485,7 @@ class MXRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
         cls.csv_data = (
             "name,mail_server,zone",
-            f"Test 3,test_mail2.example.com,{zone.name}",
+            f"Test 3,test-mail2.example.com,{zone.name}",
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
