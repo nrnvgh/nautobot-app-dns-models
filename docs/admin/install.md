@@ -65,7 +65,7 @@ sudo systemctl restart nautobot nautobot-worker nautobot-scheduler
 
 ## App Configuration
 
-This option is configured via the Admin GUI.
+These options are configured via the Admin GUI.
 
 `DNS_VALIDATION_LEVEL` (default: "Wire format")
 
@@ -76,3 +76,29 @@ This setting controls the DNS validation level applied to zones and records:
     - Each label (the parts of the name separated by dots) must be no more than 63 bytes in wire format
     - Empty labels (e.g., consecutive dots or leading/trailing dots) are not allowed
     - The total length of the fully qualified DNS name (including all dots, in wire format) must not exceed 255 bytes
+
+`NORMALIZE_DNS_RECORDS` (boolean; default=`False`)
+
+Controls whether the plugin automatically normalizes record fields before saving (UI/API writes). When disabled, inputs must already be normalized or validation will fail.
+
+- What normalization does
+  - Lowercases each label
+  - Translates `/`, `_`, and spaces to `-`
+  - Collapses multiple `-` to a single `-`
+  - Trims leading/trailing `-` from each label
+  - Preserves a single leading underscore in a label (e.g., `_http` stays `_http`)
+  - Preserves dots as label separators; normalization is applied per label
+
+- Scope
+  - Always applies to record `name`
+  - Applies to domain-like value fields where applicable (for example: `CNAME.alias`, `NS.server`, `MX.mail_server`, `PTR.ptrdname`, `SRV.target`)
+  - Does not apply to zones, numeric fields, or UUID/ID fields
+
+- Behavior
+  - Enabled (`True`): model validation mutates the above fields to their normalized form before running RFC wire-format checks
+  - Disabled (`False`): model validation rejects non‑normalized input with an error; RFC wire-format checks still apply
+  - Rule engine normalization: regardless of this setting, rule-driven record creation normalizes rendered template outputs for the same domain-like fields; templates do not require a `dns_normalize` filter
+
+- Examples
+  - Input name: `"Web/ App _01.Name"` → Normalized: `"web-app-01.name"`
+  - Input SRV name: `"_Kerberos._TCP.DC._msdcs_"` → Normalized: `"_kerberos._tcp.dc._msdcs"`

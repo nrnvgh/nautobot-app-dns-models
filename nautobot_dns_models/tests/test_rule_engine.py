@@ -400,13 +400,13 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
     def test_service_location_template_rendering(self):
         """Test Service location access in templates."""
         # Device-attached service location
-        device_location_template = "{{ obj.device.location.name | dns_normalize }}"
+        device_location_template = "{{ obj.device.location.name }}"
         result = render_jinja2(device_location_template, {"obj": self.service_device_attached})
-        expected = self.location.name.lower().replace(" ", "-")
+        expected = self.location.name
         self.assertEqual(result, expected)
 
         # VM-attached service location
-        vm_location_template = "{{ obj.virtual_machine.cluster.location.name | dns_normalize }}"
+        vm_location_template = "{{ obj.virtual_machine.cluster.location.name }}"
         result = render_jinja2(vm_location_template, {"obj": self.service_vm_attached})
         self.assertEqual(result, expected)
 
@@ -1662,7 +1662,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             content_type=self.service_content_type,
             record_type="A",
             zone_template="example.com",
-            name_template="{{ obj.name | dns_normalize }}",
+            name_template="{{ obj.name }}",
             value_template="{{ obj.ip_addresses.all() }}",
         )
 
@@ -1776,7 +1776,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
             content_type=self.service_content_type,
             record_type="A",
             zone_template="example.com",
-            name_template="{{ obj.name | dns_normalize }}",  # Uses service name
+            name_template="{{ obj.name }}",  # Uses service name
             value_template="{{ obj.ip_addresses.all() }}",
         )
 

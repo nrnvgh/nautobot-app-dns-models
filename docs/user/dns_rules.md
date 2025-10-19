@@ -62,7 +62,6 @@ Templates use Jinja2 syntax with access to the triggering object as `obj`:
 
 - **Basic fields**: `{{ obj.name }}`, `{{ obj.description }}`
 - **Related objects**: `{{ obj.device.name }}`, `{{ obj.device.location.name }}`
-- **Filters**: `{{ obj.name | dns_normalize }}`, `{{ obj.primary_ip4 }}`
 
 ## Common Use Cases
 
@@ -166,7 +165,7 @@ web-server-01    IN A    192.168.1.100
 - Location: (blank for global)
 - Record Type: A Record
 - Zone Template: `services.example.com`
-- Name Template: `{{ obj.name | dns_normalize }}`
+- Name Template: `{{ obj.name }}`
 - Value Template: `{{ obj.ip_addresses.all() }}`
 
 **Result**: Service "web-lb" with IPs 10.1.1.100 and 10.1.1.101 creates:
@@ -264,7 +263,6 @@ When objects move between locations:
 
 ### Template Design
 
-- Always use `| dns_normalize` for object names in DNS records
 - Include conditional logic for optional fields
 
 ### Rule Organization

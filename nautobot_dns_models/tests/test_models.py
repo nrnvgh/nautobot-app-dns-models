@@ -31,6 +31,7 @@ from nautobot_dns_models.models import (
 
 
 # Helper for generating unicode labels of a specific IDNA-encoded length
+
 def _make_unicode_label_with_idna_length(char, target_length):
     """Return a string of repeated `char` whose IDNA-encoded length is exactly `target_length` bytes."""
     label = ""
@@ -41,6 +42,60 @@ def _make_unicode_label_with_idna_length(char, target_length):
     if dns_wire_label_length(label) != target_length:
         raise ValueError(f"Could not generate label of exactly {target_length} bytes in IDNA.")
     return label
+
+
+class RecordNameNormalizationMixin:
+    """
+    Mixin for testing record normalization.
+    
+    This mixin is used to test that the record name is normalized when the constance config is set to True and
+    that the record fails validation when the constance config is set to False.
+
+    It expected the following attributes to be set:
+    - model: The model to test
+    - normalization_data: A list of dictionaries, each containing the following keys:
+        - name: The name of the record to create
+        - expected_name: The expected normalized name
+        - other keys are the fields of the model to create the record with
+
+    TODO: allow tests with all good data to be used for both tests; currently, the second test 
+    TODO: will fail if the name doesn't require normalization.
+    """
+
+    model = None
+
+    @classmethod
+    def _strip_expected(cls, normalization_data: dict) -> tuple[str, dict]:
+        expected_name = normalization_data["expected_name"]
+        payload = {k: v for k, v in normalization_data.items() if k != "expected_name"}
+        return expected_name, payload
+
+    @override_config(nautobot_dns_models__NORMALIZE_DNS_RECORDS=True)
+    def test_record_name_normalized_on_save_with_constance_config_normalize_true(self):
+        """Record.name should be normalized when the constance config is set to True."""
+
+        for normalization_data in self.normalization_data:
+            with self.subTest(normalization_data=normalization_data):
+                expected_name, record_create_data = self._strip_expected(normalization_data)
+                record = self.model(**record_create_data)
+                record.full_clean()
+
+                self.assertEqual(record.name, expected_name)
+
+    @override_config(nautobot_dns_models__NORMALIZE_DNS_RECORDS=False)
+    def test_record_fails_validation_on_save_with_constance_config_normalize_false(self):
+        """Invalid record.name values should fail validation when the constance config is set to False."""
+
+        for normalization_data in self.normalization_data:
+            _, record_create_data = self._strip_expected(normalization_data)
+            record = self.model(**record_create_data)
+            with self.assertRaises(ValidationError) as context:
+                record.full_clean()
+
+            self.assertIn(
+                "Field is not normalized.",
+                str(context.exception),
+            )
 
 
 class TestDNSView(ModelTestCases.BaseModelTestCase):
@@ -139,12 +194,34 @@ class TestDnsZone(ModelTestCases.BaseModelTestCase):
         self.assertEqual(dns_zone_model.get_absolute_url(), f"/plugins/dns/dns-zones/{dns_zone_model.id}/")
 
 
-class NSRecordTestCase(TestCase):
+class NSRecordTestCase(RecordNameNormalizationMixin, TestCase):
     """Test the NSRecord model."""
+
+    model = NSRecord
 
     @classmethod
     def setUpTestData(cls):
         cls.dns_zone = DNSZone.objects.create(name="example.com")
+        cls.normalization_data = [
+            {
+                "name": "Primary",
+                "expected_name": "primary",
+                "server": "example-server.com.",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Primary.Name",
+                "expected_name": "primary.name",
+                "server": "example-server.com.",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "expected_name": "foo-bar-baz.quux.name",
+                "server": "example-server.com.",
+                "zone": cls.dns_zone,
+            },
+        ]
 
     def test_create_nsrecord(self):
         ns_record = NSRecord.objects.create(name="primary", server="example-server.com.", zone=self.dns_zone)
@@ -158,8 +235,10 @@ class NSRecordTestCase(TestCase):
         self.assertEqual(ns_record.get_absolute_url(), f"/plugins/dns/ns-records/{ns_record.id}/")
 
 
-class ARecordTestCase(TestCase):
+class ARecordTestCase(RecordNameNormalizationMixin, TestCase):
     """Test the ARecord model."""
+
+    model = ARecord
 
     @classmethod
     def setUpTestData(cls):
@@ -174,8 +253,30 @@ class ARecordTestCase(TestCase):
             address="2001:db8:abcd:99::1/128", namespace=namespace, status=status
         )
 
+        cls.normalization_data = [
+            {
+                "name": "Web/ App _01",
+                "expected_name": "web-app-01",
+                "address": cls.ip_address,
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Web/ App _01.Name",
+                "expected_name": "web-app-01.name",
+                "address": cls.ip_address,
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "expected_name": "foo-bar-baz.quux.name",
+                "address": cls.ip_address,
+                "zone": cls.dns_zone,
+            },
+        ]
+
     def test_create_arecord(self):
-        a_record = ARecord.objects.create(name="site.example.com", address=self.ip_address, zone=self.dns_zone)
+        a_record = ARecord(name="site.example.com", address=self.ip_address, zone=self.dns_zone)
+        a_record.validated_save()
 
         self.assertEqual(a_record.name, "site.example.com")
         self.assertEqual(a_record.address, self.ip_address)
@@ -198,8 +299,10 @@ class ARecordTestCase(TestCase):
         self.assertEqual(a_record.get_absolute_url(), f"/plugins/dns/a-records/{a_record.id}/")
 
 
-class AAAARecordTestCase(TestCase):
+class AAAARecordTestCase(RecordNameNormalizationMixin, TestCase):
     """Test the AAAARecord model."""
+
+    model = AAAARecord
 
     @classmethod
     def setUpTestData(cls):
@@ -212,8 +315,30 @@ class AAAARecordTestCase(TestCase):
         Prefix.objects.create(prefix="10.1.0.0/24", namespace=namespace, type="Pool", status=status)
         cls.ipv4_address = IPAddress.objects.create(address="10.1.0.1/32", namespace=namespace, status=status)
 
+        cls.normalization_data = [
+            {
+                "name": "Web/ App _01",
+                "expected_name": "web-app-01",
+                "address": cls.ip_address,
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Web/ App _01.Name",
+                "expected_name": "web-app-01.name",
+                "address": cls.ip_address,
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "expected_name": "foo-bar-baz.quux.name",
+                "address": cls.ip_address,
+                "zone": cls.dns_zone,
+            },
+        ]
+
     def test_create_aaaarecord(self):
-        aaaa_record = AAAARecord.objects.create(name="site.example.com", address=self.ip_address, zone=self.dns_zone)
+        aaaa_record = AAAARecord(name="site.example.com", address=self.ip_address, zone=self.dns_zone)
+        aaaa_record.validated_save()
 
         self.assertEqual(aaaa_record.name, "site.example.com")
         self.assertEqual(aaaa_record.address, self.ip_address)
@@ -240,15 +365,38 @@ class AAAARecordTestCase(TestCase):
         self.assertEqual(aaaa_record.get_absolute_url(), f"/plugins/dns/aaaa-records/{aaaa_record.id}/")
 
 
-class CNAMERecordTestCase(TestCase):
+class CNAMERecordTestCase(RecordNameNormalizationMixin, TestCase):
     """Test the CNAMERecord model."""
+
+    model = CNAMERecord
 
     @classmethod
     def setUpTestData(cls):
         cls.dns_zone = DNSZone.objects.create(name="example.com")
+        cls.normalization_data = [
+            {
+                "name": "Web/ App _01",
+                "expected_name": "web-app-01",
+                "alias": "alias.example.com",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Web/ App _01.Name",
+                "expected_name": "web-app-01.name",
+                "alias": "alias.example.com",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "expected_name": "foo-bar-baz.quux.name",
+                "alias": "alias.example.com",
+                "zone": cls.dns_zone,
+            },
+        ]
 
     def test_create_cnamerecord(self):
-        cname_record = CNAMERecord.objects.create(name="www.example.com", alias="site.example.com", zone=self.dns_zone)
+        cname_record = CNAMERecord(name="www.example.com", alias="site.example.com", zone=self.dns_zone)
+        cname_record.validated_save()
 
         self.assertEqual(cname_record.name, "www.example.com")
         self.assertEqual(cname_record.alias, "site.example.com")
@@ -259,15 +407,41 @@ class CNAMERecordTestCase(TestCase):
         self.assertEqual(cname_record.get_absolute_url(), f"/plugins/dns/cname-records/{cname_record.id}/")
 
 
-class MXRecordTestCase(TestCase):
+class MXRecordTestCase(RecordNameNormalizationMixin, TestCase):
     """Test the MXRecord model."""
+
+    model = MXRecord
 
     @classmethod
     def setUpTestData(cls):
         cls.dns_zone = DNSZone.objects.create(name="example.com")
+        cls.normalization_data = [
+            {
+                "name": "Mail/ App _01",
+                "expected_name": "mail-app-01",
+                "mail_server": "mail.example.com",
+                "preference": 10,
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "mail-record.Name",
+                "expected_name": "mail-record.name",
+                "mail_server": "mail.example.com",
+                "preference": 10,
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "expected_name": "foo-bar-baz.quux.name",
+                "mail_server": "mail.example.com",
+                "preference": 10,
+                "zone": cls.dns_zone,
+            },
+        ]
 
     def test_create_mxrecord(self):
-        mx_record = MXRecord.objects.create(name="mail-record", mail_server="mail.example.com", zone=self.dns_zone)
+        mx_record = MXRecord(name="mail-record", mail_server="mail.example.com", zone=self.dns_zone)
+        mx_record.validated_save()
 
         self.assertEqual(mx_record.name, "mail-record")
         self.assertEqual(mx_record.preference, 10)
@@ -279,15 +453,44 @@ class MXRecordTestCase(TestCase):
         self.assertEqual(mx_record.get_absolute_url(), f"/plugins/dns/mx-records/{mx_record.id}/")
 
 
-class TXTRecordTestCase(TestCase):
+class TXTRecordTestCase(RecordNameNormalizationMixin, TestCase):
     """Test the TXTRecord model."""
+
+    model = TXTRecord
 
     @classmethod
     def setUpTestData(cls):
         cls.dns_zone = DNSZone.objects.create(name="example.com")
+        cls.normalization_data = [
+            {
+                "name": "Txt/ App _01",
+                "expected_name": "txt-app-01",
+                "text": "spf-record",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Txt/ App _01.Name",
+                "expected_name": "txt-app-01.name",
+                "text": "spf-record",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "expected_name": "foo-bar-baz.quux.name",
+                "text": "spf-record",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "expected_name": "foo-bar-baz.quux.name",
+                "text": "spf-record with spaces",
+                "zone": cls.dns_zone,
+            },
+        ]
 
     def test_create_txtrecord(self):
-        txt_record = TXTRecord.objects.create(name="txt-record", text="spf-record", zone=self.dns_zone)
+        txt_record = TXTRecord(name="txt-record", text="spf-record", zone=self.dns_zone)
+        txt_record.validated_save()
 
         self.assertEqual(txt_record.name, "txt-record")
         self.assertEqual(txt_record.text, "spf-record")
@@ -298,15 +501,38 @@ class TXTRecordTestCase(TestCase):
         self.assertEqual(txt_record.get_absolute_url(), f"/plugins/dns/txt-records/{txt_record.id}/")
 
 
-class PTRRecordTestCase(TestCase):
+class PTRRecordTestCase(RecordNameNormalizationMixin, TestCase):
     """Test the PTRRecord model."""
+
+    model = PTRRecord
 
     @classmethod
     def setUpTestData(cls):
         cls.dns_zone = DNSZone.objects.create(name="example.com")
+        cls.normalization_data = [
+            {
+                "name": "Ptr/ App _01",
+                "expected_name": "ptr-app-01",
+                "ptrdname": "ptr-record",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Ptr/ App _01.Name",
+                "expected_name": "ptr-app-01.name",
+                "ptrdname": "ptr-record",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "expected_name": "foo-bar-baz.quux.name",
+                "ptrdname": "ptr-record",
+                "zone": cls.dns_zone,
+            },
+        ]
 
     def test_create_ptrrecord(self):
-        ptr_record = PTRRecord.objects.create(name="ptr-record", ptrdname="ptr-record", zone=self.dns_zone)
+        ptr_record = PTRRecord(name="ptr-record", ptrdname="ptr-record", zone=self.dns_zone)
+        ptr_record.validated_save()
 
         self.assertEqual(ptr_record.ptrdname, "ptr-record")
         self.assertEqual(str(ptr_record), ptr_record.ptrdname)
@@ -316,15 +542,46 @@ class PTRRecordTestCase(TestCase):
         self.assertEqual(ptr_record.get_absolute_url(), f"/plugins/dns/ptr-records/{ptr_record.id}/")
 
 
-class SRVRecordTestCase(TestCase):
+class SRVRecordTestCase(RecordNameNormalizationMixin, TestCase):
     """Test the SRVRecord model."""
+
+    model = SRVRecord
 
     @classmethod
     def setUpTestData(cls):
         cls.dns_zone = DNSZone.objects.create(name="example.com", ttl=7200)
+        cls.normalization_data = [
+            {
+                "name": "Sip/ App _01",
+                "expected_name": "sip-app-01",
+                "priority": 10,
+                "weight": 5,
+                "port": 5060,
+                "target": "sip.example.com",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Sip/ App _01.Name",
+                "expected_name": "sip-app-01.name",
+                "priority": 10,
+                "weight": 5,
+                "port": 5060,
+                "target": "sip.example.com",
+                "zone": cls.dns_zone,
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "expected_name": "foo-bar-baz.quux.name",
+                "priority": 10,
+                "weight": 5,
+                "port": 5060,
+                "target": "sip.example.com",
+                "zone": cls.dns_zone,
+            },
+        ]
 
     def test_create_srvrecord(self):
-        srv_record = SRVRecord.objects.create(
+        srv_record = SRVRecord(
             name="_sip._tcp.example.com",
             priority=10,
             weight=5,
@@ -335,6 +592,7 @@ class SRVRecordTestCase(TestCase):
             description="SIP server",
             comment="Primary SIP server",
         )
+        srv_record.validated_save()
 
         self.assertEqual(srv_record.name, "_sip._tcp.example.com")
         self.assertEqual(srv_record.priority, 10)
@@ -347,7 +605,7 @@ class SRVRecordTestCase(TestCase):
         self.assertEqual(str(srv_record), srv_record.name)
 
     def test_create_srvrecord_wo_ttl(self):
-        srv_record = SRVRecord.objects.create(
+        srv_record = SRVRecord(
             name="_sip._tcp.example.com",
             priority=10,
             weight=5,
@@ -357,6 +615,7 @@ class SRVRecordTestCase(TestCase):
             description="SIP server",
             comment="Primary SIP server",
         )
+        srv_record.validated_save()
 
         self.assertEqual(srv_record.name, "_sip._tcp.example.com")
         self.assertEqual(srv_record.priority, 10)
@@ -429,6 +688,7 @@ class DNSRecordNameLengthValidationTest(TestCase):
         record = TXTRecord(name="a" * 64, text="test", zone=self.zone)
         record.full_clean()  # Should not raise
 
+    @override_config(nautobot_dns_models__DNS_VALIDATION_LEVEL="wire-format")
     def test_rejects_label_exceeding_63_bytes_when_enforcement_enabled(self):
         record = TXTRecord(name="a" * 64, text="test", zone=self.zone)
         with self.assertRaises(ValidationError) as context:
@@ -447,6 +707,7 @@ class DNSRecordNameLengthValidationTest(TestCase):
         record = TXTRecord(name="x" * 63 + "." + "x" * 63 + "." + "x" * 63, text="test", zone=zone)
         record.full_clean()  # Should not raise
 
+    @override_config(nautobot_dns_models__DNS_VALIDATION_LEVEL="wire-format")
     def test_rejects_fqdn_exceeding_255_bytes_when_enforcement_enabled(self):
         zone_label = "z" * 63
         zone = DNSZone.objects.create(
@@ -465,12 +726,14 @@ class DNSRecordNameLengthValidationTest(TestCase):
         )
 
     # Structure/Format Tests
+    @override_config(nautobot_dns_models__DNS_VALIDATION_LEVEL="wire-format")
     def test_rejects_empty_label(self):
         record = TXTRecord(name="www..subdomain", text="test", zone=self.zone)
         with self.assertRaises(ValidationError) as context:
             record.full_clean()
         self.assertIn("Empty labels are not allowed", str(context.exception))
 
+    @override_config(nautobot_dns_models__DNS_VALIDATION_LEVEL="wire-format")
     def test_rejects_label_with_leading_or_trailing_dot(self):
         # Leading dot
         record = TXTRecord(name=".example", text="test", zone=self.zone)
@@ -576,6 +839,7 @@ class DNSZoneNameLengthValidationTest(TestCase):
         )
         zone.full_clean()  # Should not raise
 
+    @override_config(nautobot_dns_models__DNS_VALIDATION_LEVEL="wire-format")
     def test_rejects_label_exceeding_63_bytes_when_enforcement_enabled(self):
         zone = DNSZone(
             name="a" * 64, filename="a" * 64 + ".zone", soa_mname="ns1." + "a" * 64 + ".", soa_rname="admin@example.com"
@@ -588,6 +852,7 @@ class DNSZoneNameLengthValidationTest(TestCase):
         )
 
     # Structure/Format Tests
+    @override_config(nautobot_dns_models__DNS_VALIDATION_LEVEL="wire-format")
     def test_rejects_empty_label(self):
         zone = DNSZone(
             name="example..com",
@@ -599,6 +864,7 @@ class DNSZoneNameLengthValidationTest(TestCase):
             zone.full_clean()
         self.assertIn("Empty labels are not allowed", str(context.exception))
 
+    @override_config(nautobot_dns_models__DNS_VALIDATION_LEVEL="wire-format")
     def test_rejects_label_with_leading_or_trailing_dot(self):
         # Leading dot
         zone = DNSZone(
@@ -610,6 +876,7 @@ class DNSZoneNameLengthValidationTest(TestCase):
         with self.assertRaises(ValidationError) as context:
             zone.full_clean()
         self.assertIn("Empty labels are not allowed", str(context.exception))
+
         # Trailing dot
         zone = DNSZone(
             name="example.",

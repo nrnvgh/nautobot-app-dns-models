@@ -2,13 +2,25 @@
 
 import logging
 
+from django.apps import apps as global_apps
+from django.contrib.contenttypes.models import ContentType
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
 from nautobot.dcim.models import Device, Interface
 from nautobot.ipam.models import Service
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
+from nautobot_dns_models.models import DNSRecord
 from nautobot_dns_models.rules.engine import rule_engine
+
+try:
+    # 2.4
+    from nautobot_data_validation_engine.models import RegularExpressionValidationRule
+except ImportError:
+    # XXX 3.0; untested!
+    # XXX Also, do we really want this, or should 3.0 support come later?
+    from nautobot.data_validation.models import RegularExpressionValidationRule
+
 
 # logging.basicConfig(level=logging.DEBUG)
 
@@ -75,6 +87,63 @@ def has_model_field_changes(instance, debug_context="object"):
         # New objects always need processing
         logger.debug(f"{debug_context.title()} {instance} - new object, will process DNS rules")
         return True
+
+
+def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs):
+    """
+    Create data validation rules for DNS models after database migration.
+    """
+    logger.debug(
+        f"[SIGNAL] [post_migrate_create_data_validation_rules] [{sender}] Creating data validation rules for DNS models"
+    )
+
+    regexes = {
+        #
+        # SRV Record Name Regex:
+        # - First label must start with an underscore
+        # - Second label must start with an underscore
+        # - Subsequent labels may start with a letter, number, or underscore
+        #
+        # This is naive regex which attempts to stop things which are dead wrong but may
+        # allow things which subtly wrong in an effort to keep the regular expression sane. To
+        # that end, it should allow standard SRV record names and Microsoft AD SRV record names.
+        #
+        # Example valid SRV record names:
+        # - _kerberos._tcp.dc._msdcs
+        # - _ldap._tcp.example.com
+        # - _http._tcp.service-name-01.name
+        #
+        # Example Microsoft AD SRV record names:
+        # (ref: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/c1987d42-1847-4cc9-acf7-aab2136d6952)
+        # - _ldap._tcp.X
+        # - _ldap._tcp.dc._msdcs.X
+        # - _ldap._tcp.G. domains._msdcs.Z
+        # - _kerberos._tcp.X
+        # - _kerberos._udp.X
+        # - _kerberos._tcp.dc._msdcs.X
+    
+        "SRV": rf"^(_[a-zA-Z0-9-]{1,63}\.){2}([a-zA-Z0-9-_.]+\.?)",
+        "Other": rf"^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])$",
+    }
+
+    #
+    # TODO: when we twiddle the class map code elsewhere, update this to use some of that.
+    for record_class in DNSRecord.__subclasses__():
+        record_type = record_class.__name__.replace("Record", "")
+        regex = regexes.get(record_type, regexes["Other"])
+
+        #
+        # TODO: use get_model to get the RegularExpressionValidationRule model
+        rule, created = RegularExpressionValidationRule.objects.get_or_create(
+            name=f"RFC Compliance: DNS {record_type} Record Name",
+            field="name",
+            content_type=ContentType.objects.get_for_model(record_class),
+            regular_expression=regex,
+            error_message=f"The name of the {record_type} record must be a valid DNS name.",
+            enabled=False,
+        )
+        if created:
+            logger.debug("Created data validation rule '%s'", rule.name)
 
 
 #

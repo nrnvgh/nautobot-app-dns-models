@@ -25,6 +25,7 @@ from nautobot_dns_models.models import (
     TXTRecord,
 )
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
+from nautobot_dns_models.normalization import normalize_dns_name
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ class DNSRuleEngine:
         logger.debug(f"Processing {source_obj} (type: {content_type}) - found {rules_count} rules")
         existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=str(source_obj.pk))
 
-        # Check existing record count once (serves both logging and conditional logic)
+        # We'll need this more than once
         existing_count = existing_records.count()
         logger.debug(
             f"DNS record lookup for {source_obj} (pk={source_obj.pk}, name=\"{getattr(source_obj, 'name', 'N/A')}\"): found {existing_count} existing records"
@@ -447,7 +448,9 @@ class DNSRuleEngine:
 
         # Build base record data - exceptions bubble up naturally
         base_record_data = {
-            "name": self._render_template(rule.name_template, context, "name_template"),
+            "name": normalize_dns_name(
+                self._render_template(rule.name_template, context, "name_template")
+            ),
             "zone": self._get_zone_for_rule(rule, context),
         }
 
@@ -736,7 +739,8 @@ class DNSRuleEngine:
         elif record_type == "CNAME":
             # CNAME records need alias field
             if rule.value_template:
-                record_data["alias"] = self._render_template(rule.value_template, context, "value_template")
+                rendered_alias = self._render_template(rule.value_template, context, "value_template")
+                record_data["alias"] = normalize_dns_name(rendered_alias)
 
         elif record_type == "TXT":
             # TXT records need text field
@@ -746,17 +750,20 @@ class DNSRuleEngine:
         elif record_type == "PTR":
             # PTR records need ptrdname field
             if rule.value_template:
-                record_data["ptrdname"] = self._render_template(rule.value_template, context, "value_template")
+                rendered_ptrdname = self._render_template(rule.value_template, context, "value_template")
+                record_data["ptrdname"] = normalize_dns_name(rendered_ptrdname)
 
         elif record_type == "NS":
             # NS records need server field
             if rule.value_template:
-                record_data["server"] = self._render_template(rule.value_template, context, "value_template")
+                rendered_server = self._render_template(rule.value_template, context, "value_template")
+                record_data["server"] = normalize_dns_name(rendered_server)
 
         elif record_type == "MX":
             # MX records need mail_server and preference fields
             if rule.value_template:
-                record_data["mail_server"] = self._render_template(rule.value_template, context, "value_template")
+                rendered_mail_server = self._render_template(rule.value_template, context, "value_template")
+                record_data["mail_server"] = normalize_dns_name(rendered_mail_server)
             if rule.preference_template:
                 preference_str = self._render_template(rule.preference_template, context, "preference_template")
                 record_data["preference"] = int(preference_str)
@@ -764,7 +771,8 @@ class DNSRuleEngine:
         elif record_type == "SRV":
             # SRV records need target, priority, weight, and port fields
             if rule.value_template:
-                record_data["target"] = self._render_template(rule.value_template, context, "value_template")
+                rendered_target = self._render_template(rule.value_template, context, "value_template")
+                record_data["target"] = normalize_dns_name(rendered_target)
             if rule.priority_template:
                 priority_str = self._render_template(rule.priority_template, context, "priority_template")
                 record_data["priority"] = int(priority_str)

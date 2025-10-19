@@ -2,8 +2,10 @@
 
 from importlib import metadata
 
+from django.apps import apps
 from django.conf import settings
 from nautobot.apps import ConstanceConfigItem, NautobotAppConfig
+from nautobot.core.signals import nautobot_database_ready
 
 __version__ = metadata.version(__name__)
 
@@ -27,6 +29,12 @@ constance_additional_fields = {
                 ("none", "Disabled"),
                 ("wire-format", "Wire format"),
             ],
+        },
+    ],
+    "normalize_dns_records": [
+        "django.forms.fields.BooleanField",
+        {
+            "widget": "django.forms.CheckboxInput",
         },
     ],
 }
@@ -75,6 +83,11 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
             help_text="DNS validation level for zones and records.",
             field_type="dns_validation_level",
         ),
+        "NORMALIZE_DNS_RECORDS": ConstanceConfigItem(
+            default=False,
+            help_text="Normalize DNS records on save.",
+            field_type="normalize_dns_records",
+        ),
     }
 
     def ready(self):
@@ -82,6 +95,9 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
         super().ready()
         # Import signals to ensure they are connected
         import nautobot_dns_models.signals  # noqa: F401
+        from nautobot_dns_models.signals import post_migrate_create_data_validation_rules
+
+        nautobot_database_ready.connect(post_migrate_create_data_validation_rules, sender=self)
 
 
 config = NautobotDnsModelsConfig  # pylint:disable=invalid-name
