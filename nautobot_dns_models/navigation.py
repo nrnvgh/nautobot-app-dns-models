@@ -24,7 +24,7 @@ items = [
                 permissions=["nautobot_dns_models.add_dnsrule"],
             ),
         ),
-    )
+    ),
 ]
 
 menu_items = (

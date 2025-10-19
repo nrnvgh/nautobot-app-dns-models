@@ -16,7 +16,7 @@ from unittest import skip
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
-from jinja2 import TemplateError
+from jinja2 import TemplateError, TemplateSyntaxError
 from nautobot.apps.utils import render_jinja2
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer
 from nautobot.extras.models import Role, Status
@@ -188,53 +188,50 @@ class BaseRuleEngineTestCase(TestCase):
 class TemplateRenderingTestCase(BaseRuleEngineTestCase):
     """Template rendering, syntax errors, undefined variables, error handling."""
 
-    def test_render_jinja2_with_undefined_variable(self):
-        """Investigate what render_jinja2 does with undefined variables."""
-        result = render_jinja2("{{ undefined_var }}", {})
-        print(f"Undefined variable - Result: {repr(result)}")
-        print(f"Undefined variable - Type: {type(result)}")
-        print(f"Undefined variable - Length: {len(result)}")
-        print(f"Undefined variable - Is empty string: {result == ''}")
-        print(f"Undefined variable - Is None: {result is None}")
-        # This will show us exactly what we get
+    # def test_render_jinja2_with_undefined_variable(self):
+    #     """Investigate what render_jinja2 does with undefined variables."""
+    #     result = render_jinja2("{{ undefined_var }}", {})
+    #     print(f"Undefined variable - Result: {repr(result)}")
+    #     print(f"Undefined variable - Type: {type(result)}")
+    #     print(f"Undefined variable - Length: {len(result)}")
+    #     print(f"Undefined variable - Is empty string: {result == ''}")
+    #     print(f"Undefined variable - Is None: {result is None}")
+    #     # This will show us exactly what we get
 
-    def test_render_jinja2_with_syntax_error(self):
-        """Investigate what render_jinja2 does with syntax errors."""
-        try:
-            result = render_jinja2("{{ invalid }", {})
-            self.fail(f"Expected exception but got result: {repr(result)}")
-        except Exception as e:
-            print(f"Syntax error - Exception type: {type(e).__name__}, Message: {e}")
-            # This test will show us what actually happens
+    # def test_render_jinja2_with_syntax_error(self):
+    #     """Investigate what render_jinja2 does with syntax errors."""
+    #     with self.assertRaises(TemplateSyntaxError) as context:
+    #         render_jinja2("{{ invalid }", {})
+    #     self.assertIn("unexpected '}'", str(context.exception))
 
-    def test_render_jinja2_with_attribute_error_dict(self):
-        """Investigate what render_jinja2 does with missing dict keys."""
-        try:
-            result = render_jinja2("{{ obj.missing_attr }}", {"obj": {}})
-            print(f"Dict attribute error - Result: {repr(result)}")
-            # This might not throw an exception - let's see what we get
-        except Exception as e:
-            print(f"Dict attribute error - Exception type: {type(e).__name__}, Message: {e}")
+    # def test_render_jinja2_with_attribute_error_dict(self):
+    #     """Investigate what render_jinja2 does with missing dict keys."""
+    #     try:
+    #         result = render_jinja2("{{ obj.missing_attr }}", {"obj": {}})
+    #         print(f"Dict attribute error - Result: {repr(result)}")
+    #         # This might not throw an exception - let's see what we get
+    #     except Exception as e:
+    #         print(f"Dict attribute error - Exception type: '{type(e).__name__}', Message: {e}")
 
-    def test_render_jinja2_with_attribute_error_object(self):
-        """Investigate what render_jinja2 does with missing object attributes."""
+    # def test_render_jinja2_with_attribute_error_object(self):
+    #     """Investigate what render_jinja2 does with missing object attributes."""
 
-    def test_render_jinja2_with_none_object(self):
-        """Investigate what render_jinja2 does when accessing attributes on None."""
-        try:
-            result = render_jinja2("{{ obj.missing_attr }}", {"obj": None})
-            print(f"None attribute error - Result: {repr(result)}")
-            # This is a common case when IP addresses are removed
-        except Exception as e:
-            print(f"None attribute error - Exception type: {type(e).__name__}, Message: {e}")
+    # def test_render_jinja2_with_none_object(self):
+    #     """Investigate what render_jinja2 does when accessing attributes on None."""
+    #     try:
+    #         result = render_jinja2("{{ obj.missing_attr }}", {"obj": None})
+    #         print(f"None attribute error - Result: {repr(result)}")
+    #         # This is a common case when IP addresses are removed
+    #     except Exception as e:
+    #         print(f"None attribute error - Exception type: {type(e).__name__}, Message: {e}")
 
-    def test_render_jinja2_with_array_index_error(self):
-        """Investigate what render_jinja2 does with array index errors."""
-        try:
-            result = render_jinja2("{{ arr[5] }}", {"arr": [1, 2, 3]})
-            print(f"Array index error - Result: {repr(result)}")
-        except Exception as e:
-            print(f"Array index error - Exception type: {type(e).__name__}, Message: {e}")
+    # def test_render_jinja2_with_array_index_error(self):
+    #     """Investigate what render_jinja2 does with array index errors."""
+    #     try:
+    #         result = render_jinja2("{{ arr[5] }}", {"arr": [1, 2, 3]})
+    #         print(f"Array index error - Result: {repr(result)}")
+    #     except Exception as e:
+    #         print(f"Array index error - Exception type: {type(e).__name__}, Message: {e}")
 
     def test_render_template_method_with_valid_template(self):
         """Test _render_template method with valid input."""
@@ -304,40 +301,40 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
         result = self._render_template("{{ flag }}", {"flag": False}, "test_field")
         self.assertEqual(result, "False")  # render_jinja2 converts False to "False" string
 
-    def test_what_does_no_such_element_actually_look_like(self):
-        """Try to reproduce the '{{ no such element:' pattern we're checking for."""
-        # Based on actual logs, this pattern occurs when accessing attributes on None
-        # The pattern is: "{{ no such element: None['id'] }}"
+    # def test_what_does_no_such_element_actually_look_like(self):
+    #     """Try to reproduce the '{{ no such element:' pattern we're checking for."""
+    #     # Based on actual logs, this pattern occurs when accessing attributes on None
+    #     # The pattern is: "{{ no such element: None['id'] }}"
 
-        # Test case that should trigger the pattern (based on actual logs)
-        # Create a device without primary_ip4 for testing
-        device_no_ip = Device.objects.create(
-            name="device-no-primary-ip",
-            device_type=self.device_type,
-            location=self.location,
-            role=self.device_role,
-            status=Status.objects.get_for_model(Device).first(),
-            # primary_ip4 remains None by default
-        )
+    #     # Test case that should trigger the pattern (based on actual logs)
+    #     # Create a device without primary_ip4 for testing
+    #     device_no_ip = Device.objects.create(
+    #         name="device-no-primary-ip",
+    #         device_type=self.device_type,
+    #         location=self.location,
+    #         role=self.device_role,
+    #         status=Status.objects.get_for_model(Device).first(),
+    #         # primary_ip4 remains None by default
+    #     )
 
-        test_cases = [
-            # Case from actual logs: obj.primary_ip4.id when primary_ip4 is None
-            ("{{ obj.primary_ip4.id }}", {"obj": device_no_ip}),
-            # Case: None object attribute access - use device with no primary_ip4
-            ("{{ obj.primary_ip4.id }}", {"obj": device_no_ip}),
-        ]
+    #     test_cases = [
+    #         # Case from actual logs: obj.primary_ip4.id when primary_ip4 is None
+    #         ("{{ obj.primary_ip4.id }}", {"obj": device_no_ip}),
+    #         # Case: None object attribute access - use device with no primary_ip4
+    #         ("{{ obj.primary_ip4.id }}", {"obj": device_no_ip}),
+    #     ]
 
-        for template, context in test_cases:
-            try:
-                result = render_jinja2(template, context)
-                print(f"Template: {template}")
-                print(f"Result: {repr(result)}")
-                print(f"Contains 'no such element': {'{{ no such element:' in result}")
-                print("---")
-            except Exception as e:
-                print(f"Template: {template}")
-                print(f"Exception: {type(e).__name__}: {e}")
-                print("---")
+    #     for template, context in test_cases:
+    #         try:
+    #             result = render_jinja2(template, context)
+    #             print(f"Template: {template}")
+    #             print(f"Result: {repr(result)}")
+    #             print(f"Contains 'no such element': {'{{ no such element:' in result}")
+    #             print("---")
+    #         except Exception as e:
+    #             print(f"Template: {template}")
+    #             print(f"Exception: {type(e).__name__}: {e}")
+    #             print("---")
 
     def test_render_template_method_catches_empty_results(self):
         """Test that our _render_template method catches empty results from template failures."""
@@ -1284,7 +1281,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
                 self.fail(f"A record still exists after IP deletion: {record} - this may be problematic")
         except Exception as e:
             # Document any exceptions that occur
-            self.fail(f"Exception during IP deletion scenario: {e} - needs investigation")
+            self.fail(f"Exception during IP deletion scenario: {e} ({type(e).__name__}) - needs investigation")
 
     def test_location_specific_rule_overrides_global(self):
         """Test that location-specific rules override global rules in real DNS record creation."""

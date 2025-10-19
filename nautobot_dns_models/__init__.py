@@ -2,7 +2,6 @@
 
 from importlib import metadata
 
-from django.apps import apps
 from django.conf import settings
 from nautobot.apps import ConstanceConfigItem, NautobotAppConfig
 from nautobot.core.signals import nautobot_database_ready
@@ -99,7 +98,7 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
         """Import signal handlers when the app is ready."""
         super().ready()
         # Import signals to ensure they are connected
-        import nautobot_dns_models.signals  # noqa: F401
+        import nautobot_dns_models.signals  # pylint: disable=unused-import
         from nautobot_dns_models.signals import post_migrate_create_data_validation_rules
 
         nautobot_database_ready.connect(post_migrate_create_data_validation_rules, sender=self)

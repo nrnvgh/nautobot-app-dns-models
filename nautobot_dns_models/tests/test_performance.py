@@ -178,7 +178,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
     def test_ip_assignment_performance_with_dns_rules(self):
         """Measure IP assignment performance with DNS rules enabled."""
         # Create a DNS rule for interfaces
-        dns_rule = DNSRule.objects.create(
+        DNSRule.objects.create(
             name="Performance Test A Record",
             enabled=True,
             content_type=ContentType.objects.get_for_model(Interface),
@@ -249,7 +249,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
     def test_sequential_ip_assignment_performance(self):
         """Test performance of sequential individual IP assignments."""
         # Create single DNS rule
-        dns_rule = DNSRule.objects.create(
+        DNSRule.objects.create(
             name="Sequential Test A Record",
             enabled=True,
             content_type=ContentType.objects.get_for_model(Interface),
