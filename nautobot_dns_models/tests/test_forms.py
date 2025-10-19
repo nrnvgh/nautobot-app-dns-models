@@ -62,11 +62,7 @@ class RecordNameFormNormalizationMixin:
         """Record fields should be normalized when the constance config is set to True."""
         for normalization_data in self.normalization_data:
             expected_value, payload, field_to_check = self._strip_expected(normalization_data)
-            with self.subTest(
-                expected_value=expected_value,
-                payload=payload,
-                field_to_check=field_to_check
-            ):
+            with self.subTest(expected_value=expected_value, payload=payload, field_to_check=field_to_check):
                 print(f"expected_value: {expected_value}, payload: {payload}, field_to_check: {field_to_check}")
                 form = self.form_class(payload)
                 self.assertTrue(form.is_valid(), form.errors)
@@ -78,19 +74,12 @@ class RecordNameFormNormalizationMixin:
         """Record fields should not be normalized when the constance config is set to False."""
         for normalization_data in self.normalization_data:
             expected_value, payload, field_to_check = self._strip_expected(normalization_data)
-            with self.subTest(
-                expected_value=expected_value,
-                payload=payload,
-                field_to_check=field_to_check
-            ):
+            with self.subTest(expected_value=expected_value, payload=payload, field_to_check=field_to_check):
                 print(f"Subtest: {expected_value=}, {payload=}, {field_to_check=}")
                 form = self.form_class(payload)
                 self.assertFalse(form.is_valid())
                 print(f"form.errors: [{form.errors.as_data()}]\n")
-                self.assertIn(
-                    "Field is not normalized.", 
-                    str(form.errors.as_data().get(field_to_check))
-                )
+                self.assertIn("Field is not normalized.", str(form.errors.as_data().get(field_to_check)))
 
 
 class DNSZoneTest(TestCase):
@@ -295,10 +284,6 @@ class ARecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         self.assertTrue(form.is_valid())
         self.assertTrue(form.save())
 
-
-
-
-
     def test_ip_address_obj_is_required(self):
         data = {
             "name": "a-record",
@@ -390,8 +375,6 @@ class AAAARecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         self.assertTrue(form.errors)
 
 
-
-
 class CNAMERecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
     """Test CNAMERecord forms."""
 
@@ -463,8 +446,6 @@ class CNAMERecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         self.assertTrue(form.is_valid())
         self.assertTrue(form.save())
 
-
-
     @skip("Skipping this test for now as it is not implemented.")
     def test_alias_normalized_on_form_save(self):
         """CNAMERecord.alias should be normalized (domain-like field)."""
@@ -535,7 +516,7 @@ class MXRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
                 },
             },
         ]
- 
+
     def test_specifying_only_required_success(self):
         data = {
             "name": "mx-record",
@@ -560,8 +541,6 @@ class MXRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         form = self.form_class(data)
         self.assertTrue(form.is_valid())
         self.assertTrue(form.save())
-
- 
 
     @skip("Skipping this test for now as it is not implemented.")
     def test_mail_server_normalized_on_form_save(self):
@@ -647,7 +626,6 @@ class TXTRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
             "text": "spf record",
             "ttl": 3600,
             "zone": self.dns_zone,
-
         }
         form = self.form_class(data)
         self.assertTrue(form.is_valid())
@@ -664,8 +642,6 @@ class TXTRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         form = self.form_class(data)
         self.assertTrue(form.is_valid())
         self.assertTrue(form.save())
-
-
 
 
 class PTRRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
@@ -745,7 +721,6 @@ class PTRRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         instance = form.save()
         self.assertEqual(instance.ptrdname, "ptr-name-01.example.com")
 
-
     @skip("Skipping this test for now as it is not implemented.")
     def test_ptrdname_label_normalization_with_dots_on_form_save(self):
         """Per-label normalization preserves dots for PTRRecord.ptrdname."""
@@ -780,7 +755,7 @@ class SRVRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
                 "test_metadata": {
                     "field_to_check": "name",
                     "expected_value": "_kerberos._tcp.dc._msdcs",
-                }
+                },
             },
             {
                 "name": "_Http._TcP.Service/ Name 01",
@@ -792,7 +767,7 @@ class SRVRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
                 "test_metadata": {
                     "field_to_check": "name",
                     "expected_value": "_http._tcp.service-name-01",
-                }
+                },
             },
             {
                 "name": "_Http._TCP.Service/ Name 01.Name",
@@ -804,7 +779,7 @@ class SRVRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
                 "test_metadata": {
                     "field_to_check": "name",
                     "expected_value": "_http._tcp.service-name-01.name",
-                }
+                },
             },
             {
                 "name": "_http._tcp.service",

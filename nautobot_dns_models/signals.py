@@ -90,9 +90,7 @@ def has_model_field_changes(instance, debug_context="object"):
 
 
 def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs):
-    """
-    Create data validation rules for DNS models after database migration.
-    """
+    """Create data validation rules for DNS models after database migration."""
     logger.debug(
         f"[SIGNAL] [post_migrate_create_data_validation_rules] [{sender}] Creating data validation rules for DNS models"
     )
@@ -121,9 +119,8 @@ def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs
         # - _kerberos._tcp.X
         # - _kerberos._udp.X
         # - _kerberos._tcp.dc._msdcs.X
-    
         "SRV": rf"^(_[a-zA-Z0-9-]{1,63}\.){2}([a-zA-Z0-9-_.]+\.?)",
-        "Other": rf"^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])$",
+        "Other": r"^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])$",
     }
 
     #

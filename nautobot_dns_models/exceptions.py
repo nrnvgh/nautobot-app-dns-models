@@ -4,8 +4,6 @@
 class DNSProcessingError(Exception):
     """Base exception for DNS rule processing errors."""
 
-    pass
-
 
 class DNSTemplateEmptyError(DNSProcessingError):
     """Template rendered empty result - data missing for DNS processing."""

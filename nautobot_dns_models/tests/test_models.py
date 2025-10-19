@@ -7,6 +7,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from nautobot.apps.testing import ModelTestCases, TestCase
+from nautobot.apps.models import BaseModel
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer
 from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
@@ -47,7 +48,7 @@ def _make_unicode_label_with_idna_length(char, target_length):
 class RecordNameNormalizationMixin:
     """
     Mixin for testing record normalization.
-    
+
     This mixin is used to test that the record name is normalized when the constance config is set to True and
     that the record fails validation when the constance config is set to False.
 
@@ -58,7 +59,7 @@ class RecordNameNormalizationMixin:
         - expected_name: The expected normalized name
         - other keys are the fields of the model to create the record with
 
-    TODO: allow tests with all good data to be used for both tests; currently, the second test 
+    TODO: allow tests with all good data to be used for both tests; currently, the second test
     TODO: will fail if the name doesn't require normalization.
     """
 
@@ -77,7 +78,7 @@ class RecordNameNormalizationMixin:
         for normalization_data in self.normalization_data:
             with self.subTest(normalization_data=normalization_data):
                 expected_name, record_create_data = self._strip_expected(normalization_data)
-                record = self.model(**record_create_data)
+                record = self.model(**record_create_data)  # pylint: disable=not-callable
                 record.full_clean()
 
                 self.assertEqual(record.name, expected_name)
@@ -88,7 +89,7 @@ class RecordNameNormalizationMixin:
 
         for normalization_data in self.normalization_data:
             _, record_create_data = self._strip_expected(normalization_data)
-            record = self.model(**record_create_data)
+            record = self.model(**record_create_data)  # pylint: disable=not-callable
             with self.assertRaises(ValidationError) as context:
                 record.full_clean()
 
@@ -1750,7 +1751,6 @@ class DNSRuleRecordTestCase(TestCase):
         self.assertEqual(len(str(rule_record.id)), 36)  # UUID string length
 
         # Should inherit from BaseModel (basic check)
-        from nautobot.apps.models import BaseModel
 
         self.assertIsInstance(rule_record, BaseModel)
 

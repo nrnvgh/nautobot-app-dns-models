@@ -91,7 +91,6 @@ class DNSModel(PrimaryModel):
         if self._normalize_dns_records_enabled:
             setattr(self, field_name, normalize_dns_name(field_value))
         else:
-
             if field_value != normalize_dns_name(field_value):
                 errors[field_name].append("Field is not normalized.")
 
@@ -302,17 +301,13 @@ class DNSRecord(DNSModel):
         wire_length += 1  # Add the final zero byte for root
 
         if wire_length > 255:
-            raise ValidationError(
-                {"name": "Total length of DNS name cannot exceed 255 bytes (octets) in wire format."}
-            )
+            raise ValidationError({"name": "Total length of DNS name cannot exceed 255 bytes (octets) in wire format."})
 
     #
     # NOTE to myself: we may want to call self.full_clean() here to ensure all
     # NOTE normalization and validation is run.
     # def save(self, *args, **kwargs):
     #     return super().save(*args, **kwargs)
-
-
 
     class Meta:
         """Meta attributes for DnsRecord."""
@@ -608,7 +603,7 @@ class SRVRecord(DNSRecord):
         unique_together = [["name", "target", "port", "zone"]]
         verbose_name = "SRV Record"
         verbose_name_plural = "SRV Records"
-    
+
 
 # DNS Record type choices for DNSRule
 RECORD_TYPE_CHOICES = [

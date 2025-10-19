@@ -151,6 +151,7 @@ def collect_literal_validation_errors(
 
     return results
 
+
 def _string_contains_space(value: str) -> bool:
     """Check if a string contains any space characters using regex."""
     return WHITESPACE_REGEX.search(value) is not None

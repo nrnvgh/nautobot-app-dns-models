@@ -470,6 +470,7 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
     #
     # We don't define an object_detail_content property here because we want to build the panels dynamically.
     def get_object(self):
+        """Get the object and build the panels."""
         obj = super().get_object()
         self.object_detail_content = self._build_panels(obj)
 
@@ -493,7 +494,7 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
         #
         # NOTE: Temporarily disabled until/unless we tweak things. At issue is that, by default, nautobot
         # puts a lot of padding around <pre> tags, so when you render a bunch of rows with them,
-        # those rows take up a lot of vertical space. If/when we re-jigger how weights and the like 
+        # those rows take up a lot of vertical space. If/when we re-jigger how weights and the like
         # are handled, we can revisit this; if those fields aren't templates, we can eshew <pre> tags.
         #
         # That said, it's (currently) really only a visible issue for SRV records, so maybe it's not
@@ -517,7 +518,7 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
                     weight=200,
                     section=SectionChoices.LEFT_HALF,
                     fields=record_type_fields,
-                    #value_transforms=template_field_transforms,
+                    # value_transforms=template_field_transforms,
                 ),
             ]
         )

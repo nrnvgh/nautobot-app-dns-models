@@ -24,8 +24,8 @@ from nautobot_dns_models.models import (
     SRVRecord,
     TXTRecord,
 )
-from nautobot_dns_models.rules.template_proxies import wrap_for_template
 from nautobot_dns_models.normalization import normalize_dns_name
+from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
 logger = logging.getLogger(__name__)
 
@@ -448,9 +448,7 @@ class DNSRuleEngine:
 
         # Build base record data - exceptions bubble up naturally
         base_record_data = {
-            "name": normalize_dns_name(
-                self._render_template(rule.name_template, context, "name_template")
-            ),
+            "name": normalize_dns_name(self._render_template(rule.name_template, context, "name_template")),
             "zone": self._get_zone_for_rule(rule, context),
         }
 
