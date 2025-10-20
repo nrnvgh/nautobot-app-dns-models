@@ -81,12 +81,12 @@ def ip_address(ip_obj, version=None):
     if isinstance(ip_obj, IPAddress):
         # Single IP object that didn't match version filter
         raise ValueError(f"IP address is IPv{ip_obj.ip_version}, not IPv{version}: {ip_obj.host}")
-    else:
-        # Collection/QuerySet with no matching IPs
-        if version is not None:
-            raise ValueError(f"No IPv{version} addresses found in collection")
-        else:
-            raise ValueError("No IP addresses found in collection")
+
+    # Collection/QuerySet with no matching IPs
+    if version is not None:
+        raise ValueError(f"No IPv{version} addresses found in collection")
+
+    raise ValueError("No IP addresses found in collection")
 
 
 @library.filter
