@@ -796,7 +796,6 @@ class DNSRuleEngine:
         # Placeholder - dependency tracking implementation was successful POC
         # but has been deferred for now to focus on core multi-record functionality
         logger.debug(f"Dependency tracking placeholder for rule {rule.name} - implementation deferred")
-        pass
 
 
 # Global instance for use by signal handlers
