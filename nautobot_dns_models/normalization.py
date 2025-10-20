@@ -40,6 +40,9 @@ def _normalize_label(label: str) -> str:
     if not label:
         return label
 
+    #
+    # FIXME: this leading underscore handling could be smartened up to only apply to the
+    # FIXME records which require it.
     leading_underscore = label.startswith("_")
     remainder = label[1:] if leading_underscore else label
 
