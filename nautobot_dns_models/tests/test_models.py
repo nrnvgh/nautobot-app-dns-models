@@ -6,8 +6,8 @@ from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
-from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.apps.models import BaseModel
+from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer
 from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
