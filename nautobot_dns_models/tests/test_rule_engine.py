@@ -16,7 +16,7 @@ from unittest import skip
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
-from jinja2 import TemplateError, TemplateSyntaxError
+from jinja2 import TemplateSyntaxError, UndefinedError
 from nautobot.apps.utils import render_jinja2
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer
 from nautobot.extras.models import Role, Status
@@ -246,8 +246,7 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
 
     def test_render_template_method_with_syntax_error(self):
         """Test _render_template method behavior with syntax errors."""
-        # render_jinja2 throws TemplateSyntaxError, which we catch and re-raise as TemplateError
-        with self.assertRaises(TemplateError):
+        with self.assertRaises(TemplateSyntaxError):
             self._render_template("{{ invalid }", {}, "test_field")
 
     def test_render_template_method_with_none_attribute(self):
@@ -263,7 +262,6 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
 
     def test_render_template_method_with_array_index_error(self):
         """Test _render_template method behavior with array index errors."""
-        # render_jinja2 throws UndefinedError for array index errors, which we catch and re-raise
         # Create interface with no IP addresses to test array index error
         empty_interface = Interface.objects.create(
             name="empty-interface",
@@ -271,8 +269,10 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
             type="1000base-t",
             status=Status.objects.get_for_model(Interface).first(),
         )
-        with self.assertRaises(TemplateError):
+        with self.assertRaises(UndefinedError) as context:
             self._render_template("{{ obj.ip_addresses[0].id }}", {"obj": empty_interface}, "test_field")
+
+        self.assertIn("object has no element 0", str(context.exception))
 
     def test_render_template_method_empty_string_handling(self):
         """Test that empty string results are treated as errors."""
