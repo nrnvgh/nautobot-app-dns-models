@@ -79,7 +79,7 @@ This setting controls the DNS validation level applied to zones and records:
 
 `NORMALIZE_DNS_RECORDS` (boolean; default=`False`)
 
-Controls whether the plugin automatically normalizes record fields before saving (UI/API writes). When disabled, inputs must already be normalized or validation will fail.
+Controls whether the plugin automatically normalizes record fields before saving (UI/API writes and records created by `DNSRule`). When disabled, inputs must already be normalized or validation will fail.
 
 - What normalization does
   - Lowercases each label

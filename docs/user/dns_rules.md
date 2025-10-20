@@ -188,23 +188,6 @@ Services inherit location and tenant from their parent object:
 - Tenant rules for ACME Corp (if no location rule)
 - Global rules (lowest precedence)
 
-## Template Filters
-
-### IP Address Filter
-
-Convert IP address objects to UUIDs for A/AAAA record values:
-
-- **Single IP**: `{{ obj.primary_ip4 }}`
-- **Multiple IPs**: `{{ obj.ip_addresses.all() }}`
-- **Filtered IPs**: `{{ obj.ip_addresses.filter(role="primary") }}`
-
-### DNS Normalize Filter
-
-Ensure DNS-compliant names:
-
-- **Basic**: `{{ obj.name | dns_normalize }}` 
-- **Effect**: Converts spaces to hyphens, lowercases text, removes invalid characters
-
 ## Rule Management
 
 ### Enabling and Disabling Rules

@@ -65,17 +65,6 @@ Record-specific templates (MX preference, SRV priority/weight/port) are required
 - `{{ obj.ip_addresses.first() }}` - Creates 1 record from first IP
 - `{{ obj.ip_addresses.filter(role="primary") }}` - Creates 1 record per filtered IP
 
-### DNS Normalize Filter
-
-**Purpose**: Ensure DNS-compliant record names.
-
-**Usage**:
-
-- `{{ obj.name | dns_normalize }}` - Converts to DNS-safe format
-- `{{ "Web Server 01" | dns_normalize }}` - Returns `"web-server-01"`
-- `{{ "Mgmt/Backup" | dns_normalize }}` - Returns `"mgmt-backup"`
-
-**Transformations**: Lowercase, spaces→hyphens, remove invalid characters
 
 ## Template Patterns
 
@@ -84,14 +73,14 @@ Record-specific templates (MX preference, SRV priority/weight/port) are required
 **Basic Device A Record**:
 ```jinja2
 Zone Template: example.com
-Name Template: {{ obj.name | dns_normalize }}
+Name Template: {{ obj.name }}
 Value Template: {{ obj.primary_ip4 }}
 ```
 
 **Location-Aware Device Record**:
 ```jinja2
 Zone Template: {{ obj.location.name | lower }}.example.com
-Name Template: {{ obj.name | dns_normalize }}
+Name Template: {{ obj.name }}
 Value Template: {{ obj.primary_ip4 }}
 ```
 
@@ -100,15 +89,15 @@ Value Template: {{ obj.primary_ip4 }}
 **Interface A Records (Multi-IP)**:
 ```jinja2
 Zone Template: example.com
-Name Template: {{ obj.name | dns_normalize }}.{{ obj.device.name | dns_normalize }}
+Name Template: {{ obj.name }}.{{ obj.device.name }}
 Value Template: {{ obj.ip_addresses.all() }}
 ```
 
 **Interface CNAME to Device**:
 ```jinja2
 Zone Template: {{ obj.device.location.name | lower }}.example.com
-Name Template: {{ obj.name | dns_normalize }}.{{ obj.device.name | dns_normalize }}
-Value Template: {{ obj.device.name | dns_normalize }}.mgmt.example.com
+Name Template: {{ obj.name }}.{{ obj.device.name }}
+Value Template: {{ obj.device.name }}.mgmt.example.com
 ```
 
 ### Service Templates
@@ -116,7 +105,7 @@ Value Template: {{ obj.device.name | dns_normalize }}.mgmt.example.com
 **Basic Service A Record**:
 ```jinja2
 Zone Template: services.example.com
-Name Template: {{ obj.name | dns_normalize }}
+Name Template: {{ obj.name }}
 Value Template: {{ obj.ip_addresses.all() }}
 ```
 
@@ -124,20 +113,20 @@ Value Template: {{ obj.ip_addresses.all() }}
 ```jinja2
 # Device-attached service
 Zone Template: {{ obj.device.location.name | lower }}.example.com
-Name Template: {{ obj.name | dns_normalize }}.{{ obj.device.name | dns_normalize }}
+Name Template: {{ obj.name }}.{{ obj.device.name }}
 Value Template: {{ obj.ip_addresses.all() }}
 
 # VM-attached service  
 Zone Template: {{ obj.virtual_machine.cluster.location.name | lower }}.example.com
-Name Template: {{ obj.name | dns_normalize }}.{{ obj.virtual_machine.name | dns_normalize }}
+Name Template: {{ obj.name }}.{{ obj.virtual_machine.name }}
 Value Template: {{ obj.ip_addresses.all() }}
 ```
 
 **Conditional Service Templates**:
 ```jinja2
 # Handle both device and VM-attached services
-Zone Template: {% if obj.device %}{{ obj.device.location.name | dns_normalize }}{% else %}{{ obj.virtual_machine.cluster.location.name | dns_normalize }}{% endif %}.example.com
-Name Template: {{ obj.name | dns_normalize }}
+Zone Template: {% if obj.device %}{{ obj.device.location.name }}{% else %}{{ obj.virtual_machine.cluster.location.name }}{% endif %}.example.com
+Name Template: {{ obj.name }}
 Value Template: {{ obj.ip_addresses.all() }}
 ```
 
@@ -153,7 +142,7 @@ Value Template: {{ obj.ip_addresses.all() }}
 ```jinja2
 Zone Template: example.com
 Name Template: mail
-Value Template: {{ obj.name | dns_normalize }}.example.com
+Value Template: {{ obj.name }}.example.com
 Preference Template: 10
 ```
 
@@ -174,8 +163,8 @@ mail    IN MX    10 web-server-01.example.com.
 **Example**:
 ```jinja2
 Zone Template: example.com
-Name Template: _http._tcp.{{ obj.name | dns_normalize }}
-Value Template: {{ obj.name | dns_normalize }}.example.com
+Name Template: _http._tcp.{{ obj.name }}
+Value Template: {{ obj.name }}.example.com
 Priority Template: 10
 Weight Template: 5
 Port Template: 80
@@ -213,17 +202,17 @@ _http._tcp.web-server-01    IN SRV    10 5 80 web-server-01.example.com.
 
 **Hierarchical Names**:
 ```jinja2
-{{ obj.name | dns_normalize }}.{{ obj.device.rack.name | dns_normalize }}.{{ obj.device.location.name | dns_normalize }}
+{{ obj.name }}.{{ obj.device.rack.name }}.{{ obj.device.location.name }}
 ```
 
 **Role-Based Names**:
 ```jinja2
 {% if obj.device.role.name == "Web Server" %}
-web-{{ obj.name | dns_normalize }}
+web-{{ obj.name }}
 {% elif obj.device.role.name == "Database" %}
-db-{{ obj.name | dns_normalize }}
+db-{{ obj.name }}
 {% else %}
-{{ obj.name | dns_normalize }}
+{{ obj.name }}
 {% endif %}
 ```
 
@@ -283,10 +272,6 @@ The rendering engine expects a Nautobot `IPAddress` object, so referencing the `
 - Avoid complex loops or heavy computation
 - Use efficient Django ORM patterns
 
-### Filter Usage
-- Use `| dns_normalize` for names (recommended)
-- Minimize custom filter chains
-
 ### Object Relationships
 - Leverage existing Django relationships
 - Avoid deep nested traversals when possible
@@ -296,9 +281,8 @@ The rendering engine expects a Nautobot `IPAddress` object, so referencing the `
 
 ### Template Design
 1. **Start simple**: Basic templates first, add complexity later
-2. **Use filters**: Always apply appropriate filters (`dns_normalize`, `ip_address`)
-3. **Handle missing data**: Include conditional logic for optional fields
-4. **Test thoroughly**: Validate templates with real objects before deployment
+2. **Handle missing data**: Include conditional logic for optional fields
+3. **Test thoroughly**: Validate templates with real objects before deployment
 
 ### Rule Organization  
 1. **Descriptive names**: Include content type and scope in rule names
