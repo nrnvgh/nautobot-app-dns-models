@@ -11,13 +11,22 @@ from nautobot_dns_models import forms
 from nautobot_dns_models.models import DNSZone
 
 
+#
+# TODO: add any other tests which appear in all/most form test cases
+# TODO: and update the name to reflect that
 class RecordNameFormNormalizationMixin:
     """Mixin for shared form normalization tests.
 
     Subclasses must define:
     - form_class: the ModelForm class under test.
-    - build_valid_data(name: str) -> dict: returns a form data dict with all required fields for the record type,
-      using the provided name.
+    - normalization_data: a list of dictionaries, each containing the following keys:
+      - name: the name of the record to create
+      - expected_name: the expected normalized name
+      - other keys are the fields of the model to create the record with
+      - test_metadata: a dictionary containing the following keys:
+        - field_to_check: the field to check
+        - expected_value: the expected value of the field
+      - zone: the zone to create the record in
     """
 
     @staticmethod
@@ -34,9 +43,9 @@ class RecordNameFormNormalizationMixin:
         for normalization_data in self.normalization_data:
             expected_value, payload, field_to_check = self._strip_expected(normalization_data)
             with self.subTest(expected_value=expected_value, payload=payload, field_to_check=field_to_check):
-                print(f"expected_value: {expected_value}, payload: {payload}, field_to_check: {field_to_check}")
                 form = self.form_class(payload)
                 self.assertTrue(form.is_valid(), form.errors)
+
                 instance = form.save()
                 self.assertEqual(getattr(instance, field_to_check), expected_value)
 
@@ -46,11 +55,52 @@ class RecordNameFormNormalizationMixin:
         for normalization_data in self.normalization_data:
             expected_value, payload, field_to_check = self._strip_expected(normalization_data)
             with self.subTest(expected_value=expected_value, payload=payload, field_to_check=field_to_check):
-                print(f"Subtest: {expected_value=}, {payload=}, {field_to_check=}")
                 form = self.form_class(payload)
                 self.assertFalse(form.is_valid())
-                print(f"form.errors: [{form.errors.as_data()}]\n")
                 self.assertIn("Field is not normalized.", str(form.errors.as_data().get(field_to_check)))
+
+
+class MultipleFieldsFormNormalizationMixin:
+    """
+    Mixin which tests that classes which have multiple fields to normalize behave correctly.
+
+    Subclasses must define:
+    - form_class: the ModelForm class under test.
+    - multiple_fields_normalization_data: a dictionary containing the following keys:
+      - test_metadata: a dictionary containing the following keys:
+        - fields_to_check: a list of dictionaries, each containing the following keys:
+          - field: the field to check
+          - expected_value: the expected value of the field
+    """
+
+    @override_config(nautobot_dns_models__NORMALIZE_DNS_RECORDS=True)
+    def test_multiple_fields_success_when_constance_config_normalize_true(self):
+        """Multiple fields should be normalized when the constance config is set to True."""
+        payload = {x: y for x, y in self.multiple_fields_normalization_data.items() if x != "test_metadata"}
+        test_metadata = self.multiple_fields_normalization_data.get("test_metadata")
+
+        form = self.form_class(payload)
+        self.assertTrue(form.is_valid(), form.errors.as_data())
+        instance = form.save()
+
+        for rule in test_metadata.get("fields_to_check"):
+            with self.subTest(rule=rule):
+                self.assertEqual(getattr(instance, rule["field"]), rule["expected_value"])
+
+    @override_config(nautobot_dns_models__NORMALIZE_DNS_RECORDS=False)
+    def test_multiple_fields_fail_when_constance_config_normalize_false(self):
+        """Multiple fields should not be normalized and should report all errorswhen the constance config is set to False."""
+        payload = {x: y for x, y in self.multiple_fields_normalization_data.items() if x != "test_metadata"}
+        test_metadata = self.multiple_fields_normalization_data.get("test_metadata")
+
+        form = self.form_class(payload)
+        self.assertFalse(form.is_valid())
+
+        for rule in test_metadata.get("fields_to_check"):
+            with self.subTest(rule=rule):
+                self.assertIn(rule["field"], form.errors)
+                self.assertEqual(len(form.errors[rule["field"]]), 1)
+                self.assertIn("Field is not normalized.", form.errors[rule["field"]][0])
 
 
 class DNSZoneTest(TestCase):
@@ -101,7 +151,7 @@ class DNSZoneTest(TestCase):
         self.assertIn("This field is required.", form.errors["name"])
 
 
-class NSRecordFormTestCase(TestCase):
+class NSRecordFormTestCase(RecordNameFormNormalizationMixin, MultipleFieldsFormNormalizationMixin, TestCase):
     """Test NSRecord forms."""
 
     form_class = forms.NSRecordForm
@@ -109,6 +159,72 @@ class NSRecordFormTestCase(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.dns_zone = DNSZone.objects.create(name="example.com")
+
+        cls.normalization_data = [
+            {
+                "name": "NS/ Record _01",
+                "server": "server.example.com",
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "name",
+                    "expected_value": "ns-record-01",
+                },
+            },
+            {
+                "name": "NS/ Record _01.Example.COM",
+                "server": "server.example.com",
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "name",
+                    "expected_value": "ns-record-01.example.com",
+                },
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "server": "server.example.com",
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "name",
+                    "expected_value": "foo-bar-baz.quux.name",
+                },
+            },
+            {
+                "name": "Foo/_Bar  Baz.Quux___.Name",
+                "server": "Ns/_Rec_Ord.One___.Two.example.com",
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "server",
+                    "expected_value": "ns-rec-ord.one.two.example.com",
+                },
+            },
+            {
+                "name": "ns-record",
+                "server": "Ns/_Rec _Ord. One___.Two.example.com",
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "server",
+                    "expected_value": "ns-rec-ord.one.two.example.com",
+                },
+            },
+        ]
+
+        cls.multiple_fields_normalization_data = {
+            "name": "NS/ Record _01",
+            "server": "Ns/_Rec _Ord. One___.Two.example.com",
+            "zone": cls.dns_zone,
+            "test_metadata": {
+                "fields_to_check": [
+                    {
+                        "field": "name",
+                        "expected_value": "ns-record-01",
+                    },
+                    {
+                        "field": "server",
+                        "expected_value": "ns-rec-ord.one.two.example.com",
+                    },
+                ],
+            },
+        }
 
     def test_specifying_all_fields_success(self):
         data = {
@@ -142,34 +258,6 @@ class NSRecordFormTestCase(TestCase):
         self.assertFalse(form.is_valid())
         self.assertTrue(form.errors)
         self.assertIn("This field is required.", form.errors["zone"])
-
-    @skip("Skipping because we need to update how normalization rules are applied to the form.")
-    def test_name_normalized_on_form_save(self):
-        """NSRecord.name should be normalized on save (base model)."""
-        data = {
-            "name": "NS/ Record _01",
-            "server": "server.example.com",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.name, "ns-record-01")
-
-    @skip("Skipping because we need to update how normalization rules are applied to the form.")
-    def test_name_label_normalization_with_dots_on_form_save(self):
-        """Per-label normalization preserves dots for NSRecord.name."""
-        data = {
-            "name": "Ns/_Rec_Ord.One___.Two",
-            "server": "ns.example.com",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.name, "ns-rec-ord.one.two")
 
     @skip("Skipping this test for now as it is not implemented.")
     def test_server_normalized_on_form_save(self):
@@ -344,7 +432,7 @@ class AAAARecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         self.assertTrue(form.errors)
 
 
-class CNAMERecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
+class CNAMERecordFormTestCase(RecordNameFormNormalizationMixin, MultipleFieldsFormNormalizationMixin, TestCase):
     """Test CNAMERecord forms."""
 
     form_class = forms.CNAMERecordForm
@@ -383,6 +471,15 @@ class CNAMERecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
             },
             {
                 "name": "cname-record",
+                "alias": "Alias/ Name _01",
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "alias",
+                    "expected_value": "alias-name-01",
+                },
+            },
+            {
+                "name": "cname-record",
                 "alias": "Alias/ Name _01.Example.COM",
                 "zone": cls.dns_zone,
                 "test_metadata": {
@@ -391,6 +488,25 @@ class CNAMERecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
                 },
             },
         ]
+
+        cls.multiple_fields_normalization_data = {
+            "name": "Cn/ame-rec Ord",
+            "alias": "Alias/ Name _01.Example.COM",
+            "ttl": 3600,
+            "zone": cls.dns_zone,
+            "test_metadata": {
+                "fields_to_check": [
+                    {
+                        "field": "name",
+                        "expected_value": "cn-ame-rec-ord",
+                    },
+                    {
+                        "field": "alias",
+                        "expected_value": "alias-name-01.example.com",
+                    },
+                ],
+            },
+        }
 
     def test_specifying_only_required_success(self):
         data = {
@@ -415,36 +531,8 @@ class CNAMERecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         self.assertTrue(form.is_valid())
         self.assertTrue(form.save())
 
-    @skip("Skipping this test for now as it is not implemented.")
-    def test_alias_normalized_on_form_save(self):
-        """CNAMERecord.alias should be normalized (domain-like field)."""
-        data = {
-            "name": "cname-record",
-            "alias": "Alias/ Name _01.Example.COM",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.alias, "alias-name-01.example.com")
 
-    @skip("Skipping this test for now as it is not implemented.")
-    def test_alias_label_normalization_with_dots_on_form_save(self):
-        """Per-label normalization preserves dots for CNAMERecord.alias."""
-        data = {
-            "name": "cname-record",
-            "alias": "Alias/_Name 01.Example.COM",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.alias, "alias-name-01.example.com")
-
-
-class MXRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
+class MXRecordFormTestCase(RecordNameFormNormalizationMixin, MultipleFieldsFormNormalizationMixin, TestCase):
     """Test MXRecord forms."""
 
     form_class = forms.MXRecordForm
@@ -484,7 +572,46 @@ class MXRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
                     "expected_value": "foo-bar-baz.quux.name",
                 },
             },
+            {
+                "name": "mx-record",
+                "mail_server": "Mail/ Server _01",
+                "preference": 10,
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "mail_server",
+                    "expected_value": "mail-server-01",
+                },
+            },
+            {
+                "name": "mx-record",
+                "mail_server": "Mail/ Server _01.Example.COM",
+                "preference": 10,
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "mail_server",
+                    "expected_value": "mail-server-01.example.com",
+                },
+            },
         ]
+
+        cls.multiple_fields_normalization_data = {
+            "name": "Mx/ Record _01",
+            "mail_server": "Mail/ Server _01.Example.COM",
+            "preference": 10,
+            "zone": cls.dns_zone,
+            "test_metadata": {
+                "fields_to_check": [
+                    {
+                        "field": "name",
+                        "expected_value": "mx-record-01",
+                    },
+                    {
+                        "field": "mail_server",
+                        "expected_value": "mail-server-01.example.com",
+                    },
+                ],
+            },
+        }
 
     def test_specifying_only_required_success(self):
         data = {
@@ -510,36 +637,6 @@ class MXRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         form = self.form_class(data)
         self.assertTrue(form.is_valid())
         self.assertTrue(form.save())
-
-    @skip("Skipping this test for now as it is not implemented.")
-    def test_mail_server_normalized_on_form_save(self):
-        """MXRecord.mail_server should be normalized (domain-like field)."""
-        data = {
-            "name": "mx-record",
-            "preference": 10,
-            "mail_server": "Mail/ Server _01.Example.COM",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.mail_server, "mail-server-01.example.com")
-
-    @skip("Skipping this test for now as it is not implemented.")
-    def test_mail_server_label_normalization_with_dots_on_form_save(self):
-        """Per-label normalization preserves dots for MXRecord.mail_server."""
-        data = {
-            "name": "mx-record",
-            "preference": 10,
-            "mail_server": "Mail/_Server 01.Example.COM",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.mail_server, "mail-server-01.example.com")
 
 
 class TXTRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
@@ -650,6 +747,24 @@ class PTRRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
                     "expected_value": "foo-bar-baz.quux.name",
                 },
             },
+            {
+                "name": "ptr-record",
+                "ptrdname": "Ptr/_Name 01",
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "ptrdname",
+                    "expected_value": "ptr-name-01",
+                },
+            },
+            {
+                "name": "ptr-record",
+                "ptrdname": "Ptr/_Name 01.Example.COM",
+                "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "ptrdname",
+                    "expected_value": "ptr-name-01.example.com",
+                },
+            },
         ]
 
     def test_specifying_only_required_success(self):
@@ -676,36 +791,8 @@ class PTRRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         self.assertTrue(form.is_valid())
         self.assertTrue(form.save())
 
-    @skip("Skipping this test for now as it is not implemented.")
-    def test_ptrdname_normalized_on_form_save(self):
-        """PTRRecord.ptrdname should be normalized (domain-like field)."""
-        data = {
-            "name": "ptr-record",
-            "ptrdname": "PTR/ Name _01.Example.COM",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.ptrdname, "ptr-name-01.example.com")
 
-    @skip("Skipping this test for now as it is not implemented.")
-    def test_ptrdname_label_normalization_with_dots_on_form_save(self):
-        """Per-label normalization preserves dots for PTRRecord.ptrdname."""
-        data = {
-            "name": "ptr-record",
-            "ptrdname": "Ptr/_Name 01.Example.COM",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.ptrdname, "ptr-name-01.example.com")
-
-
-class SRVRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
+class SRVRecordFormTestCase(RecordNameFormNormalizationMixin, MultipleFieldsFormNormalizationMixin, TestCase):
     """Test SRVRecord forms."""
 
     form_class = forms.SRVRecordForm
@@ -755,15 +842,49 @@ class SRVRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
                 "priority": 10,
                 "weight": 5,
                 "port": 8080,
-                "target": "Target/ Host _01.Example.COM",
+                "target": "Target/ Host _01",
                 "ttl": 3600,
                 "zone": cls.dns_zone,
+                "test_metadata": {
+                    "field_to_check": "target",
+                    "expected_value": "target-host-01",
+                },
+            },
+            {
+                "name": "_http._tcp.service",
+                "priority": 10,
+                "weight": 5,
+                "port": 8080,
+                "target": "Target/ Host _01.Example.COM",
+                "ttl": 3600,
+                "zone": cls.dns_zone.pk,
                 "test_metadata": {
                     "field_to_check": "target",
                     "expected_value": "target-host-01.example.com",
                 },
             },
         ]
+
+        cls.multiple_fields_normalization_data = {
+            "name": "_Http._TCP.Service/ Name 01",
+            "target": "Target/ Host _01.Example.COM",
+            "zone": cls.dns_zone.pk,
+            "priority": 10,
+            "weight": 5,
+            "port": 8080,
+            "test_metadata": {
+                "fields_to_check": [
+                    {
+                        "field": "name",
+                        "expected_value": "_http._tcp.service-name-01",
+                    },
+                    {
+                        "field": "target",
+                        "expected_value": "target-host-01.example.com",
+                    },
+                ],
+            },
+        }
 
     def test_specifying_only_required_success(self):
         data = {
@@ -773,7 +894,7 @@ class SRVRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
             "port": 8080,
             "target": "server.example.com",
             "ttl": 3600,
-            "zone": self.dns_zone,
+            "zone": self.dns_zone.pk,
         }
         form = self.form_class(data)
         self.assertTrue(form.is_valid())
@@ -865,42 +986,3 @@ class SRVRecordFormTestCase(RecordNameFormNormalizationMixin, TestCase):
         self.assertIn("Ensure this value is greater than or equal to 0.", form.errors["priority"])
         self.assertIn("Ensure this value is greater than or equal to 0.", form.errors["weight"])
         self.assertIn("Ensure this value is greater than or equal to 0.", form.errors["port"])
-
-    #
-    # TODO: figure out how to roll arbritrary field normalizatoin tests into the mixin.
-    @skip("Skipping this test for now as it is not implemented.")
-    def test_target_normalized_on_form_save(self):
-        """SRVRecord.target should be normalized (domain-like field)."""
-        data = {
-            "name": "_http._tcp.service",
-            "priority": 10,
-            "weight": 5,
-            "port": 8080,
-            "target": "Target/ Host _01.Example.COM",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.target, "target-host-01.example.com")
-
-    @skip("Skipping this test for now as it is not implemented.")
-    def test_target_label_normalization_with_dots_on_form_save(self):
-        """Per-label normalization preserves dots for SRVRecord.target."""
-        data = {
-            "name": "_http._tcp.service",
-            "priority": 10,
-            "weight": 5,
-            "port": 8080,
-            "target": "Target/_Host 01.Example.COM",
-            "ttl": 3600,
-            "zone": self.dns_zone,
-        }
-        form = self.form_class(data)
-        self.assertTrue(form.is_valid())
-        instance = form.save()
-        self.assertEqual(instance.target, "target-host-01.example.com")
-
-        instance = form.save()
-        self.assertEqual(instance.target, "target-host-01.example.com")
