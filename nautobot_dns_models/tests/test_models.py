@@ -1538,6 +1538,82 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         with self.assertRaises(ValidationError):
             disabled_location_rule.full_clean()
 
+    def test_txt_value_template_allows_whitespace(self):
+        """TXT records: allow whitespace in value_template."""
+
+        rule = DNSRule(
+            name="txt-allow-whitespace-value",
+            content_type=self.content_type_device,
+            zone_template="example.com",
+            record_type="TXT",
+            name_template="{{ obj.name }}-info",
+            value_template="managed device",  # whitespace allowed for TXT value_template
+            enabled=False,
+        )
+        rule.full_clean()  # should not raise
+
+    def test_whitespace_disallowed_elsewhere_all_record_types(self):
+        """Whitespace is disallowed in all templates for all record types, except TXT value_template."""
+
+        record_types = [x[0] for x in RECORD_TYPE_CHOICES]
+
+        # Base valid (no-whitespace) templates
+        base_kwargs = {
+            "content_type": self.content_type_device,
+            "zone_template": "example.com",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.primary_ip4.id }}",
+            "enabled": False,
+        }
+
+        # Whitespace-injected variants per field
+        whitespace_templates = {
+            "zone_template": "example com",
+            "name_template": "{{ 'device info' }}",
+            "value_template": "primary ip",
+            # For SRV/MX extras (when applicable)
+            "preference_template": "{{ '1 0' }}",
+            "priority_template": "{{ '1 0' }}",
+            "weight_template": "{{ '1 0' }}",
+            "port_template": "{{ '8 0' }}",
+        }
+
+        for record_type in record_types:
+            # Start from clean valid kwargs
+            kwargs = dict(base_kwargs)
+            kwargs["name"] = f"whitespace-disallow-{record_type}"
+            kwargs["record_type"] = record_type
+
+            # Add required extras without whitespace for MX/SRV
+            if record_type == "MX":
+                kwargs["preference_template"] = "{{ 10 }}"
+            elif record_type == "SRV":
+                kwargs["priority_template"] = "{{ 10 }}"
+                kwargs["weight_template"] = "{{ 10 }}"
+                kwargs["port_template"] = "{{ 80 }}"
+
+            # Fields to test for whitespace
+            fields_to_test = ["zone_template", "name_template", "value_template"]
+            if record_type == "MX":
+                fields_to_test.append("preference_template")
+            if record_type == "SRV":
+                fields_to_test.extend(["priority_template", "weight_template", "port_template"])
+
+            for field in fields_to_test:
+                if field == "value_template" and record_type == "TXT":
+                    continue
+                with self.subTest(record_type=record_type, field=field):
+                    # Instantiate with whitespace in the specific field
+                    test_kwargs = dict(kwargs)
+                    test_kwargs[field] = whitespace_templates[field]
+
+                    rule = DNSRule(**test_kwargs)
+
+
+                    with self.assertRaises(ValidationError) as ctx:
+                        rule.full_clean()
+                    self.assertIn(field, ctx.exception.message_dict)
+                    self.assertIn("Whitespace in literals is not allowed; use '-' or '.'", ctx.exception.message_dict[field])
 
 class DNSRuleRecordTestCase(TestCase):
     """Test the DNSRuleRecord model."""

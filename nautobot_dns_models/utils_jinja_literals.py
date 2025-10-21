@@ -97,13 +97,14 @@ def collect_literal_strings(template_str: str) -> list[str]:
     ast = rendering_engine.env.parse(template_str)
     collector = LiteralCollector()
     collector.visit(ast)
+
     return collector.literals
 
 
 def collect_literal_validation_errors(
     template_fields: Iterable[tuple[str, str]],
     *,
-    check_whitespace: bool = True,
+    check_whitespace_in_value_template: bool = True,
     patterns: tuple[tuple[str, str], ...] = DEFAULT_LITERAL_PATTERNS,
 ) -> dict[str, list[str]]:
     """Return mapping of field_name -> list of literal validation errors.
@@ -114,7 +115,7 @@ def collect_literal_validation_errors(
 
     Args:
         template_fields: Iterable of (field_name, template_content) pairs to validate.
-        check_whitespace: When True, flag any whitespace in literal fragments.
+        check_whitespace_in_value_template: When True, flag any whitespace in literal fragments in the value template.
         patterns: Tuple of (substring, message) to flag when substring appears in
             any literal fragment for a given field.
 
@@ -127,13 +128,17 @@ def collect_literal_validation_errors(
     for field_name, template_content in template_fields:
         if not template_content:
             continue
+
         literal_fragments = collect_literal_strings(template_content)
         if not literal_fragments:
             continue
 
         field_errors: list[str] = []
 
-        if check_whitespace and any(_string_contains_space(frag) for frag in literal_fragments):
+        # Check whitespace: only for value_template if enabled; always for other fields
+        should_check_whitespace = (field_name != "value_template") or check_whitespace_in_value_template
+
+        if should_check_whitespace and any(_string_contains_space(frag) for frag in literal_fragments):
             field_errors.append("Whitespace in literals is not allowed; use '-' or '.'")
 
         for bad, message in patterns:

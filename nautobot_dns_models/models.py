@@ -747,26 +747,6 @@ class DNSRule(PrimaryModel):
         if errors:
             raise ValidationError(dict(errors))
 
-    def _build_template_fields(self):
-        """Build template fields for the DNS rule."""
-        template_fields = [
-            ("zone_template", self.zone_template),
-            ("name_template", self.name_template),
-            ("value_template", self.value_template),
-        ]
-
-        # Add record-type-specific templates
-        if self.record_type == "MX" and self.preference_template:
-            template_fields.append(("preference_template", self.preference_template))
-        elif self.record_type == "SRV":
-            if self.priority_template:
-                template_fields.append(("priority_template", self.priority_template))
-            if self.weight_template:
-                template_fields.append(("weight_template", self.weight_template))
-            if self.port_template:
-                template_fields.append(("port_template", self.port_template))
-
-        return template_fields
 
     def _validate_templates(self):
         """Validate templates for the DNS rule."""
@@ -792,6 +772,27 @@ class DNSRule(PrimaryModel):
                     merged_errors[field_name].append(msg)
 
         return merged_errors
+
+    def _build_template_fields(self):
+        """Build template fields for the DNS rule."""
+        template_fields = [
+            ("zone_template", self.zone_template),
+            ("name_template", self.name_template),
+            ("value_template", self.value_template),
+        ]
+
+        # Add record-type-specific templates
+        if self.record_type == "MX" and self.preference_template:
+            template_fields.append(("preference_template", self.preference_template))
+        elif self.record_type == "SRV":
+            if self.priority_template:
+                template_fields.append(("priority_template", self.priority_template))
+            if self.weight_template:
+                template_fields.append(("weight_template", self.weight_template))
+            if self.port_template:
+                template_fields.append(("port_template", self.port_template))
+
+        return template_fields
 
     def _validate_template_syntax(self, template_fields):
         """Validate template syntax for the DNS rule."""
@@ -837,9 +838,9 @@ class DNSRule(PrimaryModel):
         errors = defaultdict(list)
 
         # TXT records are exempt from whitespace validation
-        check_whitespace = False if self.record_type == "TXT" else True
+        check_whitespace_in_value_template = False if self.record_type == "TXT" else True
 
-        literal_errors = collect_literal_validation_errors(template_fields, check_whitespace=check_whitespace)
+        literal_errors = collect_literal_validation_errors(template_fields, check_whitespace_in_value_template=check_whitespace_in_value_template)
         for field_name, field_error_list in literal_errors.items():
             for msg in field_error_list:
                 if msg not in errors[field_name]:
