@@ -25,7 +25,7 @@ from nautobot.tenancy.models import Tenant, TenantGroup
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
-from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord, DNSZone
+from nautobot_dns_models.models import ARecord, AAAARecord, DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.rules.engine import DNSRuleEngine
 
 TEST_LOGGING_CONFIG = {
@@ -138,9 +138,12 @@ class BaseRuleEngineTestCase(TestCase):
             virtual_machine=cls.vm, name="api-service", protocol="TCP", ports=[8080], description="API service on VM"
         )
 
-        # Additional IP for multi-IP testing
+        # Additional IPs for multi-IP testing
         cls.ip_address2 = IPAddress.objects.create(
             address="192.168.1.11/24", status=cls.ip_status, namespace=cls.namespace, parent=cls.prefix
+        )
+        cls.ipv6_address2 = IPAddress.objects.create(
+            address="2001:db8::2/64", status=cls.ip_status, namespace=cls.namespace, parent=cls.ipv6_prefix
         )
 
         # Create DNS zone
@@ -881,6 +884,132 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
         rule_record = rule_records.first()
         self.assertEqual(rule_record.source_object, self.interface)
         self.assertEqual(rule_record.dns_record, a_record)
+
+    def test_interface_multiple_a_records_created_one_at_a_time_on_ip_addition_via_m2m_api(self):
+        """Test that multiple A records are created when IP is added to interface via Django M2M API."""
+        # Create DNS rule for this test
+        DNSRule.objects.create(
+            name="interface-multiple-a-records-rule",
+            description="Create A records for interfaces",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        # Verify no A records exist initially
+        initial_a_records = ARecord.objects.filter(name__startswith="eth0.test-device").count()
+        self.assertEqual(initial_a_records, 0)
+
+        # Add IP address to interface (this should trigger A record creation)
+        print(f"\n\nAdding IP address: '{self.ip_address}'")
+        self.interface.ip_addresses.add(self.ip_address)
+
+        # Verify A record was created
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        self.assertEqual(a_records.count(), 1)
+
+        # Add second IP address to interface (this should trigger another A record creation)
+        print(f"Adding IP address: '{self.ip_address2}'")
+        self.interface.ip_addresses.add(self.ip_address2)
+
+        l = self.interface.ip_addresses.all()
+        print(f"IP addresses: '{l}'")
+
+        # Verify second A record was created
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        print(f"A records: '{a_records}'")
+        self.assertEqual(a_records.count(), 2)
+
+    def test_interface_multiple_a_records_created_in_one_call_on_ip_addition_via_m2m_api(self):
+        """Test that multiple A records are created when multiple IP addresses are added to interface via Django M2M API."""
+        # Create DNS rule for this test
+        dns_rule = DNSRule.objects.create(
+            name="interface-multiple-a-records-rule",
+            description="Create A records for interfaces",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+        # Verify no A records exist initially
+        initial_a_records = ARecord.objects.filter(name__startswith="eth0.test-device").count()
+        self.assertEqual(initial_a_records, 0)
+
+        # Add multiple IP addresses to interface (this should trigger A record creation)
+        self.interface.ip_addresses.add(self.ip_address, self.ip_address2)
+
+        # Verify A records were created
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        self.assertEqual(a_records.count(), 2)
+
+        # Verify DNSRuleRecord tracking was created
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        self.assertEqual(rule_records.count(), 2)
+
+    def test_interface_multiple_aaaa_records_created_one_at_a_time_on_ip_addition_via_m2m_api(self):
+        """Test that multiple AAAA records are created when IP is added to interface via Django M2M API."""
+        # Create DNS rule for this test
+        dns_rule = DNSRule.objects.create(
+            name="interface-multiple-aaaa-records-rule",
+            description="Create AAAA records for interfaces",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        # Verify no AAAA records exist initially
+        initial_aaaa_records = AAAARecord.objects.filter(name__startswith="eth0.test-device").count()
+        self.assertEqual(initial_aaaa_records, 0)
+
+        # Add IP address to interface (this should trigger AAAA record creation)
+        self.interface.ip_addresses.add(self.ipv6_address)
+
+        # Verify AAAA record was created
+        aaaa_records = AAAARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        self.assertEqual(aaaa_records.count(), 1)
+
+        # Add second IP address to interface (this should trigger another AAAA record creation)
+        self.interface.ip_addresses.add(self.ipv6_address2)
+
+        # Verify second AAAA record was created
+        aaaa_records = AAAARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        self.assertEqual(aaaa_records.count(), 2)
+
+    def test_interface_multiple_aaaa_records_created_in_one_call_on_ip_addition_via_m2m_api(self):
+        """Test that multiple AAAA records are created when multiple IP addresses are added to interface via Django M2M API."""
+        # Create DNS rule for this test
+        dns_rule = DNSRule.objects.create(
+            name="interface-multiple-aaaa-records-rule",
+            description="Create AAAA records for interfaces",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+        # Verify no AAAA records exist initially
+        initial_aaaa_records = AAAARecord.objects.filter(name__startswith="eth0.test-device").count()
+        self.assertEqual(initial_aaaa_records, 0)
+
+        # Add multiple IP addresses to interface (this should trigger AAAA record creation)
+        self.interface.ip_addresses.add(self.ipv6_address, self.ipv6_address2)
+
+        # Verify AAAA records were created
+        aaaa_records = AAAARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        self.assertEqual(aaaa_records.count(), 2)
+
+        # Verify DNSRuleRecord tracking was created
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        self.assertEqual(rule_records.count(), 2)
 
     def test_interface_a_record_deleted_on_ip_removal_via_m2m_api(self):
         """Test that A records are deleted when IP is removed from interface via Django M2M API."""
