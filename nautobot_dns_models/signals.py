@@ -13,18 +13,21 @@ from nautobot.virtualization.models import VirtualMachine, VMInterface
 from nautobot_dns_models.models import DNSRecord
 from nautobot_dns_models.rules.engine import rule_engine
 
-try:
-    # 2.4
-    from nautobot_data_validation_engine.models import RegularExpressionValidationRule
-except ImportError:
-    # XXX 3.0; untested!
-    # XXX Also, do we really want this, or should 3.0 support come later?
-    from nautobot.data_validation.models import RegularExpressionValidationRule
-
 
 # logging.basicConfig(level=logging.DEBUG)
-
 logger = logging.getLogger(__name__)
+
+
+def _get_regexp_rule_model(apps):
+    #
+    # Check for the version 2 and 3 app labels, in that order.
+    # NOTE: This plugin is currently untested with Nautobot 3.0.0.
+    for app_label in ("nautobot_data_validation_engine", "data_validation"):
+        try:
+            return apps.get_model(app_label, "RegularExpressionValidationRule")
+        except LookupError:
+            continue
+    return None
 
 
 def has_model_field_changes(instance, debug_context="object"):
@@ -88,9 +91,19 @@ def has_model_field_changes(instance, debug_context="object"):
         logger.debug(f"{debug_context.title()} {instance} - new object, will process DNS rules")
         return True
 
-
+#
+# XXX: We may not want to do this at all. Or, we may want to install simpler rules, like:
+# XXX: A/AAAA: ^[0-9a-z-.]
 def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs):
     """Create data validation rules for DNS models after database migration."""
+
+    regexp_rule_model = _get_regexp_rule_model(apps)
+    if not regexp_rule_model:
+        logger.debug(
+            f"[SIGNAL] [post_migrate_create_data_validation_rules] [{sender}] Data validation rules engine is not installed, skipping rules"
+        )
+        return
+    print(f"Regexp rule model: {regexp_rule_model} ({type(regexp_rule_model)})")
     logger.debug(
         f"[SIGNAL] [post_migrate_create_data_validation_rules] [{sender}] Creating data validation rules for DNS models"
     )
@@ -129,18 +142,16 @@ def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs
         record_type = record_class.__name__.replace("Record", "")
         regex = regexes.get(record_type, regexes["Other"])
 
-        #
-        # TODO: use get_model to get the RegularExpressionValidationRule model
-        rule, created = RegularExpressionValidationRule.objects.get_or_create(
+        rule, created = regexp_rule_model.objects.get_or_create(
             name=f"RFC Compliance: DNS {record_type} Record Name",
             field="name",
-            content_type=ContentType.objects.get_for_model(record_class),
+            content_type_id=ContentType.objects.get_for_model(record_class).pk,
             regular_expression=regex,
             error_message=f"The name of the {record_type} record must be a valid DNS name.",
             enabled=False,
         )
         if created:
-            logger.debug("Created data validation rule '%s'", rule.name)
+            logger.debug(f"Created data validation rule '{rule.name}'")
 
 
 #
