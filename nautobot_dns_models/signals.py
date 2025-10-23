@@ -7,7 +7,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
 from nautobot.dcim.models import Device, Interface
-from nautobot.ipam.models import Service
+from nautobot.ipam.models import Service, IPAddressToInterface
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
 from nautobot_dns_models.models import DNSRecord
@@ -323,9 +323,25 @@ def handle_object_delete(sender, instance, **kwargs):
         logger.error(f"Failed to clean up DNS records for {instance}: {exc}")
 
 
-@receiver(m2m_changed, sender=Interface.ip_addresses.through)
+@receiver(post_save, sender=IPAddressToInterface)
+def handle_ipaddresstointerface_save(sender, instance, **kwargs):
+    """
+    Handle IPAddressToInterface save events to trigger DNS rule processing.
+    """
+    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_save] {sender} / '{instance}' ({kwargs})")
+    rule_engine.process_object(instance, created=kwargs.get("created", False))
+
+@receiver(post_delete, sender=IPAddressToInterface)
+def handle_ipaddresstointerface_delete(sender, instance, **kwargs):
+    """
+    Handle IPAddressToInterface delete events to clean up associated DNS records.
+    """
+    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_delete] {sender} / {instance}")
+    #rule_engine.delete_dns_records_for_object(instance)
+
+
 @receiver(m2m_changed, sender=Service.ip_addresses.through)
-@receiver(m2m_changed, sender=VMInterface.ip_addresses.through)
+@receiver(m2m_changed, sender=IPAddressToInterface)
 def handle_m2m_changed(sender, instance, action, pk_set, **kwargs):
     """
     Handle many-to-many relationship changes to trigger DNS rule processing.
