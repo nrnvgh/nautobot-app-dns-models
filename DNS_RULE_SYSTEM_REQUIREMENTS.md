@@ -35,15 +35,15 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [x] **FR-002**: Jinja2 templates SHALL have access to the triggering object as `obj`
 - [x] **FR-003**: Templates SHALL support Django ORM relationship traversal (e.g., `obj.device.name`)
 - [ ] **FR-004**: Template rendering failures SHALL be logged without breaking the original object operation
-- [ ] **FR-005**: Templates SHALL support UUID references for IP address fields
+- [ ] **FR-005**: ~~Templates SHALL support UUID references for IP address fields~~
 
 #### 2.1.3 Automatic Record Management
-- [ ] **FR-006**: DNS records SHALL be automatically created when:
+- [x] **FR-006**: DNS records SHALL be automatically created when:
   - A new object matching a rule's content type is created
   - An existing object is modified and no corresponding DNS record exists
-- [ ] **FR-007**: DNS records SHALL be automatically updated when:
+- [x] **FR-007**: DNS records SHALL be automatically updated when:
   - The source object is modified and templates render successfully
-- [ ] **FR-008**: DNS records SHALL be automatically deleted when:
+- [x] **FR-008**: DNS records SHALL be automatically deleted when:
   - The source object is deleted
   - Template rendering fails for existing records (indicating data is no longer available)
 
@@ -64,7 +64,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 #### 2.2.1 Object Lifecycle Events
 - [ ] **FR-017**: System SHALL respond to `post_save` signals for object creation and updates
 - [ ] **FR-018**: System SHALL respond to `post_delete` signals for object deletion
-- [ ] **FR-019**: System SHALL respond to `m2m_changed` signals for many-to-many relationship changes
+- [x] **FR-019**: System SHALL respond to `m2m_changed` signals for many-to-many relationship changes
 
 #### 2.2.2 Recursion Prevention
 - [ ] ~~**FR-020**: System SHALL NOT process DNS models to prevent infinite recursion~~
@@ -234,7 +234,7 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [x] **Transaction Isolation**: Removed dangerous signal handler that could break IP assignments
   - **Completed**: Eliminated handle_m2m_wor handler with transaction-breaking exception handling
   - **Safety**: DNS failures can no longer poison main object transactions
-- [ ] **Enhanced Interface IP Handling**: Production-ready multiple IP scenarios (replaces POC implementation)
+- [x] **Enhanced Interface IP Handling**: Production-ready multiple IP scenarios (replaces POC implementation)
 - [x] **Device Primary IP Handling**: Support Device.primary_ip4/primary_ip6 DNS record creation
 - [x] **VM/VMInterface Signal Handling**: Multiple record support for virtualization (1.0 priority)
   - **Completed**: Full VirtualMachine and VMInterface signal handling with location/tenant extraction via cluster relationships
@@ -332,12 +332,12 @@ The DNS Rule System provides automated DNS record management triggered by object
 - [ ] **Record-Type-Specific Field Validation**: Implement validation to make record-type-specific template fields required (MX preference_template, SRV priority/weight/port templates) per DNS RFC compliance
 
 #### 4.2.4 User Experience Enhancements
-- [ ] **Smart IP Version Detection**: Explore automatic IP version detection for ip_address filter
+- [ ] **Smart IP Version Detection**: Explore automatic IP version detection for ip_address filter (ticket #2069)
   - **Context Enhancement**: Add rule information to template context for smart filtering
   - **Filter Intelligence**: Enable `{{ obj.ip_addresses.all() | ip_address }}` without manual version parameters
   - **Implementation Options**: Enhanced context vs thread-local state vs specialized filter variants
   - **User Benefit**: Eliminate need for manual `| ip_address(4)` vs `| ip_address(6)` specification
-- [ ] **User Template Test Rendering**: Provide UI functionality for users to test render DNS rule templates with specific objects
+- [ ] **User Template Test Rendering**: Provide UI functionality for users to test render DNS rule templates with specific objects (ticket #2072)
   - **Purpose**: Allow users to validate and debug templates during rule creation/editing
   - **Functionality**: Select object from dropdown, render template, show results in real-time
   - **Benefits**: Immediate feedback, reduced trial-and-error, better template debugging
