@@ -747,7 +747,6 @@ class DNSRule(PrimaryModel):
         if errors:
             raise ValidationError(dict(errors))
 
-
     def _validate_templates(self):
         """Validate templates for the DNS rule."""
         template_fields = self._build_template_fields()
@@ -838,9 +837,11 @@ class DNSRule(PrimaryModel):
         errors = defaultdict(list)
 
         # TXT records are exempt from whitespace validation
-        check_whitespace_in_value_template = False if self.record_type == "TXT" else True
+        check_whitespace_in_value_template = self.record_type != "TXT"
 
-        literal_errors = collect_literal_validation_errors(template_fields, check_whitespace_in_value_template=check_whitespace_in_value_template)
+        literal_errors = collect_literal_validation_errors(
+            template_fields, check_whitespace_in_value_template=check_whitespace_in_value_template
+        )
         for field_name, field_error_list in literal_errors.items():
             for msg in field_error_list:
                 if msg not in errors[field_name]:

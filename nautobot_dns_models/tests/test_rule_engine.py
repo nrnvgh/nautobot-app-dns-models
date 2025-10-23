@@ -25,7 +25,7 @@ from nautobot.tenancy.models import Tenant, TenantGroup
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
-from nautobot_dns_models.models import ARecord, AAAARecord, DNSRule, DNSRuleRecord, DNSZone
+from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.rules.engine import DNSRuleEngine
 
 TEST_LOGGING_CONFIG = {
@@ -50,6 +50,12 @@ TEST_LOGGING_CONFIG = {
 
 
 class BaseRuleEngineTestCase(TestCase):
+    pass
+
+
+#
+# TODO: these mixins need to have setUpTestData pylint warnings quelled.
+class BaseRuleEngineMixin:
     """Base test case with comprehensive setup data for all DNS rule engine tests."""
 
     @classmethod
@@ -188,7 +194,7 @@ class BaseRuleEngineTestCase(TestCase):
         return self.engine._get_applicable_rules(obj)
 
 
-class TemplateRenderingTestCase(BaseRuleEngineTestCase):
+class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
     """Template rendering, syntax errors, undefined variables, error handling."""
 
     # def test_render_jinja2_with_undefined_variable(self):
@@ -411,7 +417,7 @@ class TemplateRenderingTestCase(BaseRuleEngineTestCase):
         self.assertEqual(result, expected)
 
 
-class RuleResolutionTestCase(BaseRuleEngineTestCase):
+class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
     """Rule resolution, location/tenant extraction, precedence logic, fallback scenarios."""
 
     def test_get_object_location_device(self):
@@ -836,7 +842,7 @@ class RuleResolutionTestCase(BaseRuleEngineTestCase):
         self.assertEqual(tenant, self.tenant)
 
 
-class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
+class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
     """End-to-end workflows, signal handlers, multi-IP scenarios, DNS record lifecycle."""
 
     def _create_dns_rule(self, name="interface-a-record-rule"):
@@ -904,7 +910,6 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
         self.assertEqual(initial_a_records, 0)
 
         # Add IP address to interface (this should trigger A record creation)
-        print(f"\n\nAdding IP address: '{self.ip_address}'")
         self.interface.ip_addresses.add(self.ip_address)
 
         # Verify A record was created
@@ -912,15 +917,10 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
         self.assertEqual(a_records.count(), 1)
 
         # Add second IP address to interface (this should trigger another A record creation)
-        print(f"Adding IP address: '{self.ip_address2}'")
         self.interface.ip_addresses.add(self.ip_address2)
-
-        l = self.interface.ip_addresses.all()
-        print(f"IP addresses: '{l}'")
 
         # Verify second A record was created
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
-        print(f"A records: '{a_records}'")
         self.assertEqual(a_records.count(), 2)
 
     def test_interface_multiple_a_records_created_in_one_call_on_ip_addition_via_m2m_api(self):
@@ -954,7 +954,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
     def test_interface_multiple_aaaa_records_created_one_at_a_time_on_ip_addition_via_m2m_api(self):
         """Test that multiple AAAA records are created when IP is added to interface via Django M2M API."""
         # Create DNS rule for this test
-        dns_rule = DNSRule.objects.create(
+        DNSRule.objects.create(
             name="interface-multiple-aaaa-records-rule",
             description="Create AAAA records for interfaces",
             content_type=ContentType.objects.get_for_model(Interface),
@@ -1939,8 +1939,37 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineTestCase):
         self.assertEqual(rule_records.count(), 1, "Should have one tracking record")
         self.assertEqual(rule_records.first().dns_record.id, new_record.id, "Tracking should point to new record")
 
+    def test_ipaddresstointerface_add_creates_dns_record(self):
+        """Test that creating an IPAddressToInterface relationship creates a DNS record."""
 
-class RuleValidationTestCase(BaseRuleEngineTestCase):
+        self._create_dns_rule()
+
+        ipaddresstointerface = IPAddressToInterface.objects.create(
+            ip_address=self.ip_address,
+            interface=self.interface,
+        )
+        rule_records = DNSRuleRecord.objects.filter(object_id=self.interface.pk)
+        self.assertEqual(rule_records.count(), 1)
+
+        arecord = ARecord.objects.get(address=ipaddresstointerface.ip_address)
+        self.assertEqual(arecord.address, self.ip_address)
+
+    def test_ipaddresstointerface_delete_deletes_dns_record(self):
+        """Test that deleting an IPAddressToInterface relationship deletes a DNS record."""
+        self._create_dns_rule()
+        ipaddresstointerface = IPAddressToInterface.objects.create(
+            ip_address=self.ip_address,
+            interface=self.interface,
+        )
+        rule_records = DNSRuleRecord.objects.filter(object_id=self.interface.pk)
+        self.assertEqual(rule_records.count(), 1)
+        self.assertEqual(ARecord.objects.count(), 1)
+
+        ipaddresstointerface.delete()
+        self.assertEqual(ARecord.objects.count(), 0)
+
+
+class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
     """Template validation, runtime errors, filter validation."""
 
     @classmethod
@@ -2293,7 +2322,7 @@ class RuleValidationTestCase(BaseRuleEngineTestCase):
             rule.clean()  # This should trigger the uniqueness validation
 
 
-class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineTestCase):
+class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
     """Integration checks for template proxies within the rule engine."""
 
     def test_interface_first_renders_uuid(self):

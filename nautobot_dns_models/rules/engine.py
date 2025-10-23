@@ -9,6 +9,9 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from jinja2 import TemplateError
 from nautobot.apps.utils import render_jinja2
+from nautobot.dcim import models as dcim_models
+from nautobot.ipam import models as ipam_models
+from nautobot.virtualization import models as virtualization_models
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 from nautobot_dns_models.models import (
@@ -100,9 +103,7 @@ class DNSRuleEngine:
                     f"Taking CREATE path for {source_obj} (created={created}, existing_records={existing_count})"
                 )
             else:
-                logger.debug(
-                    f"UPDATE scenario with no existing records - this may indicate first-time DNS processing for {source_obj}"
-                )
+                logger.debug(f"UPDATE scenario with no existing records - no records currently exist for {source_obj}")
             self._create_dns_records_for_object(source_obj, rules)
         else:
             # Update existing DNS records for modified objects
@@ -124,23 +125,43 @@ class DNSRuleEngine:
             source_obj: The source object to create DNS records for
             applicable_rules: Pre-fetched QuerySet of applicable rules
         """
-        logger.debug(f"Creating DNS records for {source_obj}")
-
+        logger.debug(f"[_create_dns_records_for_object] {source_obj} / {applicable_rules}")
         for rule in applicable_rules:
+            if not self._object_needs_dns_records_for_rule(source_obj, rule):
+                logger.debug(f"Object {source_obj} does not need DNS records for rule {rule.name} - skipping")
+                continue
+
+            logger.debug(f"Object {source_obj} needs DNS records for rule {rule.name} - creating records")
             try:
                 created_records = self._create_dns_record_from_rule(rule, source_obj)
                 if not created_records:
                     logger.debug(f"No records created from rule {rule.name} for {source_obj}")
-
-            except (
-                TemplateError,
-                DNSTemplateEmptyError,
-                DNSZone.DoesNotExist,
-                ValueError,
-            ) as exc:
-                # Template/data errors - don't stop other rules
+            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                 logger.warning(f"Rule {rule.name} failed for {source_obj}: {exc}")
                 continue
+
+    def _object_needs_dns_records_for_rule(self, source_obj: Any, rule: DNSRule) -> bool:
+        """
+        Determine if an object needs DNS records for a specific rule.
+
+        Args:
+            source_obj: The source object to check
+            rule: The rule to check
+        """
+        if rule.record_type in ("A", "AAAA"):
+            if isinstance(source_obj, (dcim_models.Interface, virtualization_models.VMInterface)):
+                return source_obj.ip_addresses.count() > 0
+            if isinstance(source_obj, (dcim_models.Device, virtualization_models.VirtualMachine)):
+                return (rule.record_type == "A" and source_obj.primary_ip4 is not None) or (
+                    rule.record_type == "AAAA" and source_obj.primary_ip6 is not None
+                )
+            if isinstance(source_obj, ipam_models.Service):
+                return source_obj.ip_addresses.count() > 0
+            return False
+
+        #
+        # No "don't create" logic implemented for other record types yet
+        return True
 
     def _create_dns_record_from_rule(self, rule: DNSRule, source_obj: Any) -> list[Any]:
         """
@@ -185,12 +206,20 @@ class DNSRuleEngine:
             source_obj: The source object whose DNS records should be updated
             applicable_rules: Pre-fetched QuerySet of applicable rules
         """
-        logger.debug(f"Updating DNS records for {source_obj}")
+        logger.debug(f"[_update_dns_records_for_object] {source_obj} / {applicable_rules}")
 
         # Clean up records from rules that are no longer applicable
         self._cleanup_orphaned_records(source_obj, applicable_rules)
 
         for rule in applicable_rules:
+            if not self._object_needs_dns_records_for_rule(source_obj, rule):
+                logger.debug(f"Object {source_obj} does not need DNS records for rule {rule.name} - running cleanup")
+                #
+                # incoming object has no IPs on it; ensure all records for this rule are deleted
+                self._cleanup_records_for_rule(rule, source_obj)
+                continue
+
+            logger.debug(f"Object {source_obj} needs DNS records for rule {rule.name} - reconciling records")
             try:
                 self._reconcile_records_for_rule(rule, source_obj)
             except (TemplateError, DNSTemplateEmptyError) as exc:
@@ -202,7 +231,9 @@ class DNSRuleEngine:
                 )
                 self._cleanup_records_for_rule(rule, source_obj)
             except Exception as exc:
-                logger.critical(f"Unexpected error for rule {rule.name} on {source_obj}: {exc} - cleaning up records")
+                logger.critical(
+                    f"Unexpected error for rule {rule.name} on {source_obj}: {exc} ({type(exc)}) - cleaning up records"
+                )
                 self._cleanup_records_for_rule(rule, source_obj)
 
     def _get_object_location(self, source_obj: Any) -> Any:
@@ -669,7 +700,7 @@ class DNSRuleEngine:
         """
         record_type = rule.record_type
 
-        if record_type in ["A", "AAAA"]:
+        if record_type in ("A", "AAAA"):
             logger.debug(f"Building A/AAAA record data variations from rule {rule.name}")
             # Handle A/AAAA records with potential multiple IPs
             if rule.value_template:
@@ -730,7 +761,7 @@ class DNSRuleEngine:
 
         # A/AAAA records are now handled in _build_record_data_variations
         # to support multiple IP addresses cleanly
-        if record_type in ["A", "AAAA"]:
+        if record_type in ("A", "AAAA"):
             # This method no longer handles A/AAAA - they're handled in the variations builder
             pass
 

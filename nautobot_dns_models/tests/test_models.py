@@ -1609,11 +1609,13 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
 
                     rule = DNSRule(**test_kwargs)
 
-
                     with self.assertRaises(ValidationError) as ctx:
                         rule.full_clean()
                     self.assertIn(field, ctx.exception.message_dict)
-                    self.assertIn("Whitespace in literals is not allowed; use '-' or '.'", ctx.exception.message_dict[field])
+                    self.assertIn(
+                        "Whitespace in literals is not allowed; use '-' or '.'", ctx.exception.message_dict[field]
+                    )
+
 
 class DNSRuleRecordTestCase(TestCase):
     """Test the DNSRuleRecord model."""

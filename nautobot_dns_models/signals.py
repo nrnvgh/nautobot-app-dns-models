@@ -7,12 +7,11 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
 from nautobot.dcim.models import Device, Interface
-from nautobot.ipam.models import Service, IPAddressToInterface
+from nautobot.ipam.models import IPAddressToInterface, Service
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
 from nautobot_dns_models.models import DNSRecord
 from nautobot_dns_models.rules.engine import rule_engine
-
 
 # logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -91,19 +90,19 @@ def has_model_field_changes(instance, debug_context="object"):
         logger.debug(f"{debug_context.title()} {instance} - new object, will process DNS rules")
         return True
 
+
 #
 # XXX: We may not want to do this at all. Or, we may want to install simpler rules, like:
 # XXX: A/AAAA: ^[0-9a-z-.]
 def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs):
     """Create data validation rules for DNS models after database migration."""
-
     regexp_rule_model = _get_regexp_rule_model(apps)
     if not regexp_rule_model:
         logger.debug(
             f"[SIGNAL] [post_migrate_create_data_validation_rules] [{sender}] Data validation rules engine is not installed, skipping rules"
         )
         return
-    print(f"Regexp rule model: {regexp_rule_model} ({type(regexp_rule_model)})")
+
     logger.debug(
         f"[SIGNAL] [post_migrate_create_data_validation_rules] [{sender}] Creating data validation rules for DNS models"
     )
@@ -325,24 +324,25 @@ def handle_object_delete(sender, instance, **kwargs):
 
 @receiver(post_save, sender=IPAddressToInterface)
 def handle_ipaddresstointerface_save(sender, instance, **kwargs):
-    """
-    Handle IPAddressToInterface save events to trigger DNS rule processing.
-    """
+    """Handle IPAddressToInterface save events to trigger DNS rule processing."""
     logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_save] {sender} / '{instance}' ({kwargs})")
-    rule_engine.process_object(instance, created=kwargs.get("created", False))
+
+    #
+    # We pass created=False because while the IPAddressToInterface is a new object, the interface is not.
+    # We want to process the interface, not the IPAddressToInterface.
+    rule_engine.process_object(instance.interface, created=False)
+
 
 @receiver(post_delete, sender=IPAddressToInterface)
 def handle_ipaddresstointerface_delete(sender, instance, **kwargs):
-    """
-    Handle IPAddressToInterface delete events to clean up associated DNS records.
-    """
-    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_delete] {sender} / {instance}")
-    #rule_engine.delete_dns_records_for_object(instance)
+    """Handle IPAddressToInterface delete events to clean up associated DNS records."""
+    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_delete] {sender} / {instance} ({kwargs})")
+    rule_engine.process_object(instance.interface, created=False)
 
 
 @receiver(m2m_changed, sender=Service.ip_addresses.through)
 @receiver(m2m_changed, sender=IPAddressToInterface)
-def handle_m2m_changed(sender, instance, action, pk_set, **kwargs):
+def handle_m2m_changed(sender, instance, action, **kwargs):
     """
     Handle many-to-many relationship changes to trigger DNS rule processing.
 
