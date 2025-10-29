@@ -12,11 +12,11 @@ from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from rest_framework import status
 
+from nautobot_dns_models import models
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
     CNAMERecord,
-    DNSRule,
     DNSView,
     DNSViewPrefixAssignment,
     DNSZone,
@@ -631,7 +631,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             primary_ip6=cls.ip6,
         )
 
-        DNSRule.objects.create(
+        models.DNSRule.objects.create(
             name="Test Rule 1",
             description="Test DNS rule for devices",
             enabled=True,
@@ -643,7 +643,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             value_template="{{ obj.primary_ip4 }}",
         )
 
-        DNSRule.objects.create(
+        models.DNSRule.objects.create(
             name="Test Rule 2",
             description="Another test DNS rule",
             enabled=False,
@@ -654,7 +654,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             value_template="{{ obj.name }}.test.com",
         )
 
-        DNSRule.objects.create(
+        models.DNSRule.objects.create(
             name="Test Rule 3",
             description="Third test DNS rule",
             enabled=True,
@@ -763,7 +763,7 @@ class DNSRuleRecordAPITestCase(APIViewTestCases.APIViewTestCase):
             soa_rname="admin@example.com",
         )
 
-        cls.dns_rule = DNSRule.objects.create(
+        cls.dns_rule = models.DNSRule.objects.create(
             name="test-rule",
             content_type=device_content_type,
             zone_template="example.com",

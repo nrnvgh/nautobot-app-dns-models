@@ -211,7 +211,7 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
     @classmethod
     def setUpTestData(cls):
         zone = DNSZone.objects.create(
-            name="example_one.com",
+            name="example-one.com",
         )
         status = Status.objects.get(name="Active")
         namespace = Namespace.objects.get(name="Global")
@@ -225,6 +225,11 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
             IPAddress.objects.create(address="10.0.0.4/32", namespace=namespace, status=status),
         )
 
+        #
+        # If the first two records have the same name, the name on the second
+        # gets updated to {name}X by ListObjectsViewTestCase.test_list_objects_with_constrained_permission.
+        # This is a problem because the ARecord.clean method will fail if the name is not normalized, so ensure
+        # the first two have different names.
         ARecord.objects.create(
             name="primary",
             address=cls.ip_addresses[0],
@@ -243,17 +248,22 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
 
         cls.form_data = {
             "name": "test-record",
-            "address": ip_addresses[0].pk,
+            "address": cls.ip_addresses[0].pk,
             "ttl": 3600,
             "zone": zone.pk,
         }
 
         cls.csv_data = (
             "name,address,zone",
-            f"Test 3,{cls.ip_addresses[0].pk},{zone.name}",
+            f"test-3,{cls.ip_addresses[0].pk},{zone.name}",
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
+
+
+    def test_list_objects_with_constrained_permission(self):
+        constance_config.nautobot_dns_models__NORMALIZE_DNS_RECORDS = True
+        super().test_list_objects_with_constrained_permission()
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_ipaddress_detail_view_side_panel_always(self):
@@ -333,26 +343,26 @@ class AAAARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTests
             zone=zone,
         )
         AAAARecord.objects.create(
-            name="primary",
+            name="primary-1",
             address=cls.ip_addresses[1],
             zone=zone,
         )
         AAAARecord.objects.create(
-            name="primary",
+            name="primary-1",
             address=cls.ip_addresses[2],
             zone=zone,
         )
 
         cls.form_data = {
             "name": "test-record",
-            "address": ip_addresses[0].pk,
+            "address": cls.ip_addresses[0].pk,
             "ttl": 3600,
             "zone": zone.pk,
         }
 
         cls.csv_data = (
             "name,address,zone",
-            f"Test 3,{cls.ip_addresses[0].pk},{zone.name}",
+            f"test-3,{cls.ip_addresses[0].pk},{zone.name}",
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
