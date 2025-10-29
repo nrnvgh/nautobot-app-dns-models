@@ -15,6 +15,7 @@ from unittest import skip
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.test import TestCase, override_settings
 from jinja2 import TemplateSyntaxError, UndefinedError
 from nautobot.apps.utils import render_jinja2
@@ -1081,16 +1082,8 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         final_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(final_a_records.count(), 0)
 
-    @skip("Requires Nautobot M2M signal improvements - see nautobot/nautobot#7728")
     def test_interface_a_record_created_on_ip_addition_via_custom_method(self):
-        """Test that A records are created when IP is added to interface via custom add_ip_addresses method.
-
-        NOTE: This test requires M2M signal improvements to work.
-        The custom add_ip_addresses method needs to trigger M2M signals for DNS rules to fire.
-        See: https://github.com/nautobot/nautobot/issues/7728
-
-        WARNING: This functionality is currently UNTESTED in the standard test environment.
-        """
+        """Test that A records are created when IP is added to interface via custom add_ip_addresses method."""
         # Verify no A records exist initially
         initial_a_records = ARecord.objects.filter(name__startswith="eth0.test-device").count()
         self.assertEqual(initial_a_records, 0)
@@ -1123,16 +1116,8 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(rule_record.source_object, self.interface)
         self.assertEqual(rule_record.dns_record, a_record)
 
-    @skip("Requires Nautobot M2M signal improvements - see nautobot/nautobot#7728")
     def test_interface_a_record_deleted_on_ip_removal_via_custom_method(self):
-        """Test that A records are deleted when IP is removed from interface via custom remove_ip_addresses method.
-
-        NOTE: This test requires M2M signal improvements to work.
-        The custom remove_ip_addresses method needs to trigger M2M signals for DNS rules to fire.
-        See: https://github.com/nautobot/nautobot/issues/7728
-
-        WARNING: This functionality is currently UNTESTED in the standard test environment.
-        """
+        """Test that A records are deleted when IP is removed from interface via custom remove_ip_addresses method."""
         # Create DNS rule for this test
         dns_rule = self._create_dns_rule()
 
@@ -1159,35 +1144,22 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         remaining_rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
         self.assertEqual(remaining_rule_records.count(), 0)
 
-    @skip("Requires Nautobot M2M signal improvements - see nautobot/nautobot#7728")
     def test_interface_a_record_multiple_ips_via_custom_method(self):
-        """Test A record behavior with multiple IPs using custom methods.
+        """Test A record behavior with multiple IPs using custom methods."""
+        self._create_dns_rule()
 
-        NOTE: This test requires M2M signal improvements to work.
-        The custom add_ip_addresses/remove_ip_addresses methods need to trigger M2M signals.
-        See: https://github.com/nautobot/nautobot/issues/7728
-
-        WARNING: This functionality is currently UNTESTED in the standard test environment.
-        """
-        # Create second IP address within the namespace and associate with parent prefix
-        ip_address_2 = IPAddress.objects.create(
-            address="192.168.1.11/24",
-            status=Status.objects.get_for_model(IPAddress).first(),
-            namespace=self.namespace,
-            parent=self.prefix,
-        )
-
-        # Add both IP addresses to interface using custom method
-        count = self.interface.add_ip_addresses([self.ip_address, ip_address_2])
+        expected_dns_name = f"{self.interface.name}.{self.device.name}"
+        # Add  IP addresses to interface using custom method
+        count = self.interface.add_ip_addresses([self.ip_address, self.ip_address2])
         self.assertEqual(count, 2)  # Both IPs should be added
 
         # Verify A record was created (should use first IP)
-        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        a_records = ARecord.objects.filter(name=expected_dns_name, zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         a_record = a_records.first()
         # The record should use whichever IP is returned by .first()
-        self.assertIn(a_record.address, [self.ip_address, ip_address_2])
+        self.assertIn(a_record.address, [self.ip_address, self.ip_address2])
 
         # Remove one IP address using custom method
         count = self.interface.remove_ip_addresses(self.ip_address)
@@ -1199,46 +1171,32 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
 
         # The record should now point to the remaining IP
         updated_record = remaining_a_records.first()
-        self.assertEqual(updated_record.address, ip_address_2)
+        self.assertEqual(updated_record.address, self.ip_address2)
 
         # Remove the last IP address using custom method
-        count = self.interface.remove_ip_addresses(ip_address_2)
+        count = self.interface.remove_ip_addresses(self.ip_address2)
         self.assertEqual(count, 1)  # Last IP should be removed
 
         # Now the A record should be deleted (template fails with no IPs)
         final_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(final_a_records.count(), 0)
 
-    @skip("Requires Nautobot M2M signal improvements - see nautobot/nautobot#7728")
     def test_interface_ip_addition_with_conflicting_through_defaults_fails(self):
-        """Test that IP addition fails when through_defaults violate IPAddressToInterface mutual exclusion.
-
-        NOTE: This test requires M2M signal validation to work.
-        The signal handler needs to call full_clean() on IPAddressToInterface instances.
-        See: https://github.com/nautobot/nautobot/issues/7728
-
-        WARNING: This functionality is currently UNTESTED in the standard test environment.
-        """
-        # Create a VM and VMInterface
-        cluster_type = ClusterType.objects.create(name="Test Cluster Type")
-        cluster = Cluster.objects.create(name="test-cluster", cluster_type=cluster_type, location=self.location)
-
-        vm_status = Status.objects.get_for_model(VirtualMachine).first()
-        virtual_machine = VirtualMachine.objects.create(name="test-vm", cluster=cluster, status=vm_status)
-
+        """Test that IP addition fails when through_defaults violate IPAddressToInterface mutual exclusion."""
         vm_interface_status = Status.objects.get_for_model(VMInterface).first()
         vm_interface = VMInterface.objects.create(
-            virtual_machine=virtual_machine, name="eth0", status=vm_interface_status
+            virtual_machine=self.vm, name="eth0", status=vm_interface_status
         )
 
         # Test 1: Physical Interface with VMInterface in through_defaults (should fail)
         with self.assertRaises(ValidationError) as context:
-            self.interface.ip_addresses.add(
-                self.ip_address,
-                through_defaults={
-                    "vm_interface": vm_interface,  # ← Violates mutual exclusion
-                    "is_primary": True,
-                },
+            with transaction.atomic():
+                self.interface.ip_addresses.add(
+                    self.ip_address,
+                    through_defaults={
+                        "vm_interface": vm_interface,  # ← Violates mutual exclusion
+                        "is_primary": True,
+                    },
             )
 
         # Verify the error message relates to mutual exclusion
@@ -1250,13 +1208,14 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
 
         # Test 2: VMInterface with Interface in through_defaults (should fail)
         with self.assertRaises(ValidationError) as context:
-            vm_interface.ip_addresses.add(
-                self.ip_address,
-                through_defaults={
-                    "interface": self.interface,  # ← Violates mutual exclusion
-                    "is_primary": True,
-                },
-            )
+            with transaction.atomic():
+                vm_interface.ip_addresses.add(
+                    self.ip_address,
+                    through_defaults={
+                        "interface": self.interface,  # ← Violates mutual exclusion
+                        "is_primary": True,
+                    },
+                )
 
         # Verify the error message relates to mutual exclusion
         self.assertIn("Cannot use a single instance to associate to both", str(context.exception))

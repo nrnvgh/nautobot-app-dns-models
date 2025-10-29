@@ -17,6 +17,7 @@ from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
     CNAMERecord,
+    DNSRule,
     DNSView,
     DNSViewPrefixAssignment,
     DNSZone,
@@ -631,7 +632,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             primary_ip6=cls.ip6,
         )
 
-        models.DNSRule.objects.create(
+        DNSRule.objects.create(
             name="Test Rule 1",
             description="Test DNS rule for devices",
             enabled=True,
@@ -643,7 +644,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             value_template="{{ obj.primary_ip4 }}",
         )
 
-        models.DNSRule.objects.create(
+        DNSRule.objects.create(
             name="Test Rule 2",
             description="Another test DNS rule",
             enabled=False,
@@ -654,7 +655,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             value_template="{{ obj.name }}.test.com",
         )
 
-        models.DNSRule.objects.create(
+        DNSRule.objects.create(
             name="Test Rule 3",
             description="Third test DNS rule",
             enabled=True,
