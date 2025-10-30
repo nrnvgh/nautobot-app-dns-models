@@ -13,8 +13,8 @@ from jinja2 import TemplateError, TemplateSyntaxError
 from nautobot.apps.constants import CHARFIELD_MAX_LENGTH
 from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
 from nautobot.apps.utils import validate_jinja2
-from nautobot.ipam.choices import IPAddressVersionChoices
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
+from nautobot.ipam.choices import IPAddressVersionChoices
 
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.utils_jinja_literals import collect_literal_validation_errors

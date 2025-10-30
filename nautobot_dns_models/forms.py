@@ -5,7 +5,6 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import models as django_models
 from nautobot.apps.forms import (
     DynamicModelMultipleChoiceField,
-    DynamicModelChoiceField,
     NautobotBulkEditForm,
     NautobotModelForm,
     TagsBulkEditFormMixin,

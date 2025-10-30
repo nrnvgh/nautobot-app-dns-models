@@ -260,7 +260,6 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
 
-
     def test_list_objects_with_constrained_permission(self):
         constance_config.nautobot_dns_models__NORMALIZE_DNS_RECORDS = True
         super().test_list_objects_with_constrained_permission()
