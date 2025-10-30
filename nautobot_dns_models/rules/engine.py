@@ -6,6 +6,7 @@ from collections import defaultdict
 from typing import Any
 
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
 from django.db import models
 from jinja2 import TemplateError
 from nautobot.apps.utils import render_jinja2
@@ -559,8 +560,13 @@ class DNSRuleEngine:
         created_records = []
 
         for record_data in record_data_list:
-            # Create the DNS record
-            dns_record = record_class.objects.create(**record_data)
+            # Create the DNS record. This is a best-effort operation; if any of them fail, log the error and continue.
+            try:
+                dns_record = record_class.objects.create(**record_data)
+            except ValidationError as exc:
+                logger.warning(f"Failed to create DNS record from rule {rule.name} for {source_obj}: {exc}")
+                logger.warning(f"Record data: {record_data}")
+                continue
 
             # Create the tracking record
             rule_record = DNSRuleRecord.objects.create(

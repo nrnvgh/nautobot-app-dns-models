@@ -11,6 +11,7 @@ Categories:
 - RuleValidationTestCase: Template validation, runtime errors, filter validation
 """
 
+import itertools
 from unittest import skip
 
 from django.contrib.contenttypes.models import ContentType
@@ -19,6 +20,7 @@ from django.db import transaction
 from django.test import TestCase, override_settings
 from jinja2 import TemplateSyntaxError, UndefinedError
 from nautobot.apps.utils import render_jinja2
+from nautobot.dcim.choices import InterfaceTypeChoices
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer
 from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, IPAddressToInterface, Namespace, Prefix, Service
@@ -94,7 +96,7 @@ class BaseRuleEngineMixin:
         cls.interface = Interface.objects.create(
             name="eth0",
             device=cls.device,
-            type="1000base-t",
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             status=Status.objects.get_for_model(Interface).first(),
         )
 
@@ -115,20 +117,27 @@ class BaseRuleEngineMixin:
         )
 
         cls.ip_status = Status.objects.get_for_model(IPAddress).first()
-        # Create IP address within the namespace and associate with parent prefix
-        cls.ip_address = IPAddress.objects.create(
-            address="192.168.1.10/24",
-            status=cls.ip_status,
-            namespace=cls.namespace,
-            parent=cls.prefix,
-        )
+        # Create 3 IPv4 addresses within the namespace and associate with parent prefix
+        cls.ip_addresses = []
+        for i in range(10, 13):
+            ip_address = IPAddress.objects.create(
+                address=f"192.168.1.{i}/24",
+                status=cls.ip_status,
+                namespace=cls.namespace,
+                parent=cls.prefix,
+            )
+            cls.ip_addresses.append(ip_address)
 
-        cls.ipv6_address = IPAddress.objects.create(
-            address="2001:db8::1/64",
-            status=cls.ip_status,
-            namespace=cls.namespace,
-            parent=cls.ipv6_prefix,
-        )
+        # Create 3 IPv6 addresses within the namespace and associate with parent prefix
+        cls.ipv6_addresses = []
+        for i in range(1, 4):
+            ipv6_address = IPAddress.objects.create(
+                address=f"2001:db8::{i}/64",
+                status=cls.ip_status,
+                namespace=cls.namespace,
+                parent=cls.ipv6_prefix,
+            )
+            cls.ipv6_addresses.append(ipv6_address)
 
         # Create Service test data
         cls.service_device_attached = Service.objects.create(
@@ -143,14 +152,6 @@ class BaseRuleEngineMixin:
 
         cls.service_vm_attached = Service.objects.create(
             virtual_machine=cls.vm, name="api-service", protocol="TCP", ports=[8080], description="API service on VM"
-        )
-
-        # Additional IPs for multi-IP testing
-        cls.ip_address2 = IPAddress.objects.create(
-            address="192.168.1.11/24", status=cls.ip_status, namespace=cls.namespace, parent=cls.prefix
-        )
-        cls.ipv6_address2 = IPAddress.objects.create(
-            address="2001:db8::2/64", status=cls.ip_status, namespace=cls.namespace, parent=cls.ipv6_prefix
         )
 
         # Create DNS zone
@@ -276,7 +277,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         empty_interface = Interface.objects.create(
             name="empty-interface",
             device=self.device,
-            type="1000base-t",
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             status=Status.objects.get_for_model(Interface).first(),
         )
         with self.assertRaises(UndefinedError) as context:
@@ -368,7 +369,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         interface_no_role = Interface.objects.create(
             name="test-interface-no-role",
             device=self.device,
-            type="1000base-t",
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             status=Status.objects.get_for_model(Interface).first(),
         )
 
@@ -873,14 +874,14 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(initial_rule_records, 0)
 
         # Add IP address to interface (this should trigger A record creation)
-        self.interface.ip_addresses.add(self.ip_address)
+        self.interface.ip_addresses.add(self.ip_addresses[0])
 
         # Verify A record was created
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         a_record = a_records.first()
-        self.assertEqual(a_record.address, self.ip_address)
+        self.assertEqual(a_record.address, self.ip_addresses[0])
         self.assertEqual(a_record.name, "eth0.test-device")
         self.assertEqual(a_record.zone, self.dns_zone)
 
@@ -911,14 +912,14 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(initial_a_records, 0)
 
         # Add IP address to interface (this should trigger A record creation)
-        self.interface.ip_addresses.add(self.ip_address)
+        self.interface.ip_addresses.add(self.ip_addresses[0])
 
         # Verify A record was created
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         # Add second IP address to interface (this should trigger another A record creation)
-        self.interface.ip_addresses.add(self.ip_address2)
+        self.interface.ip_addresses.add(self.ip_addresses[1])
 
         # Verify second A record was created
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -942,7 +943,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(initial_a_records, 0)
 
         # Add multiple IP addresses to interface (this should trigger A record creation)
-        self.interface.ip_addresses.add(self.ip_address, self.ip_address2)
+        self.interface.ip_addresses.add(self.ip_addresses[0], self.ip_addresses[1])
 
         # Verify A records were created
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -971,14 +972,14 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(initial_aaaa_records, 0)
 
         # Add IP address to interface (this should trigger AAAA record creation)
-        self.interface.ip_addresses.add(self.ipv6_address)
+        self.interface.ip_addresses.add(self.ipv6_addresses[0])
 
         # Verify AAAA record was created
         aaaa_records = AAAARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(aaaa_records.count(), 1)
 
         # Add second IP address to interface (this should trigger another AAAA record creation)
-        self.interface.ip_addresses.add(self.ipv6_address2)
+        self.interface.ip_addresses.add(self.ipv6_addresses[1])
 
         # Verify second AAAA record was created
         aaaa_records = AAAARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -1002,7 +1003,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(initial_aaaa_records, 0)
 
         # Add multiple IP addresses to interface (this should trigger AAAA record creation)
-        self.interface.ip_addresses.add(self.ipv6_address, self.ipv6_address2)
+        self.interface.ip_addresses.add(self.ipv6_addresses[0], self.ipv6_addresses[1])
 
         # Verify AAAA records were created
         aaaa_records = AAAARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -1018,7 +1019,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         dns_rule = self._create_dns_rule()
 
         # Setup initial state with IP and A record
-        self.interface.ip_addresses.add(self.ip_address)
+        self.interface.ip_addresses.add(self.ip_addresses[0])
 
         # Verify A record exists
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -1029,7 +1030,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(rule_records.count(), 1)
 
         # Remove IP address from interface (this should trigger A record deletion)
-        self.interface.ip_addresses.remove(self.ip_address)
+        self.interface.ip_addresses.remove(self.ip_addresses[0])
 
         # Verify A record was deleted
         remaining_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -1044,17 +1045,9 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         # Create DNS rule for this test
         self._create_dns_rule()
 
-        # Create second IP address within the namespace and associate with parent prefix
-        ip_address_2 = IPAddress.objects.create(
-            address="192.168.1.110/24",
-            status=Status.objects.get_for_model(IPAddress).first(),
-            namespace=self.namespace,
-            parent=self.prefix,
-        )
-
         # Add both IP addresses to interface. In theory, should be add_ip_addresses, but see
         # https://github.com/nautobot/nautobot/issues/7728.
-        self.interface.ip_addresses.add(self.ip_address, ip_address_2)
+        self.interface.ip_addresses.add(self.ip_addresses[0], self.ip_addresses[1])
 
         # Verify A record was created (should use first IP)
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -1062,10 +1055,10 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
 
         a_record = a_records.first()
         # The record should use whichever IP is returned by .first()
-        self.assertIn(a_record.address, [self.ip_address, ip_address_2])
+        self.assertIn(a_record.address, [self.ip_addresses[0], self.ip_addresses[1]])
 
         # Remove one IP address
-        self.interface.ip_addresses.remove(self.ip_address)
+        self.interface.ip_addresses.remove(self.ip_addresses[0])
 
         # Verify A record still exists (should now use the remaining IP)
         remaining_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -1073,10 +1066,10 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
 
         # The record should now point to the remaining IP
         updated_record = remaining_a_records.first()
-        self.assertEqual(updated_record.address, ip_address_2)
+        self.assertEqual(updated_record.address, self.ip_addresses[1])
 
         # Remove the last IP address
-        self.interface.ip_addresses.remove(ip_address_2)
+        self.interface.ip_addresses.remove(self.ip_addresses[1])
 
         # Now the A record should be deleted (template fails with no IPs)
         final_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -1096,7 +1089,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(initial_rule_records, 0)
 
         # Add IP address to interface using custom method (this should trigger A record creation)
-        count = self.interface.add_ip_addresses(self.ip_address)
+        count = self.interface.add_ip_addresses(self.ip_addresses[0])
         self.assertEqual(count, 1)  # Verify return value
 
         # Verify A record was created
@@ -1104,7 +1097,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(a_records.count(), 1)
 
         a_record = a_records.first()
-        self.assertEqual(a_record.address, self.ip_address)
+        self.assertEqual(a_record.address, self.ip_addresses[0])
         self.assertEqual(a_record.name, "eth0.test-device")
         self.assertEqual(a_record.zone, self.dns_zone)
 
@@ -1122,7 +1115,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         dns_rule = self._create_dns_rule()
 
         # Setup initial state with IP and A record using M2M API
-        self.interface.ip_addresses.add(self.ip_address)
+        self.interface.ip_addresses.add(self.ip_addresses[0])
 
         # Verify A record exists
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
@@ -1133,7 +1126,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(rule_records.count(), 1)
 
         # Remove IP address from interface using custom method (this should trigger A record deletion)
-        count = self.interface.remove_ip_addresses(self.ip_address)
+        count = self.interface.remove_ip_addresses(self.ip_addresses[0])
         self.assertEqual(count, 1)  # Verify return value
 
         # Verify A record was deleted
@@ -1150,7 +1143,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
 
         expected_dns_name = f"{self.interface.name}.{self.device.name}"
         # Add  IP addresses to interface using custom method
-        count = self.interface.add_ip_addresses([self.ip_address, self.ip_address2])
+        count = self.interface.add_ip_addresses([self.ip_addresses[0], self.ip_addresses[1]])
         self.assertEqual(count, 2)  # Both IPs should be added
 
         # Verify A record was created (should use first IP)
@@ -1159,58 +1152,58 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
 
         a_record = a_records.first()
         # The record should use whichever IP is returned by .first()
-        self.assertIn(a_record.address, [self.ip_address, self.ip_address2])
+        self.assertIn(a_record.address, [self.ip_addresses[0], self.ip_addresses[1]])
 
         # Remove one IP address using custom method
-        count = self.interface.remove_ip_addresses(self.ip_address)
+        count = self.interface.remove_ip_addresses(self.ip_addresses[0])
         self.assertEqual(count, 1)  # One IP should be removed
 
         # Verify A record still exists (should now use the remaining IP)
-        remaining_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        remaining_a_records = ARecord.objects.filter(name=expected_dns_name, zone=self.dns_zone)
         self.assertEqual(remaining_a_records.count(), 1)
 
         # The record should now point to the remaining IP
         updated_record = remaining_a_records.first()
-        self.assertEqual(updated_record.address, self.ip_address2)
+        self.assertEqual(updated_record.address, self.ip_addresses[1])
 
         # Remove the last IP address using custom method
-        count = self.interface.remove_ip_addresses(self.ip_address2)
+        count = self.interface.remove_ip_addresses(self.ip_addresses[1])
         self.assertEqual(count, 1)  # Last IP should be removed
 
         # Now the A record should be deleted (template fails with no IPs)
-        final_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        final_a_records = ARecord.objects.filter(name=expected_dns_name, zone=self.dns_zone)
         self.assertEqual(final_a_records.count(), 0)
 
     def test_interface_ip_addition_with_conflicting_through_defaults_fails(self):
         """Test that IP addition fails when through_defaults violate IPAddressToInterface mutual exclusion."""
         vm_interface_status = Status.objects.get_for_model(VMInterface).first()
         vm_interface = VMInterface.objects.create(
-            virtual_machine=self.vm, name="eth0", status=vm_interface_status
+            virtual_machine=self.vm, name=self.interface.name, status=vm_interface_status
         )
 
         # Test 1: Physical Interface with VMInterface in through_defaults (should fail)
         with self.assertRaises(ValidationError) as context:
             with transaction.atomic():
                 self.interface.ip_addresses.add(
-                    self.ip_address,
+                    self.ip_addresses[0],
                     through_defaults={
                         "vm_interface": vm_interface,  # ← Violates mutual exclusion
                         "is_primary": True,
                     },
-            )
+                )
 
         # Verify the error message relates to mutual exclusion
         self.assertIn("Cannot use a single instance to associate to both", str(context.exception))
 
         # Verify no IPAddressToInterface instance was created
-        assignments = IPAddressToInterface.objects.filter(interface=self.interface, ip_address=self.ip_address)
+        assignments = IPAddressToInterface.objects.filter(interface=self.interface, ip_address=self.ip_addresses[0])
         self.assertEqual(assignments.count(), 0)
 
         # Test 2: VMInterface with Interface in through_defaults (should fail)
         with self.assertRaises(ValidationError) as context:
             with transaction.atomic():
                 vm_interface.ip_addresses.add(
-                    self.ip_address,
+                    self.ip_addresses[0],
                     through_defaults={
                         "interface": self.interface,  # ← Violates mutual exclusion
                         "is_primary": True,
@@ -1221,7 +1214,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertIn("Cannot use a single instance to associate to both", str(context.exception))
 
         # Verify no IPAddressToInterface instance was created
-        assignments = IPAddressToInterface.objects.filter(vm_interface=vm_interface, ip_address=self.ip_address)
+        assignments = IPAddressToInterface.objects.filter(vm_interface=vm_interface, ip_address=self.ip_addresses[0])
         self.assertEqual(assignments.count(), 0)
 
     def test_a_record_updated_when_interface_name_changed(self):
@@ -1230,7 +1223,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self._create_dns_rule()
 
         # Setup: add IP and create record
-        self.interface.ip_addresses.add(self.ip_address)
+        self.interface.ip_addresses.add(self.ip_addresses[0])
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
@@ -1247,7 +1240,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         # The exact behavior depends on rule engine update logic
         self.assertEqual(updated_records.count(), 1, "DNS rule should update record name")
         self.assertEqual(old_records.count(), 0, "Old record should be gone")
-        self.assertEqual(updated_records.first().address, self.ip_address)
+        self.assertEqual(updated_records.first().address, self.ip_addresses[0])
 
     def test_a_record_updated_when_device_name_changed(self):
         """Test that A records are updated when device name changes.
@@ -1264,7 +1257,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self._create_dns_rule()
 
         # Setup: add IP and create record
-        self.interface.ip_addresses.add(self.ip_address)
+        self.interface.ip_addresses.add(self.ip_addresses[0])
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
@@ -1279,7 +1272,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         # Verify cascade processing worked:
         self.assertEqual(updated_records.count(), 1, "Device name change should trigger interface record update")
         self.assertEqual(old_records.count(), 0, "Old record should be gone after device name change")
-        self.assertEqual(updated_records.first().address, self.ip_address)
+        self.assertEqual(updated_records.first().address, self.ip_addresses[0])
 
     def test_a_record_deleted_when_interface_deleted(self):
         """Test that A records are deleted when interface is deleted."""
@@ -1287,7 +1280,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self._create_dns_rule()
 
         # Setup: add IP and create record
-        self.interface.ip_addresses.add(self.ip_address)
+        self.interface.ip_addresses.add(self.ip_addresses[0])
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
@@ -1309,7 +1302,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         dns_rule = self._create_dns_rule()
 
         # Setup: add IP and create record
-        self.interface.ip_addresses.add(self.ip_address)
+        self.interface.ip_addresses.add(self.ip_addresses[0])
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
@@ -1348,12 +1341,12 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self._create_dns_rule()
 
         # Setup: add IP and create record
-        self.interface.ip_addresses.add(self.ip_address)
+        self.interface.ip_addresses.add(self.ip_addresses[0])
         a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
 
         # Delete IP address directly (not just remove from interface)
-        self.ip_address.delete()
+        self.ip_addresses[0].delete()
 
         # This scenario needs investigation:
         # 1. Does the A record still exist but point to deleted IP? (BAD)
@@ -1405,7 +1398,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         # Assign primary IP so template works; signal handlers will trigger DNS processing
-        device.primary_ip4 = self.ip_address
+        device.primary_ip4 = self.ip_addresses[0]
         device.save()
 
         # Should create record from location rule, not global rule
@@ -1418,7 +1411,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         # Verify the record is in the correct zone and has correct IP
         location_record = location_records.first()
         self.assertEqual(location_record.zone.name, "example.com")
-        self.assertEqual(location_record.address, self.ip_address)
+        self.assertEqual(location_record.address, self.ip_addresses[0])
 
     def test_global_rule_fallback_when_no_location_rules(self):
         """Test that global rules are used when no location-specific rules exist."""
@@ -1444,7 +1437,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         # Assign primary IP so template works; signal handlers will trigger DNS processing
-        device.primary_ip4 = self.ip_address
+        device.primary_ip4 = self.ip_addresses[0]
         device.save()
 
         # Should create record from global rule
@@ -1454,7 +1447,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         # Verify the record is in the correct zone and has correct IP
         global_record = global_records.first()
         self.assertEqual(global_record.zone.name, "example.com")
-        self.assertEqual(global_record.address, self.ip_address)
+        self.assertEqual(global_record.address, self.ip_addresses[0])
 
     def test_interface_inherits_device_location(self):
         """Test that Interface objects inherit location from their Device for rule processing."""
@@ -1481,13 +1474,13 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         interface = Interface.objects.create(
             name="eth0",
             device=device,
-            type="1000base-t",
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             status=Status.objects.get_for_model(Interface).first(),
         )
 
         # Add IP to interface (signal handlers should trigger DNS processing)
         # Interface should inherit location from device for rule processing
-        interface.ip_addresses.add(self.ip_address)
+        interface.ip_addresses.add(self.ip_addresses[0])
 
         # Should create record using location rule (interface inherits device location)
         interface_records = ARecord.objects.filter(name="eth0.test-interface-device")
@@ -1496,7 +1489,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         # Verify the record is in the correct zone and has correct IP
         interface_record = interface_records.first()
         self.assertEqual(interface_record.zone.name, "example.com")
-        self.assertEqual(interface_record.address, self.ip_address)
+        self.assertEqual(interface_record.address, self.ip_addresses[0])
 
     def test_device_location_change_updates_dns_records(self):
         """Test that DNS records are updated when a device moves between locations."""
@@ -1540,7 +1533,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         # Assign primary IP after creation - this triggers the problematic pattern
-        device.primary_ip4 = self.ip_address
+        device.primary_ip4 = self.ip_addresses[0]
         device.save()
 
         # Should have location-1 record
@@ -1579,7 +1572,10 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         interface = Interface.objects.create(
-            device=device, name="eth0", type="1000base-t", status=Status.objects.get_for_model(Interface).first()
+            device=device,
+            name="eth0",
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=Status.objects.get_for_model(Interface).first(),
         )
 
         # Step 2: Create DNS rule FIRST (before IP assignment)
@@ -1681,7 +1677,10 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         interface = Interface.objects.create(
-            device=device, name="eth0", type="1000base-t", status=Status.objects.get_for_model(Interface).first()
+            device=device,
+            name="eth0",
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=Status.objects.get_for_model(Interface).first(),
         )
 
         # Step 2: Create DNS rule for A records
@@ -1752,12 +1751,12 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         # Assign IP to service
-        self.service_device_attached.ip_addresses.add(self.ip_address)
+        self.service_device_attached.ip_addresses.add(self.ip_addresses[0])
 
         # Verify DNS record creation
         a_records = ARecord.objects.filter(name="web-service", zone=self.dns_zone)
         self.assertEqual(a_records.count(), 1)
-        self.assertEqual(str(a_records.first().address_id), str(self.ip_address.id))
+        self.assertEqual(str(a_records.first().address_id), str(self.ip_addresses[0].id))
 
         # Verify tracking record
         rule_records = DNSRuleRecord.objects.filter(rule=service_rule, object_id=self.service_device_attached.id)
@@ -1775,7 +1774,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         # Assign multiple IPs
-        self.service_device_attached.ip_addresses.add(self.ip_address, self.ip_address2)
+        self.service_device_attached.ip_addresses.add(self.ip_addresses[0], self.ip_addresses[1])
 
         # Verify multiple DNS records
         a_records = ARecord.objects.filter(name="web-service", zone=self.dns_zone)
@@ -1783,7 +1782,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
 
         # Verify both IPs are represented
         record_ips = {str(record.address_id) for record in a_records}
-        expected_ips = {str(self.ip_address.id), str(self.ip_address2.id)}
+        expected_ips = {str(self.ip_addresses[0].id), str(self.ip_addresses[1].id)}
         self.assertEqual(record_ips, expected_ips)
 
     def test_service_ip_assignment_triggers_dns_update(self):
@@ -1801,7 +1800,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(ARecord.objects.filter(name="web-service").count(), 0)
 
         # Assign IP (should trigger M2M signal)
-        self.service_device_attached.ip_addresses.add(self.ip_address)
+        self.service_device_attached.ip_addresses.add(self.ip_addresses[0])
 
         # Verify DNS record was created
         self.assertEqual(ARecord.objects.filter(name="web-service").count(), 1)
@@ -1818,7 +1817,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         # Create DNS records
-        self.service_device_attached.ip_addresses.add(self.ip_address)
+        self.service_device_attached.ip_addresses.add(self.ip_addresses[0])
         self.assertEqual(ARecord.objects.filter(name="web-service").count(), 1)
 
         # Delete service (should trigger cleanup)
@@ -1840,17 +1839,17 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         # Add first IP
-        self.service_device_attached.ip_addresses.add(self.ip_address)
+        self.service_device_attached.ip_addresses.add(self.ip_addresses[0])
         first_record = ARecord.objects.filter(name="web-service").first()
 
         # Add second IP
-        self.service_device_attached.ip_addresses.add(self.ip_address2)
+        self.service_device_attached.ip_addresses.add(self.ip_addresses[1])
 
         # Verify first record ID is preserved
         records_after = ARecord.objects.filter(name="web-service")
         self.assertEqual(records_after.count(), 2)
 
-        record_for_ip1 = records_after.filter(address_id=self.ip_address.id).first()
+        record_for_ip1 = records_after.filter(address_id=self.ip_addresses[0].id).first()
         self.assertEqual(record_for_ip1.id, first_record.id)  # Should NOT be recreated
 
     def test_service_name_change_triggers_dns_update(self):
@@ -1866,7 +1865,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         # Assign IP to service and verify initial DNS record
-        self.service_device_attached.ip_addresses.add(self.ip_address)
+        self.service_device_attached.ip_addresses.add(self.ip_addresses[0])
 
         # Verify initial DNS record with original service name
         initial_records = ARecord.objects.filter(name="web-service", zone=self.dns_zone)
@@ -1891,7 +1890,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         new_record = new_records.first()
 
         # Verify it points to the same IP (delete+create behavior)
-        self.assertEqual(str(new_record.address_id), str(self.ip_address.id), "Should point to same IP")
+        self.assertEqual(str(new_record.address_id), str(self.ip_addresses[0].id), "Should point to same IP")
 
         # Verify tracking record is updated to point to the new record
         rule_records = DNSRuleRecord.objects.filter(rule=service_rule, object_id=self.service_device_attached.id)
@@ -1904,20 +1903,20 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         self._create_dns_rule()
 
         ipaddresstointerface = IPAddressToInterface.objects.create(
-            ip_address=self.ip_address,
+            ip_address=self.ip_addresses[0],
             interface=self.interface,
         )
         rule_records = DNSRuleRecord.objects.filter(object_id=self.interface.pk)
         self.assertEqual(rule_records.count(), 1)
 
         arecord = ARecord.objects.get(address=ipaddresstointerface.ip_address)
-        self.assertEqual(arecord.address, self.ip_address)
+        self.assertEqual(arecord.address, self.ip_addresses[0])
 
     def test_ipaddresstointerface_delete_deletes_dns_record(self):
         """Test that deleting an IPAddressToInterface relationship deletes a DNS record."""
         self._create_dns_rule()
         ipaddresstointerface = IPAddressToInterface.objects.create(
-            ip_address=self.ip_address,
+            ip_address=self.ip_addresses[0],
             interface=self.interface,
         )
         rule_records = DNSRuleRecord.objects.filter(object_id=self.interface.pk)
@@ -1937,7 +1936,7 @@ class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
         super().setUpTestData()
 
         # Assign IP address to interface for validation tests
-        cls.interface.ip_addresses.add(cls.ip_address)
+        cls.interface.ip_addresses.add(cls.ip_addresses[0])
 
     def test_render_template_error_string_detection(self):
         """Test whether our error string detection works."""
@@ -2070,7 +2069,7 @@ class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
             interfaces_with_role[interface_name] = Interface.objects.create(
                 name=interface_name,
                 device=test_device,
-                type="1000base-t",
+                type=InterfaceTypeChoices.TYPE_1GE_FIXED,
                 status=interface_status,
                 role=interface_role,  # Has role - template should work
             )
@@ -2079,7 +2078,7 @@ class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
         interface_no_role = Interface.objects.create(
             name=f"eth{i+1}",
             device=test_device,
-            type="1000base-t",
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             status=interface_status,
         )
 
@@ -2156,6 +2155,196 @@ class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(rule_records_1_after.count(), 1, "Interface 1 tracking record should be preserved")
         self.assertEqual(rule_records_2_after.count(), 1, "Interface 2 tracking record should be preserved")
 
+    def test_arecord_rule_with_ipv6_address_handles_validation_error(self):
+        """Test that a DNS rule for A records gracefully handles ValidationError when IPv6 address is provided."""
+        # Create a DNS rule for A records
+        dns_rule = DNSRule.objects.create(
+            name="interface-a-record-rule",
+            description="Create A records from interface IPs",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+        interface = Interface.objects.create(
+            name="eth0-v6-test",
+            device=self.device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=Status.objects.get_for_model(Interface).first(),
+        )
+
+        # Verify no A records exist initially
+        initial_a_records = ARecord.objects.filter(name=f"{interface.name}.{self.device.name}", zone=self.dns_zone)
+        self.assertEqual(initial_a_records.count(), 0)
+
+        # Assign IPv6 address to interface (invalid for A record)
+        # This should trigger the rule engine via signals, which will catch ValidationError
+        interface.ip_addresses.add(self.ipv6_addresses[0])
+
+        # Verify no A record was created (ValidationError should have been caught)
+        final_a_records = ARecord.objects.filter(name=f"{interface.name}.{self.device.name}", zone=self.dns_zone)
+        self.assertEqual(
+            final_a_records.count(),
+            0,
+            "No A record should be created when rule tries to assign IPv6 address to A record",
+        )
+
+        # Verify no tracking records were created either
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface.id)
+        self.assertEqual(rule_records.count(), 0, "No tracking records should be created when validation fails")
+
+    def test_aaaarecord_rule_with_ipv4_address_handles_validation_error(self):
+        """Test that a DNS rule for AAAA records gracefully handles ValidationError when IPv4 address is provided."""
+        # Create a DNS rule for AAAA records
+        dns_rule = DNSRule.objects.create(
+            name="interface-aaaa-record-rule",
+            description="Create AAAA records from interface IPs",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        interface = Interface.objects.create(
+            name="eth0-v4-test",
+            device=self.device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=Status.objects.get_for_model(Interface).first(),
+        )
+
+        # Verify no AAAA records exist initially
+        initial_aaaa_records = AAAARecord.objects.filter(
+            name=f"{interface.name}.{self.device.name}", zone=self.dns_zone
+        )
+        self.assertEqual(initial_aaaa_records.count(), 0)
+
+        # Assign IPv4 address to interface (invalid for AAAA record)
+        # This should trigger the rule engine via signals, which will catch ValidationError
+        interface.ip_addresses.add(self.ip_addresses[0])
+
+        # Verify no AAAA record was created (ValidationError should have been caught)
+        final_aaaa_records = AAAARecord.objects.filter(name=f"{interface.name}.{self.device.name}", zone=self.dns_zone)
+        self.assertEqual(
+            final_aaaa_records.count(),
+            0,
+            "No AAAA record should be created when rule tries to assign IPv4 address to AAAA record",
+        )
+
+        # Verify no tracking records were created either
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface.id)
+        self.assertEqual(rule_records.count(), 0, "No tracking records should be created when validation fails")
+
+    def test_arecord_rule_filters_ipv6_from_mixed_addresses(self):
+        """Test that an A record rule only creates records for IPv4 addresses when interface has both IPv4 and IPv6."""
+        # Create a DNS rule for A records
+        dns_rule = DNSRule.objects.create(
+            name="interface-mixed-ip-rule",
+            description="Create A records from interface IPs (should filter IPv6)",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        interface = Interface.objects.create(
+            name="eth0-mixed",
+            device=self.device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=Status.objects.get_for_model(Interface).first(),
+        )
+
+        # Assign 3 IPv4 and 3 IPv6 addresses to interface. Zip them to v4,v6,v4,v6 order to ensure we
+        # don't do all one one version first, just in case doing so masks a problem.
+        v4_and_v6_addresses = list(itertools.chain.from_iterable(zip(self.ip_addresses[:3], self.ipv6_addresses[:3])))
+        interface.ip_addresses.set(v4_and_v6_addresses)
+        self.assertEqual(interface.ip_addresses.count(), 6)
+
+        # Verify only 3 A records were created (one for each IPv4 address)
+        a_records = ARecord.objects.filter(name=f"{interface.name}.{self.device.name}", zone=self.dns_zone)
+        self.assertEqual(a_records.count(), 3, "Should create exactly 3 A records for 3 IPv4 addresses")
+
+        # Verify no AAAA records were created
+        aaaa_records = AAAARecord.objects.filter(name=f"{interface.name}.{self.device.name}", zone=self.dns_zone)
+        self.assertEqual(aaaa_records.count(), 0, "Should not create any AAAA records")
+
+        # Verify the A records point to IPv4 addresses only
+        created_addresses = {record.address for record in a_records}
+        expected_ipv4_addresses = set(self.ip_addresses)
+        self.assertEqual(
+            created_addresses,
+            expected_ipv4_addresses,
+            "A records should only contain IPv4 addresses",
+        )
+
+        # Verify exactly 3 tracking records were created (one per A record)
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface.id)
+        self.assertEqual(rule_records.count(), 3, "Should create exactly 3 tracking records for 3 A records")
+
+        # Verify each tracking record corresponds to an A record
+        for rule_record in rule_records:
+            self.assertIsInstance(rule_record.dns_record, ARecord)
+            self.assertIn(rule_record.dns_record.address, expected_ipv4_addresses)
+
+    def test_aaaarecord_rule_filters_ipv4_from_mixed_addresses(self):
+        """Test that an AAAA record rule only creates records for IPv6 addresses when interface has both IPv4 and IPv6."""
+        # Create a DNS rule for AAAA records
+        dns_rule = DNSRule.objects.create(
+            name="interface-mixed-ip-aaaa-rule",
+            description="Create AAAA records from interface IPs (should filter IPv4)",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        interface = Interface.objects.create(
+            name="eth0-mixed-aaaa",
+            device=self.device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=Status.objects.get_for_model(Interface).first(),
+        )
+
+        # Assign 3 IPv4 and 3 IPv6 addresses to interface. Zip them to v4,v6,v4,v6 order to ensure we
+        # don't do all one one version first, just in case doing so masks a problem.
+        v4_and_v6_addresses = list(itertools.chain.from_iterable(zip(self.ip_addresses[:3], self.ipv6_addresses[:3])))
+        interface.ip_addresses.set(v4_and_v6_addresses)
+        self.assertEqual(interface.ip_addresses.count(), 6)
+        print(f"\n\ninterface.ip_addresses.all(): {interface.ip_addresses.all()}\n")
+
+        # Verify only 3 AAAA records were created (one for each IPv6 address)
+        aaaa_records = AAAARecord.objects.filter(name=f"{interface.name}.{self.device.name}", zone=self.dns_zone)
+        self.assertEqual(aaaa_records.count(), 3, "Should create exactly 3 AAAA records for 3 IPv6 addresses")
+
+        # Verify no A records were created
+        a_records = ARecord.objects.filter(name=f"{interface.name}.{self.device.name}", zone=self.dns_zone)
+        self.assertEqual(a_records.count(), 0, "Should not create any A records")
+
+        # Verify the AAAA records point to IPv6 addresses only
+        created_addresses = {record.address for record in aaaa_records}
+        expected_ipv6_addresses = set(self.ipv6_addresses)
+        self.assertEqual(
+            created_addresses,
+            expected_ipv6_addresses,
+            "AAAA records should only contain IPv6 addresses",
+        )
+
+        # Verify exactly 3 tracking records were created (one per AAAA record)
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=interface.id)
+        self.assertEqual(rule_records.count(), 3, "Should create exactly 3 tracking records for 3 AAAA records")
+
+        # Verify each tracking record corresponds to an AAAA record
+        for rule_record in rule_records:
+            self.assertIsInstance(rule_record.dns_record, AAAARecord)
+            self.assertIn(rule_record.dns_record.address, expected_ipv6_addresses)
+
     def test_multiple_ips_preserves_existing_records(self):
         """Test that adding a second IP to an interface doesn't delete/recreate the first DNS record."""
         # Create a DNS rule for interface IPs
@@ -2182,7 +2371,7 @@ class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
         test_interface = Interface.objects.create(
             name="eth0",
             device=test_device,
-            type="1000base-t",
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             status=Status.objects.get_for_model(Interface).first(),
         )
 
@@ -2294,11 +2483,11 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
             name_template="{{ obj.name }}",
             value_template="{{ obj.ip_addresses.first() }}",
         )
-        self.interface.ip_addresses.set([self.ip_address, self.ip_address2])
+        self.interface.ip_addresses.set([self.ip_addresses[0], self.ip_addresses[1]])
 
         results = self._calc_desired_record_data(rule, self.interface)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["address_id"], str(self.ip_address.pk))
+        self.assertEqual(results[0]["address_id"], str(self.ip_addresses[0].pk))
 
     def test_interface_last_empty(self):
         """Interface last() should raise DNSTemplateEmptyError when no IPs exist."""
@@ -2325,13 +2514,13 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
             name_template="{{ obj.name }}",
             value_template="{{ obj.ip_addresses.filter(ip_version=4).first() }} {{ obj.ip_addresses.filter(ip_version=4).last() }}",
         )
-        self.interface.ip_addresses.set([self.ip_address, self.ip_address2])
+        self.interface.ip_addresses.set([self.ip_addresses[0], self.ip_addresses[1]])
 
         results = self._calc_desired_record_data(rule, self.interface)
         # Expect two records: one for first() and one for last()
         self.assertEqual(len(results), 2)
         returned_ids = {record["address_id"] for record in results}
-        expected_ids = {str(self.ip_address.pk), str(self.ip_address2.pk)}
+        expected_ids = {str(self.ip_addresses[0].pk), str(self.ip_addresses[1].pk)}
         self.assertEqual(returned_ids, expected_ids)
 
     def test_interface_filter_ipv4_only(self):
@@ -2344,11 +2533,11 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
             name_template="{{ obj.name }}",
             value_template="{{ obj.ip_addresses.filter(ip_version=4) }}",
         )
-        self.interface.ip_addresses.set([self.ip_address, self.ip_address2, self.ipv6_address])
+        self.interface.ip_addresses.set([self.ip_addresses[0], self.ip_addresses[1], self.ipv6_addresses[0]])
 
         results = self._calc_desired_record_data(rule, self.interface)
         returned_ids = {record["address_id"] for record in results}
-        expected_ids = {str(self.ip_address.pk), str(self.ip_address2.pk)}
+        expected_ids = {str(self.ip_addresses[0].pk), str(self.ip_addresses[1].pk)}
         self.assertEqual(returned_ids, expected_ids)
 
     def test_service_filter_all(self):
@@ -2361,11 +2550,11 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
             name_template="{{ obj.name }}",
             value_template="{{ obj.ip_addresses.filter(ip_version=4).all() }}",
         )
-        self.service_device_attached.ip_addresses.set([self.ip_address, self.ip_address2])
+        self.service_device_attached.ip_addresses.set([self.ip_addresses[0], self.ip_addresses[1]])
 
         results = self._calc_desired_record_data(rule, self.service_device_attached)
         returned_ids = {record["address_id"] for record in results}
-        expected_ids = {str(self.ip_address.pk), str(self.ip_address2.pk)}
+        expected_ids = {str(self.ip_addresses[0].pk), str(self.ip_addresses[1].pk)}
         self.assertEqual(returned_ids, expected_ids)
 
     def test_filter_skips_invalid_uuid_values(self):
@@ -2379,9 +2568,9 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
             value_template="invalid-uuid {{ obj.ip_addresses.all() }}",
         )
         # include valid IPs but template prepends an invalid literal
-        self.interface.ip_addresses.set([self.ip_address])
+        self.interface.ip_addresses.set([self.ip_addresses[0]])
 
         results = self._calc_desired_record_data(rule, self.interface)
         # Only the valid UUID should produce a record
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["address_id"], str(self.ip_address.pk))
+        self.assertEqual(results[0]["address_id"], str(self.ip_addresses[0].pk))

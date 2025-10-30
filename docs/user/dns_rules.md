@@ -220,7 +220,7 @@ When objects move between locations:
 **Check**:
 
 1. Rule is **enabled**
-2. Content type matches your objects
+2. Content type matches your objects (e.g. dcim.interface)
 3. Location scoping is appropriate (global vs location-specific)
 4. Templates render successfully
 5. Required IP addresses exist for A/AAAA records
@@ -235,6 +235,10 @@ When objects move between locations:
 **Resolution**:
 
 - Test templates with representative objects before deployment
+
+### Some DNS records are not being created
+
+If A records are being created for v4 addresses and AAAA records are not being created for v6 addresses (or vice-versa), ensure you have DNS Rules for both A and AAAA.
 
 ## Best Practices
 
