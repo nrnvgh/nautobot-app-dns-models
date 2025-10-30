@@ -1,14 +1,16 @@
+from django.test import TestCase
+
 from nautobot.dcim.models import Device
 from nautobot.virtualization.models import VirtualMachine
 
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
-from nautobot_dns_models.tests.test_rule_engine import BaseRuleEngineTestCase
+from nautobot_dns_models.tests.test_rule_engine import BaseRuleEngineMixin
 
 
 class Mixins:
     """Mixins are nested to avoid being discovered as test cases by Django. This mimics Nautobot core's test structure."""
 
-    class PrimaryIPProxyMixin(BaseRuleEngineTestCase):
+    class PrimaryIPProxyMixin(BaseRuleEngineMixin):
         """Common assertions for primary IP proxy behavior on devices and VMs."""
 
         proxy_target_attr: str = ""
@@ -21,6 +23,9 @@ class Mixins:
                 raise ValueError("proxy_target_attr must be defined on subclasses")
 
             cls.proxy_target: Device | VirtualMachine = getattr(cls, cls.proxy_target_attr)
+            cls.ip_address = cls.ip_addresses[0]
+            cls.ip_address2 = cls.ip_addresses[1]
+            cls.ipv6_address = cls.ipv6_addresses[0]
             cls.primary_ipv6 = cls.ipv6_address
 
         def _assert_uuid(self, proxy_field, expected_pk):
@@ -84,7 +89,7 @@ class Mixins:
             self.assertFalse(proxy.primary_ip6)
             self.assertEqual(str(proxy.primary_ip6), "")
 
-    class IPAddressManagerMixin(BaseRuleEngineTestCase):
+    class IPAddressManagerMixin(BaseRuleEngineMixin):
         """Common assertions for ip_addresses manager proxies."""
 
         manager_source_attr: str = ""
@@ -94,6 +99,9 @@ class Mixins:
             super().setUpTestData()
             if not cls.manager_source_attr:
                 raise ValueError("manager_source_attr must be defined on subclasses")
+            cls.ip_address = cls.ip_addresses[0]
+            cls.ip_address2 = cls.ip_addresses[1]
+            cls.ipv6_address = cls.ipv6_addresses[0]
 
         def setUp(self):
             super().setUp()
@@ -148,31 +156,31 @@ class Mixins:
             self.assertEqual(str(last_proxy), "")
 
 
-class DevicePrimaryIPProxyTestCase(Mixins.PrimaryIPProxyMixin):
+class DevicePrimaryIPProxyTestCase(Mixins.PrimaryIPProxyMixin, TestCase):
     """Device proxy should mirror native primary IP behavior."""
 
     proxy_target_attr = "device"
 
 
-class VirtualMachinePrimaryIPProxyTestCase(Mixins.PrimaryIPProxyMixin):
+class VirtualMachinePrimaryIPProxyTestCase(Mixins.PrimaryIPProxyMixin, TestCase):
     """Virtual machine proxy should mirror native primary IP behavior."""
 
     proxy_target_attr = "vm"
 
 
-class InterfaceIPProxyTestCase(Mixins.IPAddressManagerMixin):
+class InterfaceIPProxyTestCase(Mixins.IPAddressManagerMixin, TestCase):
     """Interface ip_addresses proxies should render UUID strings."""
 
     manager_source_attr = "interface"
 
 
-class DeviceServiceIPProxyTestCase(Mixins.IPAddressManagerMixin):
+class DeviceServiceIPProxyTestCase(Mixins.IPAddressManagerMixin, TestCase):
     """Device-attached service ip_addresses proxies should render UUID strings."""
 
     manager_source_attr = "service_device_attached"
 
 
-class VMServiceIPProxyTestCase(Mixins.IPAddressManagerMixin):
+class VMServiceIPProxyTestCase(Mixins.IPAddressManagerMixin, TestCase):
     """VM-attached service ip_addresses proxies should render UUID strings."""
 
     manager_source_attr = "service_vm_attached"

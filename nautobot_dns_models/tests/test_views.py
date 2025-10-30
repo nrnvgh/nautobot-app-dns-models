@@ -210,6 +210,8 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
 
     @classmethod
     def setUpTestData(cls):
+        constance_config.nautobot_dns_models__NORMALIZE_DNS_RECORDS = True
+
         zone = DNSZone.objects.create(
             name="example-one.com",
         )
@@ -225,11 +227,6 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
             IPAddress.objects.create(address="10.0.0.4/32", namespace=namespace, status=status),
         )
 
-        #
-        # If the first two records have the same name, the name on the second
-        # gets updated to {name}X by ListObjectsViewTestCase.test_list_objects_with_constrained_permission.
-        # This is a problem because the ARecord.clean method will fail if the name is not normalized, so ensure
-        # the first two have different names.
         ARecord.objects.create(
             name="primary",
             address=cls.ip_addresses[0],
@@ -259,10 +256,6 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
-
-    def test_list_objects_with_constrained_permission(self):
-        constance_config.nautobot_dns_models__NORMALIZE_DNS_RECORDS = True
-        super().test_list_objects_with_constrained_permission()
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_ipaddress_detail_view_side_panel_always(self):
@@ -321,6 +314,8 @@ class AAAARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTests
 
     @classmethod
     def setUpTestData(cls):
+        constance_config.nautobot_dns_models__NORMALIZE_DNS_RECORDS = True
+
         zone = DNSZone.objects.create(
             name="example_one.com",
         )
@@ -342,12 +337,12 @@ class AAAARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTests
             zone=zone,
         )
         AAAARecord.objects.create(
-            name="primary-1",
+            name="primary",
             address=cls.ip_addresses[1],
             zone=zone,
         )
         AAAARecord.objects.create(
-            name="primary-1",
+            name="primary",
             address=cls.ip_addresses[2],
             zone=zone,
         )
@@ -365,6 +360,14 @@ class AAAARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTests
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
+
+    #
+    # The test in the superclass will mutate the second record if the first two records have the same name,
+    # which breaks if normalization is disabled. Normalization doesn't matter for this test, so we can safely
+    # enable it.
+    def test_list_objects_with_constrained_permission(self):
+        constance_config.nautobot_dns_models__NORMALIZE_DNS_RECORDS = True
+        super().test_list_objects_with_constrained_permission()
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_ipaddress_detail_view_side_panel_always(self):
