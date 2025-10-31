@@ -562,20 +562,28 @@ class DNSRuleEngine:
         for record_data in record_data_list:
             # Create the DNS record. This is a best-effort operation; if any of them fail, log the error and continue.
             try:
-                dns_record = record_class.objects.create(**record_data)
+                dns_record = record_class(**record_data)
+                dns_record.validated_save()
             except ValidationError as exc:
                 logger.warning(f"Failed to create DNS record from rule {rule.name} for {source_obj}: {exc}")
                 logger.warning(f"Record data: {record_data}")
                 continue
 
             # Create the tracking record
-            rule_record = DNSRuleRecord.objects.create(
-                rule=rule,
-                content_type=ContentType.objects.get_for_model(source_obj),
-                object_id=source_obj.id,
-                dns_record_content_type=ContentType.objects.get_for_model(dns_record),
-                dns_record_object_id=dns_record.id,
-            )
+            try:
+                rule_record = DNSRuleRecord(
+                    rule=rule,
+                    content_type=ContentType.objects.get_for_model(source_obj),
+                    object_id=source_obj.id,
+                    dns_record_content_type=ContentType.objects.get_for_model(dns_record),
+                    dns_record_object_id=dns_record.id,
+                )
+                rule_record.validated_save()
+            except ValidationError as exc:
+                logger.warning(
+                    f"Failed to create tracking record for DNS record {dns_record} from rule {rule.name} for {source_obj}: {exc}"
+                )
+                continue
 
             # Create dependency tracking records for Jinja templates
             self._create_jinja_dependency_records(rule, rule_record, source_obj)
