@@ -97,7 +97,7 @@ Controls whether the plugin automatically normalizes record fields before saving
 - Behavior
   - Enabled (`True`): model validation mutates the above fields to their normalized form before running RFC wire-format checks
   - Disabled (`False`): model validation rejects non‑normalized input with an error; RFC wire-format checks still apply
-  - Rule engine normalization: regardless of this setting, rule-driven record creation normalizes rendered template outputs for the same domain-like fields; templates do not require a `dns_normalize` filter
+  - Rule engine normalization: regardless of this setting, rule-driven record creation normalizes rendered template outputs for the same domain-like fields
 
 - Examples
   - Input name: `"Web/ App _01.Name"` → Normalized: `"web-app-01.name"`
