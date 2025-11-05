@@ -13,10 +13,11 @@ Categories:
 
 import itertools
 from unittest import skip
+from unittest.mock import patch
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from jinja2 import TemplateSyntaxError, UndefinedError
 from nautobot.apps.utils import render_jinja2
@@ -1074,6 +1075,62 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):
         # Now the A record should be deleted (template fails with no IPs)
         final_a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
         self.assertEqual(final_a_records.count(), 0)
+
+    def test_atomicity_dnsrecord_validation_failure_rolls_back(self):
+        """If DNSRecord validation fails, no DNSRecord or tracking row should persist."""
+        # Create an AAAA rule but only assign an IPv4 address -> validation should fail
+        DNSRule.objects.create(
+            name="iface-aaaa-invalid",
+            description="Invalid AAAA creation path",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        # Pre-condition: no AAAA records
+        self.assertEqual(AAAARecord.objects.filter(name__startswith="eth0.").count(), 0)
+
+        # Assign IPv4 address; engine will attempt AAAA creation and should fail validation
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        # Assert: still no AAAA records and no tracking rows
+        self.assertEqual(AAAARecord.objects.filter(name__startswith="eth0.").count(), 0)
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(dns_record_content_type=ContentType.objects.get_for_model(AAAARecord)).count(),
+            0,
+        )
+
+    def test_atomicity_tracking_uniqueness_failure_rolls_back(self):
+        """If tracking creation fails (IntegrityError), the DNSRecord should not persist (rolled back)."""
+
+        # Create an A rule that would normally succeed
+        DNSRule.objects.create(
+            name="iface-a-atomicity",
+            description="Create A records for interfaces",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        expected_name = f"{self.interface.name}.{self.device.name}"
+        self.assertEqual(ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(), 0)
+
+        # Force DNSRuleRecord.objects.create to raise IntegrityError to simulate uniqueness failure
+        with patch(
+            "nautobot_dns_models.rules.engine.DNSRuleRecord.objects.create",
+            side_effect=IntegrityError("dup"),
+        ):
+            # Assign IPv4 to trigger engine
+            self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        # Assert DNSRecord was not persisted due to atomic rollback
+        self.assertEqual(ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(), 0)
 
     def test_interface_a_record_created_on_ip_addition_via_custom_method(self):
         """Test that A records are created when IP is added to interface via custom add_ip_addresses method."""

@@ -7,7 +7,7 @@ from typing import Any
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import IntegrityError, models, transaction
 from jinja2 import TemplateError
 from nautobot.apps.utils import render_jinja2
 from nautobot.dcim import models as dcim_models
@@ -61,14 +61,7 @@ class DNSRuleEngine:
         rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
 
         for rule_record in rule_records:
-            try:
-                dns_record = rule_record.dns_record
-                if dns_record:
-                    dns_record.delete()
-                    logger.info(f"Deleted DNS record {dns_record} for {source_obj}")
-                rule_record.delete()
-            except Exception as e:
-                logger.error(f"Failed to delete DNS record for {source_obj}: {e}")
+            self._delete_tracking_and_dns_record(rule_record)
 
     def process_object(self, source_obj: Any, created: bool = False) -> None:
         """
@@ -214,21 +207,18 @@ class DNSRuleEngine:
 
         for rule in applicable_rules:
             if not self._object_needs_dns_records_for_rule(source_obj, rule):
-                logger.debug(f"Object {source_obj} does not need DNS records for rule {rule.name} - running cleanup")
                 #
-                # incoming object has no IPs on it; ensure all records for this rule are deleted
+                # Object needs no DNS records for this rule; ensure all records for this rule are deleted
+                logger.debug(f"Object {source_obj} does not need DNS records for rule {rule.name} - running cleanup")
                 self._cleanup_records_for_rule(rule, source_obj)
                 continue
 
             logger.debug(f"Object {source_obj} needs DNS records for rule {rule.name} - reconciling records")
             try:
                 self._reconcile_records_for_rule(rule, source_obj)
-            except (TemplateError, DNSTemplateEmptyError) as exc:
-                logger.warning(f"Template error for rule {rule.name} on {source_obj}: {exc} - cleaning up records")
-                self._cleanup_records_for_rule(rule, source_obj)
-            except (DNSZone.DoesNotExist, ValueError) as exc:
-                logger.error(
-                    f"Infrastructure error for rule {rule.name} on {source_obj}: {exc} - cleaning up records to prevent transaction failure"
+            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError, []) as exc:
+                logger.warning(
+                    f"[{type(exc).__name__}] Error for rule {rule.name} on {source_obj}: {exc} - cleaning up records"
                 )
                 self._cleanup_records_for_rule(rule, source_obj)
             except Exception as exc:
@@ -468,7 +458,8 @@ class DNSRuleEngine:
         if records_to_create:
             records_to_create_data = [desired_records_by_content[key] for key in records_to_create]
             logger.info(f"Creating {len(records_to_create_data)} new records for {rule.name}")
-            self._create_records_from_data(rule, source_obj, records_to_create_data)
+            created_records = self._create_records_from_data(rule, source_obj, records_to_create_data)
+            logger.debug(f"Created {len(created_records)} records for '{rule.name}' on {source_obj}")
 
         # Log summary
         total_after = len(records_to_keep) + len(records_to_create)
@@ -506,27 +497,8 @@ class DNSRuleEngine:
         """Clean up all DNS records for a specific rule+object combination."""
         tracking_records = self._get_existing_tracking_records(rule, source_obj)
 
-        deleted_dns_count = 0
-        deleted_tracking_count = 0
-
         for tracking_record in tracking_records:
-            dns_record = tracking_record.dns_record
-
-            # Delete tracking record first
-            logger.debug(f"Deleting tracking record {tracking_record} for {rule.name} on {source_obj}")
-            tracking_record.delete()
-            deleted_tracking_count += 1
-
-            # Then delete actual DNS record if it exists
-            if dns_record:
-                logger.debug(f"Deleting DNS record {dns_record} for {rule.name} on {source_obj}")
-                dns_record.delete()
-                deleted_dns_count += 1
-
-        if deleted_dns_count > 0 or deleted_tracking_count > 0:
-            logger.info(
-                f"Cleaned up {deleted_dns_count} DNS records and {deleted_tracking_count} tracking records for {rule.name} on {source_obj}"
-            )
+            self._delete_tracking_and_dns_record(tracking_record)
 
     def _cleanup_orphaned_records(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
         """
@@ -562,31 +534,35 @@ class DNSRuleEngine:
         for record_data in record_data_list:
             # Create the DNS record. This is a best-effort operation; if any of them fail, log the error and continue.
             try:
-                dns_record = record_class(**record_data)
-                dns_record.validated_save()
+                with transaction.atomic():
+                    dns_record = record_class(**record_data)
+                    dns_record.validated_save()
+
+                    DNSRuleRecord.objects.create(
+                        rule=rule,
+                        content_type=ContentType.objects.get_for_model(source_obj),
+                        object_id=source_obj.id,
+                        dns_record_content_type=ContentType.objects.get_for_model(dns_record),
+                        dns_record_object_id=dns_record.id,
+                    )
             except ValidationError as exc:
+                logger.warning(
+                    f"Failed to create DNS record from rule {rule.name} for {source_obj}: {exc} ({type(exc).__name__})"
+                )
+                logger.warning(f"Record data: {record_data}")
+                continue
+            except IntegrityError as exc:
                 logger.warning(f"Failed to create DNS record from rule {rule.name} for {source_obj}: {exc}")
                 logger.warning(f"Record data: {record_data}")
                 continue
-
-            # Create the tracking record
-            try:
-                rule_record = DNSRuleRecord(
-                    rule=rule,
-                    content_type=ContentType.objects.get_for_model(source_obj),
-                    object_id=source_obj.id,
-                    dns_record_content_type=ContentType.objects.get_for_model(dns_record),
-                    dns_record_object_id=dns_record.id,
+            except Exception as exc:
+                logger.error(
+                    f"Unexpected error creating DNS record from rule {rule.name} for {source_obj}: {exc} ({type(exc)})"
                 )
-                rule_record.validated_save()
-            except ValidationError as exc:
-                logger.warning(
-                    f"Failed to create tracking record for DNS record {dns_record} from rule {rule.name} for {source_obj}: {exc}"
-                )
+                logger.error(f"Record data: {record_data}")
                 continue
-
-            # Create dependency tracking records for Jinja templates
-            self._create_jinja_dependency_records(rule, rule_record, source_obj)
+            else:
+                logger.debug(f"Created DNS record {dns_record} from rule {rule.name} for {source_obj}")
 
             created_records.append(dns_record)
             logger.info(f"Created DNS record {dns_record} from rule {rule.name} for {source_obj}")
@@ -686,14 +662,26 @@ class DNSRuleEngine:
 
     def _delete_tracking_and_dns_record(self, tracking_record) -> None:
         """Delete both the DNS record and its tracking record."""
-        dns_record = tracking_record.dns_record
-        logger.debug(f"Deleting DNS record {dns_record} and tracking record {tracking_record}")
+        logger.debug(f"Deleting DNS record {tracking_record.dns_record} and tracking record {tracking_record}")
 
-        # Delete the actual DNS record
-        dns_record.delete()
+        try:
+            with transaction.atomic():
+                # Delete the tracking record
+                logger.debug(
+                    f"Deleting tracking record {tracking_record} for {tracking_record.rule.name} on {tracking_record.source_object}"
+                )
+                tracking_record.delete()
 
-        # Delete the tracking record
-        tracking_record.delete()
+                # Delete the actual DNS record
+                logger.debug(
+                    f"Deleting DNS record {tracking_record.dns_record} for {tracking_record.rule.name} on {tracking_record.source_object}"
+                )
+                tracking_record.dns_record.delete()
+        except Exception as exc:
+            logger.error(
+                f"Failed to delete DNS record {tracking_record.dns_record} and tracking record {tracking_record}: {exc} ({type(exc).__name__})"
+            )
+            raise
 
     def _build_record_data_variations(
         self, rule: DNSRule, context: dict[str, Any], base_record_data: dict[str, Any]
@@ -771,38 +759,36 @@ class DNSRuleEngine:
         Raises:
             DNSTemplateEmptyError: If any required template renders empty
         """
-        record_type = rule.record_type
-
         # A/AAAA records are now handled in _build_record_data_variations
         # to support multiple IP addresses cleanly
-        if record_type in ("A", "AAAA"):
+        if rule.record_type in ("A", "AAAA"):
             # This method no longer handles A/AAAA - they're handled in the variations builder
             pass
 
-        elif record_type == "CNAME":
+        elif rule.record_type == "CNAME":
             # CNAME records need alias field
             if rule.value_template:
                 rendered_alias = self._render_template(rule.value_template, context, "value_template")
                 record_data["alias"] = normalize_dns_name(rendered_alias)
 
-        elif record_type == "TXT":
+        elif rule.record_type == "TXT":
             # TXT records need text field
             if rule.value_template:
                 record_data["text"] = self._render_template(rule.value_template, context, "value_template")
 
-        elif record_type == "PTR":
+        elif rule.record_type == "PTR":
             # PTR records need ptrdname field
             if rule.value_template:
                 rendered_ptrdname = self._render_template(rule.value_template, context, "value_template")
                 record_data["ptrdname"] = normalize_dns_name(rendered_ptrdname)
 
-        elif record_type == "NS":
+        elif rule.record_type == "NS":
             # NS records need server field
             if rule.value_template:
                 rendered_server = self._render_template(rule.value_template, context, "value_template")
                 record_data["server"] = normalize_dns_name(rendered_server)
 
-        elif record_type == "MX":
+        elif rule.record_type == "MX":
             # MX records need mail_server and preference fields
             if rule.value_template:
                 rendered_mail_server = self._render_template(rule.value_template, context, "value_template")
@@ -811,7 +797,7 @@ class DNSRuleEngine:
                 preference_str = self._render_template(rule.preference_template, context, "preference_template")
                 record_data["preference"] = int(preference_str)
 
-        elif record_type == "SRV":
+        elif rule.record_type == "SRV":
             # SRV records need target, priority, weight, and port fields
             if rule.value_template:
                 rendered_target = self._render_template(rule.value_template, context, "value_template")
@@ -825,22 +811,6 @@ class DNSRuleEngine:
             if rule.port_template:
                 port_str = self._render_template(rule.port_template, context, "port_template")
                 record_data["port"] = int(port_str)
-
-    def _create_jinja_dependency_records(self, rule: DNSRule, rule_record: "DNSRuleRecord", source_obj: Any) -> None:
-        """
-        Create dependency tracking records for Jinja rule templates.
-
-        Note: This is a placeholder implementation for the dependency tracking POC.
-        The actual implementation was filed away as "successful POC" for now.
-
-        Args:
-            rule: The DNS rule that was processed
-            rule_record: The DNSRuleRecord tracking record
-            source_obj: The source object that triggered rule processing
-        """
-        # Placeholder - dependency tracking implementation was successful POC
-        # but has been deferred for now to focus on core multi-record functionality
-        logger.debug(f"Dependency tracking placeholder for rule {rule.name} - implementation deferred")
 
 
 # Global instance for use by signal handlers
