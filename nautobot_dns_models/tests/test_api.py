@@ -31,6 +31,24 @@ from nautobot_dns_models.models import (
 User = get_user_model()
 
 
+class DebugLoggingMixin:
+    """Mixin for enabling DEBUG logging for plugin internals during these tests."""
+
+    @classmethod
+    def setUpClass(cls):  # noqa: D401
+        """Enable DEBUG logging for plugin internals during these tests."""
+        import sys
+
+        super().setUpClass()
+        cls._log_handler = logging.StreamHandler(sys.stdout)
+        cls._log_handler.setLevel(logging.DEBUG)
+        cls._signal_logger = logging.getLogger("nautobot_dns_models.signals")
+        cls._engine_logger = logging.getLogger("nautobot_dns_models.rules.engine")
+        for lg in (cls._signal_logger, cls._engine_logger):
+            lg.setLevel(logging.DEBUG)
+            lg.addHandler(cls._log_handler)
+
+
 class DNSViewAPITestCase(APIViewTestCases.APIViewTestCase):
     """Test the Nautobot DNSView API."""
 
@@ -853,35 +871,6 @@ class DNSRuleRecordAPITestCase(APIViewTestCases.APIViewTestCase):
                 "dns_record_object_id": str(cls.a_record3.id),
             },
         ]
-
-
-#
-# TODO: delete this when we're done debugging
-class DebugLoggingMixin:
-    """Mixin for enabling DEBUG logging for plugin internals during these tests."""
-
-    @classmethod
-    def setUpClass(cls):  # noqa: D401
-        """Enable DEBUG logging for plugin internals during these tests."""
-        import sys
-
-        super().setUpClass()
-        cls._log_handler = logging.StreamHandler(sys.stdout)
-        cls._log_handler.setLevel(logging.DEBUG)
-        cls._signal_logger = logging.getLogger("nautobot_dns_models.signals")
-        cls._engine_logger = logging.getLogger("nautobot_dns_models.rules.engine")
-        for lg in (cls._signal_logger, cls._engine_logger):
-            lg.setLevel(logging.DEBUG)
-            lg.addHandler(cls._log_handler)
-
-    @classmethod
-    def tearDownClass(cls):  # noqa: D401
-        """Disable DEBUG logging added in setUpClass."""
-        try:
-            for lg in (cls._signal_logger, cls._engine_logger):
-                lg.removeHandler(cls._log_handler)
-        finally:
-            super().tearDownClass()
 
 
 class RuleEngineInterfaceIPAssignmentMixin(DebugLoggingMixin):
