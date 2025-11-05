@@ -4,7 +4,7 @@ import logging
 from collections import defaultdict
 
 from constance import config as constance_config
-from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
@@ -270,6 +270,12 @@ class DNSRecord(DNSModel):
     )
     description = models.TextField(help_text="Description of the Record.", blank=True)
     comment = models.CharField(max_length=200, help_text="Comment for the Record.", blank=True)
+    rule_record = GenericRelation(
+        to="nautobot_dns_models.DNSRuleRecord",
+        content_type_field="dns_record_content_type",
+        object_id_field="dns_record_object_id",
+        related_query_name="tracked_record",
+    )
 
     def clean(self):
         """
@@ -367,34 +373,6 @@ class ARecord(DNSRecord):
         limit_choices_to={"ip_version": IPAddressVersionChoices.VERSION_4},
         help_text="IP address for the record.",
     )
-
-    #
-    # TODO: This is POC and should be updated to use GenericRelation (or at
-    # TODO: least compare SQL queries/performance to make a determination)
-    @property
-    def dns_rule_records(self):
-        """Mock GenericRelation: Get DNSRuleRecord objects that track this A record."""
-        return DNSRuleRecord.objects.filter(
-            dns_record_content_type=ContentType.objects.get_for_model(self), dns_record_object_id=self.id
-        )
-
-    @property
-    def source_object(self):
-        """Get the source object that created this A record via DNS rules."""
-        try:
-            tracking_record = self.dns_rule_records.get()
-            return tracking_record.source_object
-        except DNSRuleRecord.DoesNotExist:
-            return None
-
-    @property
-    def dns_rule(self):
-        """Get the DNS rule that created this A record."""
-        try:
-            tracking_record = self.dns_rule_records.get()
-            return tracking_record.rule
-        except DNSRuleRecord.DoesNotExist:
-            return None
 
     class Meta:
         """Meta attributes for ARecord."""
@@ -888,7 +866,11 @@ class DNSRuleRecord(BaseModel):
         # Ensure each DNS record can only be managed by a single source object.
         # This prevents duplicate DNSRuleRecord entries and eliminates the need for DISTINCT
         # clauses in JOIN queries (e.g. DNSRuleRecordViewSet.queryset).
-        unique_together = [["content_type", "object_id", "dns_record_content_type", "dns_record_object_id"]]
+        unique_together = [
+            ["content_type", "object_id", "dns_record_content_type", "dns_record_object_id"],
+            # TODO: Enable this in the future?
+            # ["dns_record_content_type", "dns_record_object_id"],
+        ]
         verbose_name = "DNS Rule Record"
         verbose_name_plural = "DNS Rule Records"
 
