@@ -482,10 +482,6 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
             "name_template",
             "value_template",
         ]
-        if obj.record_type == "MX":
-            record_type_fields.extend(["preference_template"])
-        elif obj.record_type == "SRV":
-            record_type_fields.extend(["priority_template", "weight_template", "port_template"])
 
         return record_type_fields
 

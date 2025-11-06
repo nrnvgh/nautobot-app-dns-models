@@ -482,11 +482,6 @@ class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
         model = models.DNSRule
         fields = "__all__"
 
-    class Media:
-        """Media for dynamic form behavior."""
-
-        js = ["nautobot_dns_models/js/dns_rule_form.js"]
-
     def __init__(self, *args, **kwargs):
         """Initialize form with dynamic field setup."""
         super().__init__(*args, **kwargs)
@@ -494,27 +489,11 @@ class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
         # Add CSS classes for dynamic showing/hiding
         template_fields = [
             "value_template",
-            "preference_template",
-            "priority_template",
-            "weight_template",
-            "port_template",
         ]
 
         for field_name in template_fields:
             if field_name in self.fields:
                 self.fields[field_name].widget.attrs.update({"class": f"template-field {field_name.replace('_', '-')}"})
-
-        # Add enhanced help text for record-type specific fields
-        field_help_text = {
-            "preference_template": "MX records only: Mail server preference value (lower = higher priority)",
-            "priority_template": "SRV records only: Service priority value (lower = higher priority)",
-            "weight_template": "SRV records only: Service weight for load balancing",
-            "port_template": "SRV records only: Service port number",
-        }
-
-        for field_name, help_text in field_help_text.items():
-            if field_name in self.fields:
-                self.fields[field_name].help_text = help_text
 
 
 class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):

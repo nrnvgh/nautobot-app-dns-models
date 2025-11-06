@@ -50,8 +50,6 @@ Every DNS rule must define these core templates:
 - **Name Template**: The record name within the zone  
 - **Value Template**: The primary record value
 
-Record-specific templates (MX preference, SRV priority/weight/port) are required for those record types.
-
 ## Template Filters
 
 ### IP Address Filter
@@ -128,52 +126,6 @@ Value Template: {{ obj.ip_addresses.all() }}
 Zone Template: {% if obj.device %}{{ obj.device.location.name }}{% else %}{{ obj.virtual_machine.cluster.location.name }}{% endif %}.example.com
 Name Template: {{ obj.name }}
 Value Template: {{ obj.ip_addresses.all() }}
-```
-
-## Record Type-Specific Templates
-
-### MX Records
-
-**Required Additional Template**:
-
-- `preference_template`: MX record priority value
-
-**Example**:
-```jinja2
-Zone Template: example.com
-Name Template: mail
-Value Template: {{ obj.name }}.example.com
-Preference Template: 10
-```
-
-**Generated Record**:
-```
-# Zone: example.com
-mail    IN MX    10 web-server-01.example.com.
-```
-
-### SRV Records
-
-**Required Additional Templates**:
-
-- `priority_template`: SRV priority value
-- `weight_template`: SRV weight value  
-- `port_template`: SRV port number
-
-**Example**:
-```jinja2
-Zone Template: example.com
-Name Template: _http._tcp.{{ obj.name }}
-Value Template: {{ obj.name }}.example.com
-Priority Template: 10
-Weight Template: 5
-Port Template: 80
-```
-
-**Generated Record**:
-```
-# Zone: example.com
-_http._tcp.web-server-01    IN SRV    10 5 80 web-server-01.example.com.
 ```
 
 ## Advanced Template Techniques

@@ -639,15 +639,14 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             value_template="{{ obj.name }}.example.com",
         )
 
-        location_mx_rule = DNSRule.objects.create(
-            name="location-mx-rule",
+        location_ptr_rule = DNSRule.objects.create(
+            name="location-ptr-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=self.location,
             zone_template="location.example.com",
-            record_type="MX",
-            name_template="{{ obj.name }}-mail",
-            value_template="mail.example.com",
-            preference_template="10",
+            record_type="PTR",
+            name_template="{{ obj.name }}-ptr",
+            value_template="{{ obj.name }}.example.com",
         )
 
         rules = self._get_applicable_rules(self.device)
@@ -655,7 +654,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         # Should get all 3 location-specific rules
         self.assertEqual(rules.count(), 3)
         rule_names = {rule.name for rule in rules}
-        expected_names = {location_a_rule.name, location_cname_rule.name, location_mx_rule.name}
+        expected_names = {location_a_rule.name, location_cname_rule.name, location_ptr_rule.name}
         self.assertEqual(rule_names, expected_names)
 
     def test_get_applicable_rules_tenant_precedence_location_first(self):

@@ -14,15 +14,9 @@ The DNSRule model defines automated DNS record creation rules that trigger when 
 
 ### Template Fields
 - `zone_template` (TextField): Jinja2 template for DNS zone name
-- `record_type` (CharField): DNS record type choice (A, AAAA, CNAME, MX, NS, PTR, SRV, TXT)
+- `record_type` (CharField): DNS record type choice (A, AAAA, CNAME, PTR)
 - `name_template` (TextField): Jinja2 template for record name
 - `value_template` (TextField): Jinja2 template for record value
-
-### Record-Specific Template Fields
-- `preference_template` (TextField): MX record preference value, blank for non-MX records
-- `priority_template` (TextField): SRV record priority value, blank for non-SRV records  
-- `weight_template` (TextField): SRV record weight value, blank for non-SRV records
-- `port_template` (TextField): SRV record port number, blank for non-SRV records
 
 ## Model Constraints
 
@@ -60,11 +54,6 @@ UniqueConstraint(
 
 ### Required Fields
 - `name`, `content_type`, `zone_template`, `record_type`, `name_template`, `value_template`
-
-### Record-Type Specific Requirements
-- **MX Records**: `preference_template` required
-- **SRV Records**: `priority_template`, `weight_template`, `port_template` required
-- **Other Records**: Only core templates required
 
 ## Related Models
 

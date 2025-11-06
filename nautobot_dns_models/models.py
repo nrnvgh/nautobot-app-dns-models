@@ -639,16 +639,6 @@ class DNSRule(PrimaryModel):
 
     value_template = models.TextField(help_text="Jinja2 template for the primary record value")
 
-    # Additional fields for complex record types
-
-    # MX Record templates
-    preference_template = models.TextField(blank=True, help_text="MX preference value")
-
-    # SRV Record templates
-    priority_template = models.TextField(blank=True, help_text="SRV priority value")
-    weight_template = models.TextField(blank=True, help_text="SRV weight value")
-    port_template = models.TextField(blank=True, help_text="SRV port number")
-
     class Meta:
         """Meta attributes for DNSRule."""
 
@@ -752,22 +742,14 @@ class DNSRule(PrimaryModel):
 
     def _build_template_fields(self):
         """Build template fields for the DNS rule."""
+        #
+        # This is broken out into a separate method to make it easier to add per-record-type
+        # normalization/validation later if needed.
         template_fields = [
             ("zone_template", self.zone_template),
             ("name_template", self.name_template),
             ("value_template", self.value_template),
         ]
-
-        # Add record-type-specific templates
-        if self.record_type == "MX" and self.preference_template:
-            template_fields.append(("preference_template", self.preference_template))
-        elif self.record_type == "SRV":
-            if self.priority_template:
-                template_fields.append(("priority_template", self.priority_template))
-            if self.weight_template:
-                template_fields.append(("weight_template", self.weight_template))
-            if self.port_template:
-                template_fields.append(("port_template", self.port_template))
 
         return template_fields
 
@@ -814,12 +796,7 @@ class DNSRule(PrimaryModel):
         """
         errors = defaultdict(list)
 
-        # TXT records are exempt from whitespace validation
-        check_whitespace_in_value_template = self.record_type != "TXT"
-
-        literal_errors = collect_literal_validation_errors(
-            template_fields, check_whitespace_in_value_template=check_whitespace_in_value_template
-        )
+        literal_errors = collect_literal_validation_errors(template_fields)
         for field_name, field_error_list in literal_errors.items():
             for msg in field_error_list:
                 if msg not in errors[field_name]:
@@ -831,13 +808,7 @@ class DNSRule(PrimaryModel):
         """Validate record-type-specific requirements for the DNS rule."""
         errors = defaultdict(list)
 
-        if self.record_type == "MX" and not self.preference_template:
-            errors["preference_template"].append("MX records require a preference template")
-        elif self.record_type == "SRV":
-            required_srv_fields = ["priority_template", "weight_template", "port_template"]
-            for field in required_srv_fields:
-                if not getattr(self, field):
-                    errors[field].append(f"SRV records require a {field.replace('_template', '')} template")
+        # No record-type-specific requirements for A, AAAA, CNAME, PTR
 
         return errors
 

@@ -49,12 +49,11 @@ A single rule can create multiple DNS records:
    - **Name**: Unique identifier for the rule
    - **Content Type**: What type of object triggers this rule (Device, Interface, etc.)
    - **Location**: Leave blank for global, or select specific location for scoped rules
-   - **Record Type**: Type of DNS record to create (A, AAAA, CNAME, MX, etc.)
+   - **Record Type**: Type of DNS record to create (A, AAAA, CNAME, PTR)
 4. **Define** Jinja2 templates:
    - **Zone Template**: Which DNS zone to create records in
    - **Name Template**: The record name within the zone
    - **Value Template**: The record value (IP address, hostname, etc.)
-   - **Additional Templates**: Record-specific fields (MX preference, SRV priority/weight/port)
 
 ### Template Syntax
 
@@ -202,7 +201,7 @@ The system prevents conflicting rules:
 
 - Only one enabled rule per `(content_type, record_type, location)` combination
 - Global and location-scoped rules can coexist for the same content type and record type
-- Different record types (A, CNAME, MX) can have separate rules
+- Different record types (A, AAAA, CNAME, PTR) can have separate rules
 
 ### Location Changes
 

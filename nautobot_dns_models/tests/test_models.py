@@ -962,9 +962,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
 
         self.assertEqual(rule.record_type, "A")
         self.assertEqual(rule.value_template, "{{ obj.primary_ip4.id }}")
-        # A records don't use additional templates
-        self.assertEqual(rule.preference_template, "")
-        self.assertEqual(rule.priority_template, "")
 
     def test_dnsrule_for_aaaa_record(self):
         """Test DNSRule configured for AAAA record type."""
@@ -994,20 +991,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         self.assertEqual(rule.record_type, "CNAME")
         self.assertEqual(rule.value_template, "{{ obj.name }}.example.com")
 
-    def test_dnsrule_for_txt_record(self):
-        """Test DNSRule configured for TXT record type."""
-        rule = DNSRule.objects.create(
-            name="txt-record-rule",
-            content_type=self.content_type_device,
-            zone_template="example.com",
-            record_type="TXT",
-            name_template="{{ obj.name }}",
-            value_template="device-type={{ obj.device_type.model }}",
-        )
-
-        self.assertEqual(rule.record_type, "TXT")
-        self.assertEqual(rule.value_template, "device-type={{ obj.device_type.model }}")
-
     def test_dnsrule_for_ptr_record(self):
         """Test DNSRule configured for PTR record type."""
         rule = DNSRule.objects.create(
@@ -1022,69 +1005,13 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         self.assertEqual(rule.record_type, "PTR")
         self.assertEqual(rule.value_template, "{{ obj.name }}.example.com")
 
-    def test_dnsrule_for_ns_record(self):
-        """Test DNSRule configured for NS record type."""
-        rule = DNSRule.objects.create(
-            name="ns-record-rule",
-            content_type=self.content_type_device,
-            zone_template="example.com",
-            record_type="NS",
-            name_template="subdomain",
-            value_template="ns{{ obj.name }}.example.com",
-        )
-
-        self.assertEqual(rule.record_type, "NS")
-        self.assertEqual(rule.value_template, "ns{{ obj.name }}.example.com")
-
-    def test_dnsrule_for_mx_record(self):
-        """Test DNSRule configured for MX record type."""
-        rule = DNSRule.objects.create(
-            name="mx-record-rule",
-            content_type=self.content_type_device,
-            zone_template="example.com",
-            record_type="MX",
-            name_template="mail",
-            value_template="mail-{{ obj.name }}.example.com",
-            preference_template="10",
-        )
-
-        self.assertEqual(rule.record_type, "MX")
-        self.assertEqual(rule.value_template, "mail-{{ obj.name }}.example.com")
-        self.assertEqual(rule.preference_template, "10")
-        # MX records don't use SRV-specific templates
-        self.assertEqual(rule.priority_template, "")
-        self.assertEqual(rule.weight_template, "")
-        self.assertEqual(rule.port_template, "")
-
-    def test_dnsrule_for_srv_record(self):
-        """Test DNSRule configured for SRV record type."""
-        rule = DNSRule.objects.create(
-            name="srv-record-rule",
-            content_type=self.content_type_interface,
-            zone_template="example.com",
-            record_type="SRV",
-            name_template="_http._tcp.{{ obj.device.name }}",
-            value_template="{{ obj.device.name }}.example.com",
-            priority_template="10",
-            weight_template="5",
-            port_template="80",
-        )
-
-        self.assertEqual(rule.record_type, "SRV")
-        self.assertEqual(rule.value_template, "{{ obj.device.name }}.example.com")
-        self.assertEqual(rule.priority_template, "10")
-        self.assertEqual(rule.weight_template, "5")
-        self.assertEqual(rule.port_template, "80")
-        # SRV records don't use MX-specific templates
-        self.assertEqual(rule.preference_template, "")
-
     def test_dnsrule_defaults(self):
         """Test DNSRule default values."""
         rule = DNSRule.objects.create(
             name="defaults-test",
             content_type=self.content_type_device,
             zone_template="example.com",
-            record_type="TXT",
+            record_type="CNAME",
             name_template="{{ obj.name }}",
             value_template="test-value",
         )
@@ -1092,11 +1019,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         # Test default values
         self.assertEqual(rule.description, "")
         self.assertTrue(rule.enabled)
-        # Test blank optional template fields
-        self.assertEqual(rule.preference_template, "")
-        self.assertEqual(rule.priority_template, "")
-        self.assertEqual(rule.weight_template, "")
-        self.assertEqual(rule.port_template, "")
 
     def test_dnsrule_name_unique(self):
         """Test that DNSRule names must be unique."""
@@ -1136,14 +1058,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 "value_template": "test-value",
             }
 
-            # Add record-type-specific required fields
-            if record_type == "MX":
-                rule_data["preference_template"] = "10"
-            elif record_type == "SRV":
-                rule_data["priority_template"] = "10"
-                rule_data["weight_template"] = "5"
-                rule_data["port_template"] = "80"
-
             rule = DNSRule(**rule_data)
             rule.full_clean()  # Should not raise
 
@@ -1178,21 +1092,12 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             name="blank-templates",
             content_type=self.content_type_device,
             zone_template="test.com",
-            record_type="MX",
+            record_type="CNAME",
             name_template="{{ obj.name }}",
-            value_template="mail.{{ obj.name }}.example.com",
-            # Optional template fields blank
-            preference_template="",
-            priority_template="",
-            weight_template="",
-            port_template="",
+            value_template="{{ obj.name }}.example.com",
         )
 
-        self.assertEqual(rule.value_template, "mail.{{ obj.name }}.example.com")
-        self.assertEqual(rule.preference_template, "")
-        self.assertEqual(rule.priority_template, "")
-        self.assertEqual(rule.weight_template, "")
-        self.assertEqual(rule.port_template, "")
+        self.assertEqual(rule.value_template, "{{ obj.name }}.example.com")
 
     def test_dnsrule_enabled_default_true(self):
         """Test that DNSRule enabled field defaults to True."""
@@ -1538,24 +1443,10 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         with self.assertRaises(ValidationError):
             disabled_location_rule.full_clean()
 
-    def test_txt_value_template_allows_whitespace(self):
-        """TXT records: allow whitespace in value_template."""
+    def test_whitespace_disallowed_all_record_types(self):
+        """Whitespace is disallowed in all templates for all supported record types."""
 
-        rule = DNSRule(
-            name="txt-allow-whitespace-value",
-            content_type=self.content_type_device,
-            zone_template="example.com",
-            record_type="TXT",
-            name_template="{{ obj.name }}-info",
-            value_template="managed device",  # whitespace allowed for TXT value_template
-            enabled=False,
-        )
-        rule.full_clean()  # should not raise
-
-    def test_whitespace_disallowed_elsewhere_all_record_types(self):
-        """Whitespace is disallowed in all templates for all record types, except TXT value_template."""
-
-        record_types = [x[0] for x in RECORD_TYPE_CHOICES]
+        record_types = [x[0] for x in DNSRecordTypeChoices.CHOICES]
 
         # Base valid (no-whitespace) templates
         base_kwargs = {
@@ -1571,11 +1462,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             "zone_template": "example com",
             "name_template": "{{ 'device info' }}",
             "value_template": "primary ip",
-            # For SRV/MX extras (when applicable)
-            "preference_template": "{{ '1 0' }}",
-            "priority_template": "{{ '1 0' }}",
-            "weight_template": "{{ '1 0' }}",
-            "port_template": "{{ '8 0' }}",
         }
 
         for record_type in record_types:
@@ -1584,24 +1470,10 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             kwargs["name"] = f"whitespace-disallow-{record_type}"
             kwargs["record_type"] = record_type
 
-            # Add required extras without whitespace for MX/SRV
-            if record_type == "MX":
-                kwargs["preference_template"] = "{{ 10 }}"
-            elif record_type == "SRV":
-                kwargs["priority_template"] = "{{ 10 }}"
-                kwargs["weight_template"] = "{{ 10 }}"
-                kwargs["port_template"] = "{{ 80 }}"
-
             # Fields to test for whitespace
             fields_to_test = ["zone_template", "name_template", "value_template"]
-            if record_type == "MX":
-                fields_to_test.append("preference_template")
-            if record_type == "SRV":
-                fields_to_test.extend(["priority_template", "weight_template", "port_template"])
 
             for field in fields_to_test:
-                if field == "value_template" and record_type == "TXT":
-                    continue
                 with self.subTest(record_type=record_type, field=field):
                     # Instantiate with whitespace in the specific field
                     test_kwargs = dict(kwargs)
@@ -1887,9 +1759,9 @@ class DNSRuleRecordTestCase(TestCase):
             name="second-device-rule",
             content_type=self.content_type_device,
             zone_template="internal.com",
-            record_type="TXT",
+            record_type="AAAA",
             name_template="{{ obj.name }}-info",
-            value_template="managed-device",
+            value_template="{{ obj.primary_ip6.id }}",
         )
 
         # Create rule records for same device with different rules

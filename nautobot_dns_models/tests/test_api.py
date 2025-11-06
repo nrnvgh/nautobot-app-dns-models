@@ -691,9 +691,9 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
                 "enabled": True,
                 "content_type": "dcim.device",
                 "zone_template": "api.com",
-                "record_type": "TXT",
+                "record_type": "CNAME",
                 "name_template": "{{ obj.name }}-api",
-                "value_template": "v=spf1 include:_spf.google.com ~all",
+                "value_template": "{{ obj.name }}.api.com",
             },
             {
                 "name": "New Test Rule 2",
@@ -701,9 +701,9 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
                 "enabled": False,
                 "content_type": "dcim.device",
                 "zone_template": "api2.com",
-                "record_type": "NS",
-                "name_template": "{{ obj.name }}-ns",
-                "value_template": "ns1.api2.com",
+                "record_type": "PTR",
+                "name_template": "{{ obj.name }}-ptr",
+                "value_template": "{{ obj.name }}.api2.com",
             },
             {
                 "name": "New Test Rule 3",
@@ -711,10 +711,9 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
                 "enabled": True,
                 "content_type": "dcim.device",
                 "zone_template": "api3.com",
-                "record_type": "MX",
-                "name_template": "{{ obj.name }}-mail",
-                "value_template": "mail.api3.com",
-                "preference_template": "10",
+                "record_type": "AAAA",
+                "name_template": "{{ obj.name }}-v6",
+                "value_template": "{{ obj.primary_ip6.id }}",
             },
         ]
 

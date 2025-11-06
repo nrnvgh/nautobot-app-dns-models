@@ -619,15 +619,8 @@ class DNSRuleEngine:
             suffix = dns_record.address_id
         elif hasattr(dns_record, "alias"):  # CNAME
             suffix = dns_record.alias
-        elif hasattr(dns_record, "server"):  # MX/NS
-            preference = getattr(dns_record, "preference", "")
-            suffix = f"{dns_record.server}:{preference}"
         elif hasattr(dns_record, "ptrdname"):  # PTR
             suffix = dns_record.ptrdname
-        elif hasattr(dns_record, "text"):  # TXT
-            suffix = dns_record.text
-        elif hasattr(dns_record, "target"):  # SRV
-            suffix = f"{dns_record.priority}:{dns_record.weight}:{dns_record.port}:{dns_record.target}"
 
         return f"{base_key}:{suffix}"
 
@@ -644,19 +637,9 @@ class DNSRuleEngine:
         elif "alias" in record_data:
             record_type = "CNAMERecord"
             suffix = record_data["alias"]
-        elif "server" in record_data:
-            record_type = "MXRecord" if "preference" in record_data else "NSRecord"
-            preference = record_data.get("preference", "")
-            suffix = f"{record_data['server']}:{preference}"
         elif "ptrdname" in record_data:
             record_type = "PTRRecord"
             suffix = record_data["ptrdname"]
-        elif "text" in record_data:
-            record_type = "TXTRecord"
-            suffix = record_data["text"]
-        elif "target" in record_data:
-            record_type = "SRVRecord"
-            suffix = f"{record_data['priority']}:{record_data['weight']}:{record_data['port']}:{record_data['target']}"
 
         return f"{record_type}:{name}:{zone_id}:{suffix}"
 
@@ -765,52 +748,21 @@ class DNSRuleEngine:
             # This method no longer handles A/AAAA - they're handled in the variations builder
             pass
 
-        elif rule.record_type == "CNAME":
-            # CNAME records need alias field
-            if rule.value_template:
-                rendered_alias = self._render_template(rule.value_template, context, "value_template")
-                record_data["alias"] = normalize_dns_name(rendered_alias)
+        if record_type_method := getattr(self, f"_add_record_type_fields_{rule.record_type}", None):
+            record_type_method(rule, context, record_data)
+            return
 
-        elif rule.record_type == "TXT":
-            # TXT records need text field
-            if rule.value_template:
-                record_data["text"] = self._render_template(rule.value_template, context, "value_template")
+    def _add_record_type_fields_cname(
+        self, rule: DNSRule, context: dict[str, Any], record_data: dict[str, Any]
+    ) -> None:
+        if rule.value_template:
+            rendered_alias = self._render_template(rule.value_template, context, "value_template")
+            record_data["alias"] = normalize_dns_name(rendered_alias)
 
-        elif rule.record_type == "PTR":
-            # PTR records need ptrdname field
-            if rule.value_template:
-                rendered_ptrdname = self._render_template(rule.value_template, context, "value_template")
-                record_data["ptrdname"] = normalize_dns_name(rendered_ptrdname)
-
-        elif rule.record_type == "NS":
-            # NS records need server field
-            if rule.value_template:
-                rendered_server = self._render_template(rule.value_template, context, "value_template")
-                record_data["server"] = normalize_dns_name(rendered_server)
-
-        elif rule.record_type == "MX":
-            # MX records need mail_server and preference fields
-            if rule.value_template:
-                rendered_mail_server = self._render_template(rule.value_template, context, "value_template")
-                record_data["mail_server"] = normalize_dns_name(rendered_mail_server)
-            if rule.preference_template:
-                preference_str = self._render_template(rule.preference_template, context, "preference_template")
-                record_data["preference"] = int(preference_str)
-
-        elif rule.record_type == "SRV":
-            # SRV records need target, priority, weight, and port fields
-            if rule.value_template:
-                rendered_target = self._render_template(rule.value_template, context, "value_template")
-                record_data["target"] = normalize_dns_name(rendered_target)
-            if rule.priority_template:
-                priority_str = self._render_template(rule.priority_template, context, "priority_template")
-                record_data["priority"] = int(priority_str)
-            if rule.weight_template:
-                weight_str = self._render_template(rule.weight_template, context, "weight_template")
-                record_data["weight"] = int(weight_str)
-            if rule.port_template:
-                port_str = self._render_template(rule.port_template, context, "port_template")
-                record_data["port"] = int(port_str)
+    def _add_record_type_fields_ptr(self, rule: DNSRule, context: dict[str, Any], record_data: dict[str, Any]) -> None:
+        if rule.value_template:
+            rendered_ptrdname = self._render_template(rule.value_template, context, "value_template")
+            record_data["ptrdname"] = normalize_dns_name(rendered_ptrdname)
 
 
 # Global instance for use by signal handlers
