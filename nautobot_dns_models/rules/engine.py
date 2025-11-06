@@ -15,37 +15,18 @@ from nautobot.dcim import models as dcim_models
 from nautobot.ipam import models as ipam_models
 from nautobot.virtualization import models as virtualization_models
 
+from nautobot_dns_models import models
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 from nautobot_dns_models.models import (
-    AAAARecord,
-    ARecord,
-    CNAMERecord,
+    DNSRecord,
     DNSRule,
     DNSRuleRecord,
     DNSZone,
-    MXRecord,
-    NSRecord,
-    PTRRecord,
-    SRVRecord,
-    TXTRecord,
 )
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
 logger = logging.getLogger(__name__)
-
-
-# Mapping of record types to their corresponding model classes
-RECORD_MODEL_MAPPING = {
-    "A": ARecord,
-    "AAAA": AAAARecord,
-    "CNAME": CNAMERecord,
-    "MX": MXRecord,
-    "NS": NSRecord,
-    "PTR": PTRRecord,
-    "SRV": SRVRecord,
-    "TXT": TXTRecord,
-}
 
 
 class DNSRuleEngine:
@@ -572,9 +553,14 @@ class DNSRuleEngine:
 
     def _get_record_class(self, record_type: str):
         """Get the DNS record model class for a given record type."""
-        record_class = RECORD_MODEL_MAPPING.get(record_type)
+        record_type_name = f"{record_type}Record"
+        record_class = getattr(models, record_type_name, None)
         if not record_class:
             raise ValueError(f'Unknown record type "{record_type}"')
+
+        if not issubclass(record_class, DNSRecord):
+            raise ValueError(f'Record type "{record_type}" is not a valid DNS record type')
+
         return record_class
 
     def _render_template(self, template_str: str, context: dict[str, Any], field_name: str) -> str:
