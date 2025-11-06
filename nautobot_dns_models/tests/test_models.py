@@ -12,8 +12,8 @@ from nautobot.dcim.models import Device, DeviceType, Interface, Location, Locati
 from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
+from nautobot_dns_models.choices import DNSRecordTypeChoices
 from nautobot_dns_models.models import (
-    RECORD_TYPE_CHOICES,
     AAAARecord,
     ARecord,
     CNAMERecord,
@@ -1044,8 +1044,8 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             duplicate_rule.full_clean()
 
     def test_dnsrule_record_type_choices(self):
-        """Test that DNSRule record_type validates against RECORD_TYPE_CHOICES."""
-        valid_types = [choice[0] for choice in RECORD_TYPE_CHOICES]
+        """Test that DNSRule record_type validates against DNSRecordTypeChoices."""
+        valid_types = [choice[0] for choice in DNSRecordTypeChoices.CHOICES]
 
         # Test valid record types
         for record_type in valid_types:

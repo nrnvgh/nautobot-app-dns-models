@@ -16,6 +16,7 @@ from nautobot.apps.utils import validate_jinja2
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.ipam.choices import IPAddressVersionChoices
 
+from nautobot_dns_models.choices import DNSRecordTypeChoices
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.utils_jinja_literals import collect_literal_validation_errors
 
@@ -583,19 +584,6 @@ class SRVRecord(DNSRecord):
         verbose_name_plural = "SRV Records"
 
 
-# DNS Record type choices for DNSRule
-RECORD_TYPE_CHOICES = [
-    ("A", "A Record"),
-    ("AAAA", "AAAA Record"),
-    ("CNAME", "CNAME Record"),
-    ("MX", "MX Record"),
-    ("NS", "NS Record"),
-    ("PTR", "PTR Record"),
-    ("SRV", "SRV Record"),
-    ("TXT", "TXT Record"),
-]
-
-
 @extras_features(
     "custom_fields",
     "custom_links",
@@ -634,7 +622,7 @@ class DNSRule(PrimaryModel):
 
     # Templates
     zone_template = models.TextField(help_text="Jinja2 template for DNS zone name")
-    record_type = models.CharField(max_length=10, choices=RECORD_TYPE_CHOICES, help_text="Type of DNS record")
+    record_type = models.CharField(max_length=10, choices=DNSRecordTypeChoices, help_text="Type of DNS record")
     name_template = models.TextField(help_text="Jinja2 template for record name")
 
     value_template = models.TextField(help_text="Jinja2 template for the primary record value")
