@@ -40,7 +40,8 @@ items = [
 
 menu_items = (
     NavMenuTab(
-        name="Apps",
+        name="DNS",
         groups=(NavMenuGroup(name="DNS", items=tuple(items)),),
+        weight=300,
     ),
 )
