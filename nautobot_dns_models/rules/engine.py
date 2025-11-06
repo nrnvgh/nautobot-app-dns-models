@@ -198,7 +198,7 @@ class DNSRuleEngine:
             logger.debug(f"Object {source_obj} needs DNS records for rule {rule.name} - reconciling records")
             try:
                 self._reconcile_records_for_rule(rule, source_obj)
-            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError, []) as exc:
+            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                 logger.warning(
                     f"[{type(exc).__name__}] Error for rule {rule.name} on {source_obj}: {exc} - cleaning up records"
                 )
