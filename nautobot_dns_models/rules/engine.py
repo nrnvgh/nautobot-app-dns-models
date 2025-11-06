@@ -7,7 +7,8 @@ from typing import Any
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, models, transaction
+from django.db import IntegrityError, transaction
+from django.db import models as django_models
 from jinja2 import TemplateError
 from nautobot.apps.utils import render_jinja2
 from nautobot.dcim import models as dcim_models
@@ -108,7 +109,7 @@ class DNSRuleEngine:
     # Internal methods
     #
 
-    def _create_dns_records_for_object(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
+    def _create_dns_records_for_object(self, source_obj: Any, applicable_rules: django_models.QuerySet) -> None:
         """
         Create DNS records for an object by processing all applicable rules.
 
@@ -189,7 +190,7 @@ class DNSRuleEngine:
         logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
         return created_records
 
-    def _update_dns_records_for_object(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
+    def _update_dns_records_for_object(self, source_obj: Any, applicable_rules: django_models.QuerySet) -> None:
         """
         Update DNS records for an object by reconciling current vs desired state.
 
@@ -314,7 +315,7 @@ class DNSRuleEngine:
         # Object type is not tenant-aware or has no tenant assigned
         return None
 
-    def _get_applicable_rules(self, source_obj: Any) -> models.QuerySet:
+    def _get_applicable_rules(self, source_obj: Any) -> django_models.QuerySet:
         """
         Get all DNS rules that apply to the given source object.
 
@@ -348,8 +349,8 @@ class DNSRuleEngine:
         base_query = DNSRule.objects.filter(content_type=content_type, enabled=True)
 
         # Get all rules that could apply based on location and tenant
-        location_conditions = models.Q(location=object_location) | models.Q(location__isnull=True)
-        tenant_conditions = models.Q(tenant=object_tenant) | models.Q(tenant__isnull=True)
+        location_conditions = django_models.Q(location=object_location) | django_models.Q(location__isnull=True)
+        tenant_conditions = django_models.Q(tenant=object_tenant) | django_models.Q(tenant__isnull=True)
 
         all_rules = base_query.filter(location_conditions & tenant_conditions)
 
@@ -487,7 +488,7 @@ class DNSRuleEngine:
 
         return rule.zone_fixed
 
-    def _get_existing_tracking_records(self, rule: DNSRule, source_obj: Any) -> models.QuerySet:
+    def _get_existing_tracking_records(self, rule: DNSRule, source_obj: Any) -> django_models.QuerySet:
         """Get existing tracking records for a rule+object combination."""
         return DNSRuleRecord.objects.filter(
             rule=rule, content_type=ContentType.objects.get_for_model(source_obj), object_id=source_obj.id
@@ -500,7 +501,7 @@ class DNSRuleEngine:
         for tracking_record in tracking_records:
             self._delete_tracking_and_dns_record(tracking_record)
 
-    def _cleanup_orphaned_records(self, source_obj: Any, applicable_rules: models.QuerySet) -> None:
+    def _cleanup_orphaned_records(self, source_obj: Any, applicable_rules: django_models.QuerySet) -> None:
         """
         Clean up DNS records from rules that are no longer applicable to the source object.
 
