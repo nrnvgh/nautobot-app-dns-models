@@ -333,6 +333,14 @@ class DNSRecord(DNSModel):
         """Set the TTL value for the record."""
         self._ttl = value
 
+    @property
+    def source_object(self):
+        """Get the source object that created this DNS record via DNS rules."""
+        try:
+            return self.rule_record.get().source_object
+        except DNSRuleRecord.DoesNotExist:
+            return None
+
 
 @extras_features(
     "custom_fields",

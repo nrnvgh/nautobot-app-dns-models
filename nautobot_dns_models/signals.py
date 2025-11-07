@@ -10,6 +10,7 @@ from nautobot.dcim.models import Device, Interface
 from nautobot.ipam.models import IPAddressToInterface, Service
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
+from nautobot_dns_models.choices import DNSRecordTypeChoices
 from nautobot_dns_models.models import DNSRecord
 from nautobot_dns_models.rules.engine import rule_engine
 
@@ -96,6 +97,8 @@ def has_model_field_changes(instance, debug_context="object"):
 # XXX: A/AAAA: ^[0-9a-z-.]
 def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs):
     """Create data validation rules for DNS models after database migration."""
+    supported_record_types = [x[0] for x in DNSRecordTypeChoices.CHOICES]
+
     regexp_rule_model = _get_regexp_rule_model(apps)
     if not regexp_rule_model:
         logger.debug(
