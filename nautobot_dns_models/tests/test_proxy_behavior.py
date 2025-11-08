@@ -125,13 +125,13 @@ class Mixins:
             expected = [str(self.ip_address.pk), str(self.ip_address2.pk)]
             self.assertEqual(uuid_list, expected)
 
-        def test_first_returns_proxy(self):
+        def test_first_returns_uuid(self):
             """first() should return a proxied IP address with UUID str()."""
             proxy_manager = self._get_manager_proxy()
             first_proxy = proxy_manager.first()
             self.assertEqual(str(first_proxy), str(self.ip_address.pk))
 
-        def test_last_returns_proxy(self):
+        def test_last_returns_uuid(self):
             """last() should return the final proxied IP address with UUID str()."""
             proxy_manager = self._get_manager_proxy()
             last_proxy = proxy_manager.last()
