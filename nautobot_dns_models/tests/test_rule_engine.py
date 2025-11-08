@@ -26,6 +26,7 @@ from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine,
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
 from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord
 from nautobot_dns_models.normalization import normalize_dns_name
+from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
 from .mixins.rule_engine import BaseRuleEngineMixin
 
@@ -75,10 +76,18 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         # render_jinja2 returns empty string, which our method treats as an error
         with self.assertRaises(DNSTemplateEmptyError):
             self._render_template(
-                "{{ obj.primary_ip4.id }}",
-                {"obj": self.device},
+                "{{ obj.primary_ip4 }}",
+                {"obj": wrap_for_template(self.device)},
                 "test_field",  # self.device has no primary_ip4 set
             )
+
+    def test_render_template_using_array_index(self):
+        """Test _render_template method behavior with array index."""
+        # Add IP address to interface before rendering
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+        result = self._render_template("{{ obj.ip_addresses.all()[0] }}", {"obj": wrap_for_template(self.interface)}, "test_field")
+        # TemplateIPAddressProxy returns UUID string when rendered
+        self.assertEqual(result, str(self.ip_addresses[0].pk))
 
     def test_render_template_method_with_array_index_error(self):
         """Test _render_template method behavior with array index errors."""
@@ -89,10 +98,12 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
             type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             status=Status.objects.get_for_model(Interface).first(),
         )
-        with self.assertRaises(UndefinedError) as context:
-            self._render_template("{{ obj.ip_addresses[0].id }}", {"obj": empty_interface}, "test_field")
+        with self.assertRaises(DNSTemplateEmptyError) as context:
+            self._render_template("{{ obj.ip_addresses.all()[0] }}", {"obj": wrap_for_template(empty_interface)}, "test_field")
 
-        self.assertIn("object has no element 0", str(context.exception))
+        # When accessing index 0 on empty queryset, Jinja2 renders empty string, triggering DNSTemplateEmptyError
+        self.assertIn("Template test_field rendered empty", str(context.exception))
+        self.assertIn("obj.ip_addresses.all()[0]", str(context.exception))
 
     def test_render_template_method_empty_string_handling(self):
         """Test that empty string results are treated as errors."""
@@ -121,48 +132,12 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         result = self._render_template("{{ flag }}", {"flag": False}, "test_field")
         self.assertEqual(result, "False")  # render_jinja2 converts False to "False" string
 
-    # def test_what_does_no_such_element_actually_look_like(self):
-    #     """Try to reproduce the '{{ no such element:' pattern we're checking for."""
-    #     # Based on actual logs, this pattern occurs when accessing attributes on None
-    #     # The pattern is: "{{ no such element: None['id'] }}"
-
-    #     # Test case that should trigger the pattern (based on actual logs)
-    #     # Create a device without primary_ip4 for testing
-    #     device_no_ip = Device.objects.create(
-    #         name="device-no-primary-ip",
-    #         device_type=self.device_type,
-    #         location=self.location,
-    #         role=self.device_role,
-    #         status=Status.objects.get_for_model(Device).first(),
-    #         # primary_ip4 remains None by default
-    #     )
-
-    #     test_cases = [
-    #         # Case from actual logs: obj.primary_ip4.id when primary_ip4 is None
-    #         ("{{ obj.primary_ip4.id }}", {"obj": device_no_ip}),
-    #         # Case: None object attribute access - use device with no primary_ip4
-    #         ("{{ obj.primary_ip4.id }}", {"obj": device_no_ip}),
-    #     ]
-
-    #     for template, context in test_cases:
-    #         try:
-    #             result = render_jinja2(template, context)
-    #             print(f"Template: {template}")
-    #             print(f"Result: {repr(result)}")
-    #             print(f"Contains 'no such element': {'{{ no such element:' in result}")
-    #             print("---")
-    #         except Exception as e:
-    #             print(f"Template: {template}")
-    #             print(f"Exception: {type(e).__name__}: {e}")
-    #             print("---")
-
-    def test_render_template_method_catches_empty_results(self):
+    def test_render_template_method_catches_empty_results_for_object_with_no_primary_ip4(self):
         """Test that our _render_template method catches empty results from template failures."""
         # Test case where template renders to empty string (most common failure mode)
         # Use real device object without primary_ip4 set
-
         with self.assertRaises(DNSTemplateEmptyError) as context:
-            self._render_template("{{ obj.primary_ip4.id }}", {"obj": self.device}, "test_field")
+            self._render_template("{{ obj.primary_ip4 }}", {"obj": wrap_for_template(self.device)}, "test_field")
 
         # The error should mention that template rendered empty
         error_message = str(context.exception)
@@ -185,7 +160,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         # Test the template that should trigger the DEBUG=True error pattern
         # The rule engine should catch the DebugUndefined error pattern and include it in the exception
         with self.assertRaises(DNSTemplateEmptyError) as context:
-            self._render_template("{{ obj.role.id }}", {"obj": interface_no_role}, "test_field")
+            self._render_template("{{ obj.role.name }}", {"obj": wrap_for_template(interface_no_role)}, "test_field")
 
         # In DEBUG=True with DebugUndefined, the error message should contain the pattern
         self.assertIn("{{ no such element:", str(context.exception))
@@ -194,12 +169,12 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         """Test basic Service template rendering for both device and VM-attached services."""
         # Test device-attached service
         device_template = "{{ obj.name }}.{{ obj.device.name }}"
-        result = render_jinja2(device_template, {"obj": self.service_device_attached})
+        result = render_jinja2(device_template, {"obj": wrap_for_template(self.service_device_attached)})
         self.assertEqual(result, f"web-service.{self.device.name}")
 
         # Test VM-attached service
         vm_template = "{{ obj.name }}.{{ obj.virtual_machine.name }}"
-        result = render_jinja2(vm_template, {"obj": self.service_vm_attached})
+        result = render_jinja2(vm_template, {"obj": wrap_for_template(self.service_vm_attached)})
         self.assertEqual(result, f"api-service.{self.vm.name}")
 
     def test_service_parent_property_template(self):
@@ -207,24 +182,24 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         parent_template = "{{ obj.parent.name }}"
 
         # Device-attached service
-        result = render_jinja2(parent_template, {"obj": self.service_device_attached})
+        result = render_jinja2(parent_template, {"obj": wrap_for_template(self.service_device_attached)})
         self.assertEqual(result, self.device.name)
 
         # VM-attached service
-        result = render_jinja2(parent_template, {"obj": self.service_vm_attached})
+        result = render_jinja2(parent_template, {"obj": wrap_for_template(self.service_vm_attached)})
         self.assertEqual(result, self.vm.name)
 
     def test_service_location_template_rendering(self):
         """Test Service location access in templates."""
         # Device-attached service location
         device_location_template = "{{ obj.device.location.name }}"
-        result = render_jinja2(device_location_template, {"obj": self.service_device_attached})
+        result = render_jinja2(device_location_template, {"obj": wrap_for_template(self.service_device_attached)})
         expected = self.location.name
         self.assertEqual(result, expected)
 
         # VM-attached service location
         vm_location_template = "{{ obj.virtual_machine.cluster.location.name }}"
-        result = render_jinja2(vm_location_template, {"obj": self.service_vm_attached})
+        result = render_jinja2(vm_location_template, {"obj": wrap_for_template(self.service_vm_attached)})
         self.assertEqual(result, expected)
 
 
@@ -280,7 +255,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="location.example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Create global rule (should be ignored when location rule exists)
@@ -291,7 +266,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="global.example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         rules = self._get_applicable_rules(self.device)
@@ -309,7 +284,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="global.example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         rules = self._get_applicable_rules(self.device)
@@ -409,7 +384,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="location.example.com",
             record_type="A",
             name_template="{{ obj.name }}-location",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Create global A record rule (should be overridden)
@@ -420,7 +395,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="global.example.com",
             record_type="A",
             name_template="{{ obj.name }}-global",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         rules = self._get_applicable_rules(self.device)
@@ -471,7 +446,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="global.example.com",
             record_type="A",
             name_template="{{ obj.name }}-global",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         DNSRule.objects.create(
@@ -482,7 +457,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="tenant.example.com",
             record_type="A",
             name_template="{{ obj.name }}-tenant",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         DNSRule.objects.create(
@@ -493,7 +468,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="location.example.com",
             record_type="A",
             name_template="{{ obj.name }}-location",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         location_tenant_rule = DNSRule.objects.create(
@@ -504,7 +479,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="location-tenant.example.com",
             record_type="A",
             name_template="{{ obj.name }}-location-tenant",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Create device with both location and tenant
@@ -578,7 +553,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="global.example.com",
             record_type="A",
             name_template="{{ obj.name }}-global",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Test 1: Device with location but no tenant → should get global rule
@@ -1250,7 +1225,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Create location-specific rule (should override global)
@@ -1261,7 +1236,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}-loc",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Create device in the location
@@ -1299,7 +1274,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Create device in location
@@ -1386,7 +1361,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}-loc1",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         DNSRule.objects.create(
@@ -1396,7 +1371,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}-loc2",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Create device in location 1 with primary IP assigned

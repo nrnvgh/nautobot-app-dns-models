@@ -958,11 +958,11 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         self.assertEqual(rule.record_type, "A")
-        self.assertEqual(rule.value_template, "{{ obj.primary_ip4.id }}")
+        self.assertEqual(rule.value_template, "{{ obj.primary_ip4 }}")
 
     def test_dnsrule_for_aaaa_record(self):
         """Test DNSRule configured for AAAA record type."""
@@ -972,7 +972,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="example.com",
             record_type="AAAA",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip6.id }}",
+            value_template="{{ obj.primary_ip6 }}",
         )
 
         self.assertEqual(rule.record_type, "AAAA")
@@ -1001,7 +1001,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Attempt to create another rule with the same name
@@ -1012,7 +1012,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 zone_template="test.com",
                 record_type="A",
                 name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4.id }}",
+                value_template="{{ obj.primary_ip4 }}",
             )
             duplicate_rule.full_clean()
 
@@ -1080,7 +1080,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
         # Before saving, enabled should default to True
         self.assertTrue(rule.enabled)
@@ -1107,7 +1107,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 zone_template="test.com",
                 record_type="A",
                 name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4.id }}",
+                value_template="{{ obj.primary_ip4 }}",
             )
             rule.full_clean()
 
@@ -1118,7 +1118,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 content_type=self.content_type_device,
                 record_type="A",
                 name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4.id }}",
+                value_template="{{ obj.primary_ip4 }}",
             )
             rule.full_clean()
 
@@ -1129,7 +1129,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 content_type=self.content_type_device,
                 zone_template="test.com",
                 record_type="A",
-                value_template="{{ obj.primary_ip4.id }}",
+                value_template="{{ obj.primary_ip4 }}",
             )
             rule.full_clean()
 
@@ -1140,7 +1140,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 content_type=self.content_type_device,
                 zone_template="test.com",
                 name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4.id }}",
+                value_template="{{ obj.primary_ip4 }}",
             )
             rule.full_clean()
 
@@ -1151,7 +1151,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 zone_template="test.com",
                 record_type="A",
                 name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4.id }}",
+                value_template="{{ obj.primary_ip4 }}",
             )
             rule.full_clean()
 
@@ -1164,7 +1164,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=None,  # Global rule
             enabled=True,  # Enabled
         )
@@ -1177,7 +1177,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 zone_template="test.com",
                 record_type="A",
                 name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4.id }}",
+                value_template="{{ obj.primary_ip4 }}",
                 location=None,  # Same: global rule
                 enabled=True,  # Same: enabled
             )
@@ -1195,7 +1195,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=self.location,  # Specific location
             enabled=True,  # Enabled
         )
@@ -1208,7 +1208,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 zone_template="test.com",
                 record_type="A",
                 name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4.id }}",
+                value_template="{{ obj.primary_ip4 }}",
                 location=self.location,  # Same location
                 enabled=True,  # Same: enabled
             )
@@ -1222,7 +1222,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=None,  # Global
         )
 
@@ -1233,7 +1233,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=self.location,  # Specific location
         )
 
@@ -1254,7 +1254,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=None,  # Global rule
             enabled=False,  # Disabled
         )
@@ -1266,7 +1266,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=None,  # Same: global rule
             enabled=False,  # Same: disabled
         )
@@ -1278,7 +1278,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=self.location,  # Specific location
             enabled=False,  # Disabled
         )
@@ -1289,7 +1289,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=self.location,  # Same location
             enabled=False,  # Same: disabled
         )
@@ -1306,7 +1306,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=None,  # Global rule
             enabled=False,  # Disabled
         )
@@ -1318,7 +1318,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=None,  # Same: global rule
             enabled=True,  # Different: enabled
         )
@@ -1330,7 +1330,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=self.location,  # Specific location
             enabled=False,  # Disabled
         )
@@ -1342,7 +1342,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=self.location,  # Same location
             enabled=True,  # Different: enabled
         )
@@ -1366,7 +1366,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=None,  # Global rule
             enabled=True,  # Enabled
         )
@@ -1378,7 +1378,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=None,  # Same: global rule
             enabled=False,  # Different: disabled
         )
@@ -1395,7 +1395,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=self.location,  # Specific location
             enabled=True,  # Enabled
         )
@@ -1406,7 +1406,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="test.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
             location=self.location,  # Same location
             enabled=False,  # Disabled
         )
@@ -1426,7 +1426,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             "content_type": self.content_type_device,
             "zone_template": "example.com",
             "name_template": "{{ obj.name }}",
-            "value_template": "{{ obj.primary_ip4.id }}",
+            "value_template": "{{ obj.primary_ip4 }}",
             "enabled": False,
         }
 
@@ -1536,7 +1536,7 @@ class DNSRuleRecordTestCase(TestCase):
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
     def test_dnsrulerecord_create(self):
@@ -1734,7 +1734,7 @@ class DNSRuleRecordTestCase(TestCase):
             zone_template="internal.com",
             record_type="AAAA",
             name_template="{{ obj.name }}-info",
-            value_template="{{ obj.primary_ip6.id }}",
+            value_template="{{ obj.primary_ip6 }}",
         )
 
         # Create rule records for same device with different rules
