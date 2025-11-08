@@ -601,10 +601,6 @@ class DNSRuleEngine:
         suffix = "unknown"
         if hasattr(dns_record, "address_id"):  # A/AAAA
             suffix = dns_record.address_id
-        elif hasattr(dns_record, "alias"):  # CNAME
-            suffix = dns_record.alias
-        elif hasattr(dns_record, "ptrdname"):  # PTR
-            suffix = dns_record.ptrdname
 
         return f"{base_key}:{suffix}"
 
@@ -618,12 +614,6 @@ class DNSRuleEngine:
         if "address_id" in record_data:
             record_type = "ARecord"
             suffix = record_data["address_id"]
-        elif "alias" in record_data:
-            record_type = "CNAMERecord"
-            suffix = record_data["alias"]
-        elif "ptrdname" in record_data:
-            record_type = "PTRRecord"
-            suffix = record_data["ptrdname"]
 
         return f"{record_type}:{name}:{zone_id}:{suffix}"
 
@@ -745,18 +735,6 @@ class DNSRuleEngine:
 
         if record_type_method := getattr(self, f"_add_record_type_fields_{rule.record_type}", None):
             record_type_method(rule, context, record_data)  # pylint: disable=not-callable
-
-    def _add_record_type_fields_cname(
-        self, rule: DNSRule, context: dict[str, Any], record_data: dict[str, Any]
-    ) -> None:
-        if rule.value_template:
-            rendered_alias = self._render_template(rule.value_template, context, "value_template")
-            record_data["alias"] = normalize_dns_name(rendered_alias)
-
-    def _add_record_type_fields_ptr(self, rule: DNSRule, context: dict[str, Any], record_data: dict[str, Any]) -> None:
-        if rule.value_template:
-            rendered_ptrdname = self._render_template(rule.value_template, context, "value_template")
-            record_data["ptrdname"] = normalize_dns_name(rendered_ptrdname)
 
 
 # Global instance for use by signal handlers

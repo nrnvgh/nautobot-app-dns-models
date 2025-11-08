@@ -8,12 +8,8 @@ class DNSRecordTypeChoices(ChoiceSet):
 
     A = "A"
     AAAA = "AAAA"
-    CNAME = "CNAME"
-    PTR = "PTR"
 
     CHOICES = (
         (A, "A Record"),
         (AAAA, "AAAA Record"),
-        (CNAME, "CNAME Record"),
-        (PTR, "PTR Record"),
     )

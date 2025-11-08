@@ -30,7 +30,7 @@ When multiple rules exist for the same content type and record type, the system 
 3. **Tenant specific** - Tenant-wide policy (any location for that tenant)
 4. **Global** - Organization-wide policy (any location, any tenant)
 
-**Per-record-type independence**: Different record types can use different rule sources, enabling mixed scenarios like location-specific A records + tenant-specific CNAME records for the same object.
+**Per-record-type independence**: Different record types can use different rule sources, enabling mixed scenarios like location-specific A records + tenant-specific AAAA records for the same object.
 
 ### Multi-Record Support
 
@@ -49,7 +49,7 @@ A single rule can create multiple DNS records:
    - **Name**: Unique identifier for the rule
    - **Content Type**: What type of object triggers this rule (Device, Interface, etc.)
    - **Location**: Leave blank for global, or select specific location for scoped rules
-   - **Record Type**: Type of DNS record to create (A, AAAA, CNAME, PTR)
+   - **Record Type**: Type of DNS record to create (A, AAAA)
 4. **Define** Jinja2 templates:
    - **Zone Template**: Which DNS zone to create records in
    - **Name Template**: The record name within the zone
@@ -201,7 +201,7 @@ The system prevents conflicting rules:
 
 - Only one enabled rule per `(content_type, record_type, location)` combination
 - Global and location-scoped rules can coexist for the same content type and record type
-- Different record types (A, AAAA, CNAME, PTR) can have separate rules
+- Different record types (A, AAAA) can have separate rules
 
 ### Location Changes
 

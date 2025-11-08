@@ -354,7 +354,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(rules.first(), global_rule)
 
     def test_get_applicable_rules_per_record_type_precedence_mixed_rules(self):
-        """Test per-record-type precedence: location-specific A rule + global CNAME rule."""
+        """Test per-record-type precedence: location-specific A rule + global AAAA rule."""
         # Create location-specific A record rule
         location_a_rule = DNSRule.objects.create(
             name="location-a-rule",
@@ -363,18 +363,18 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="location.example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
-        # Create global CNAME record rule
-        global_cname_rule = DNSRule.objects.create(
-            name="global-cname-rule",
+        # Create global AAAA record rule
+        global_aaaa_rule = DNSRule.objects.create(
+            name="global-aaaa-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=None,  # Global rule
             zone_template="global.example.com",
-            record_type="CNAME",
-            name_template="{{ obj.name }}-alias",
-            value_template="{{ obj.name }}.example.com",
+            record_type="AAAA",
+            name_template="{{ obj.name }}-ipv6",
+            value_template="{{ obj.primary_ip6 }}",
         )
 
         # Create global A record rule (should be overridden by location-specific)
@@ -385,18 +385,18 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="global.example.com",
             record_type="A",
             name_template="{{ obj.name }}-global",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         rules = self._get_applicable_rules(self.device)
 
-        # Should get location-specific A rule + global CNAME rule (2 rules total)
+        # Should get location-specific A rule + global AAAA rule (2 rules total)
         self.assertEqual(rules.count(), 2)
 
         # Verify we got the correct rules
         rule_names = {rule.name for rule in rules}
         self.assertIn(location_a_rule.name, rule_names)  # Location-specific A rule
-        self.assertIn(global_cname_rule.name, rule_names)  # Global CNAME rule
+        self.assertIn(global_aaaa_rule.name, rule_names)  # Global AAAA rule
         self.assertNotIn(global_a_rule.name, rule_names)  # Should be overridden
 
     def test_get_applicable_rules_per_record_type_precedence_location_override(self):
@@ -439,35 +439,25 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="location.example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
-        location_cname_rule = DNSRule.objects.create(
-            name="location-cname-rule",
+        location_aaaa_rule = DNSRule.objects.create(
+            name="location-aaaa-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=self.location,
             zone_template="location.example.com",
-            record_type="CNAME",
-            name_template="{{ obj.name }}-alias",
-            value_template="{{ obj.name }}.example.com",
-        )
-
-        location_ptr_rule = DNSRule.objects.create(
-            name="location-ptr-rule",
-            content_type=ContentType.objects.get_for_model(Device),
-            location=self.location,
-            zone_template="location.example.com",
-            record_type="PTR",
-            name_template="{{ obj.name }}-ptr",
-            value_template="{{ obj.name }}.example.com",
+            record_type="AAAA",
+            name_template="{{ obj.name }}-ipv6",
+            value_template="{{ obj.primary_ip6 }}",
         )
 
         rules = self._get_applicable_rules(self.device)
 
-        # Should get all 3 location-specific rules
-        self.assertEqual(rules.count(), 3)
+        # Should get both location-specific rules
+        self.assertEqual(rules.count(), 2)
         rule_names = {rule.name for rule in rules}
-        expected_names = {location_a_rule.name, location_cname_rule.name, location_ptr_rule.name}
+        expected_names = {location_a_rule.name, location_aaaa_rule.name}
         self.assertEqual(rule_names, expected_names)
 
     def test_get_applicable_rules_tenant_precedence_location_first(self):
@@ -534,7 +524,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(rules.first().name, location_tenant_rule.name)
 
     def test_get_applicable_rules_tenant_precedence_mixed_scoping(self):
-        """Test mixed scoping: Location A rule + Tenant CNAME rule for same object."""
+        """Test that a Location A rule + Tenant AAAA rule are both applicable for same object."""
         # Create location-specific A rule
         location_a_rule = DNSRule.objects.create(
             name="location-a-rule",
@@ -544,19 +534,19 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             zone_template="location.example.com",
             record_type="A",
             name_template="{{ obj.name }}-loc",
-            value_template="{{ obj.primary_ip4.id }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
-        # Create tenant-specific CNAME rule
-        tenant_cname_rule = DNSRule.objects.create(
-            name="tenant-cname-rule",
+        # Create tenant-specific AAAA rule
+        tenant_aaaa_rule = DNSRule.objects.create(
+            name="tenant-aaaa-rule",
             content_type=ContentType.objects.get_for_model(Device),
             location=None,
             tenant=self.tenant,
             zone_template="tenant.example.com",
-            record_type="CNAME",
-            name_template="{{ obj.name }}-alias",
-            value_template="{{ obj.name }}.example.com",
+            record_type="AAAA",
+            name_template="{{ obj.name }}-ipv6",
+            value_template="{{ obj.primary_ip6 }}",
         )
 
         # Create device with both location and tenant
@@ -574,7 +564,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         # Should get both rules (different record types)
         self.assertEqual(rules.count(), 2)
         rule_names = {rule.name for rule in rules}
-        expected_names = {location_a_rule.name, tenant_cname_rule.name}
+        expected_names = {location_a_rule.name, tenant_aaaa_rule.name}
         self.assertEqual(rule_names, expected_names)
 
     def test_get_applicable_rules_tenant_fallback_scenarios(self):
@@ -1818,7 +1808,7 @@ class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
         rule = DNSRule(
             name="Runtime Warning Rule",
             content_type=self.interface_content_type,
-            record_type="CNAME",
+            record_type="A",
             enabled=True,
             zone_template="test.local",
             name_template="{{ obj.name }}",

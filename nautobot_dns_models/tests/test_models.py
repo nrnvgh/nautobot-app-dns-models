@@ -944,9 +944,9 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             content_type=cls.content_type_interface,  # Use Interface to avoid Device conflicts
             location=cls.location,  # Location-scoped to avoid global conflicts
             zone_template="base-test.com",
-            record_type="CNAME",  # Use CNAME to avoid A/AAAA conflicts
+            record_type="A",  # Use A record type
             name_template="{{ obj.name }}",
-            value_template="base.example.com",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
     def test_dnsrule_for_a_record(self):
@@ -976,35 +976,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         )
 
         self.assertEqual(rule.record_type, "AAAA")
-        self.assertEqual(rule.value_template, "{{ obj.primary_ip6.id }}")
-
-    def test_dnsrule_for_cname_record(self):
-        """Test DNSRule configured for CNAME record type."""
-        rule = DNSRule.objects.create(
-            name="cname-record-rule",
-            content_type=self.content_type_device,
-            zone_template="example.com",
-            record_type="CNAME",
-            name_template="www-{{ obj.name }}",
-            value_template="{{ obj.name }}.example.com",
-        )
-
-        self.assertEqual(rule.record_type, "CNAME")
-        self.assertEqual(rule.value_template, "{{ obj.name }}.example.com")
-
-    def test_dnsrule_for_ptr_record(self):
-        """Test DNSRule configured for PTR record type."""
-        rule = DNSRule.objects.create(
-            name="ptr-record-rule",
-            content_type=self.content_type_device,
-            zone_template="2.0.192.in-addr.arpa",
-            record_type="PTR",
-            name_template="{{ obj.primary_ip4.address.ip.split('.')[-1] }}",
-            value_template="{{ obj.name }}.example.com",
-        )
-
-        self.assertEqual(rule.record_type, "PTR")
-        self.assertEqual(rule.value_template, "{{ obj.name }}.example.com")
+        self.assertEqual(rule.value_template, "{{ obj.primary_ip6 }}")
 
     def test_dnsrule_defaults(self):
         """Test DNSRule default values."""
@@ -1012,9 +984,9 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             name="defaults-test",
             content_type=self.content_type_device,
             zone_template="example.com",
-            record_type="CNAME",
+            record_type="A",
             name_template="{{ obj.name }}",
-            value_template="test-value",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Test default values
@@ -1093,12 +1065,12 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             name="blank-templates",
             content_type=self.content_type_device,
             zone_template="test.com",
-            record_type="CNAME",
+            record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.name }}.example.com",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
-        self.assertEqual(rule.value_template, "{{ obj.name }}.example.com")
+        self.assertEqual(rule.value_template, "{{ obj.primary_ip4 }}")
 
     def test_dnsrule_enabled_default_true(self):
         """Test that DNSRule enabled field defaults to True."""

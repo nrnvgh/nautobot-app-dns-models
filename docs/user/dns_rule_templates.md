@@ -84,23 +84,16 @@ Value Template: {{ obj.primary_ip4 }}
 
 ### Interface Templates
 
-**Interface A Records (Multi-IP)**:
+**Interface A Records or AAAA (Multi-IP)**:
 ```jinja2
 Zone Template: example.com
 Name Template: {{ obj.name }}.{{ obj.device.name }}
 Value Template: {{ obj.ip_addresses.all() }}
 ```
 
-**Interface CNAME to Device**:
-```jinja2
-Zone Template: {{ obj.device.location.name | lower }}.example.com
-Name Template: {{ obj.name }}.{{ obj.device.name }}
-Value Template: {{ obj.device.name }}.mgmt.example.com
-```
-
 ### Service Templates
 
-**Basic Service A Record**:
+**Basic Service A or AAAA Record**:
 ```jinja2
 Zone Template: services.example.com
 Name Template: {{ obj.name }}

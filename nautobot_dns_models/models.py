@@ -802,7 +802,7 @@ class DNSRule(PrimaryModel):
         """Validate record-type-specific requirements for the DNS rule."""
         errors = defaultdict(list)
 
-        # No record-type-specific requirements for A, AAAA, CNAME, PTR
+        # No record-type-specific requirements for A, AAAA
 
         return errors
 

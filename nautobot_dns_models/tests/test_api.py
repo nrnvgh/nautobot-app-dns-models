@@ -653,9 +653,9 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             enabled=False,
             content_type=content_type,
             zone_template="test.com",
-            record_type="CNAME",
-            name_template="{{ obj.name }}-alias",
-            value_template="{{ obj.name }}.test.com",
+            record_type="AAAA",
+            name_template="{{ obj.name }}-ipv6",
+            value_template="{{ obj.primary_ip6 }}",
         )
 
         DNSRule.objects.create(
@@ -678,9 +678,9 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
                 "enabled": True,
                 "content_type": "dcim.interface",
                 "zone_template": "api.com",
-                "record_type": "CNAME",
+                "record_type": "A",
                 "name_template": "{{ obj.name }}-api",
-                "value_template": "{{ obj.name }}.api.com",
+                "value_template": "{{ obj.ip_addresses.all() }}",
             },
             {
                 "name": "New Test Rule 2",
@@ -688,9 +688,9 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
                 "enabled": False,
                 "content_type": "dcim.interface",
                 "zone_template": "api2.com",
-                "record_type": "PTR",
-                "name_template": "{{ obj.name }}-ptr",
-                "value_template": "{{ obj.name }}.api2.com",
+                "record_type": "AAAA",
+                "name_template": "{{ obj.name }}-ipv6",
+                "value_template": "{{ obj.ip_addresses.all() }}",
             },
             {
                 "name": "New Test Rule 3",
@@ -700,7 +700,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
                 "zone_template": "api3.com",
                 "record_type": "AAAA",
                 "name_template": "{{ obj.name }}-v6",
-                "value_template": "{{ obj.primary_ip6.id }}",
+                "value_template": "{{ obj.ip_addresses.all() }}",
             },
         ]
 

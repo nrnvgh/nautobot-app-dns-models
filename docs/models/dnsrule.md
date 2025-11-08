@@ -14,7 +14,7 @@ The DNSRule model defines automated DNS record creation rules that trigger when 
 
 ### Template Fields
 - `zone_template` (TextField): Jinja2 template for DNS zone name
-- `record_type` (CharField): DNS record type choice (A, AAAA, CNAME, PTR)
+- `record_type` (CharField): DNS record type choice (A, AAAA)
 - `name_template` (TextField): Jinja2 template for record name
 - `value_template` (TextField): Jinja2 template for record value
 
