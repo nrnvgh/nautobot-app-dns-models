@@ -6,7 +6,7 @@ from collections import defaultdict
 from constance import config as constance_config
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from jinja2 import TemplateError, TemplateSyntaxError
@@ -705,8 +705,10 @@ class DNSRule(PrimaryModel):
                 model_class = content_type.model_class()
                 if not model_class:
                     errors["content_type"].append("Selected content type does not exist")
-            except Exception:
-                errors["content_type"].append("Invalid content type")
+            except ObjectDoesNotExist:
+                errors["content_type"].append(
+                    f"Invalid content type '{self.content_type.app_label}.{self.content_type.model}'"
+                )
 
         if errors:
             raise ValidationError(dict(errors))
@@ -768,12 +770,8 @@ class DNSRule(PrimaryModel):
                     # Basic syntax errors (unclosed tags, invalid operators, etc.)
                     errors[field_name].append(f"Template syntax error on line {exc.lineno}: {exc.message}")
                 except TemplateError as exc:
-                    # Other Jinja2 template errors.
-                    # XXX Is this needed?
-                    errors[field_name].append(f"Template error: {exc}")
-                except Exception as exc:
-                    # System-level exceptions (very rare) - memory, recursion, encoding issues
-                    errors[field_name].append(f"Template validation failed: {exc}")
+                    # Other Jinja2 template errors, just in case
+                    errors[field_name].append(f"Template error: {exc} ({type(exc).__name__})")
 
         return errors
 

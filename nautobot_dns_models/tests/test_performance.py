@@ -10,6 +10,7 @@ from nautobot.dcim.models import Device, DeviceType, Interface, Location, Locati
 from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
+from nautobot_dns_models import signals
 from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord, DNSZone
 
 
@@ -21,9 +22,15 @@ class IPAssignmentPerformanceTestCase(TestCase):
     Tests measure only the IP assignment time, not the setup overhead.
     """
 
+    absolute_baseline_time = 0.0
+    absolute_baseline_queries = 0
+    baseline_time = 0.0
+    baseline_queries = 0
+
     @classmethod
     def setUpTestData(cls):
         """Create test infrastructure once - not included in performance timing."""
+
         # Create basic infrastructure
         cls.location_type = LocationType.objects.create(name="Test Location Type")
         cls.location = Location.objects.create(
@@ -93,7 +100,6 @@ class IPAssignmentPerformanceTestCase(TestCase):
 
     def test_ip_assignment_performance_absolute_baseline(self):
         """Measure IP assignment performance with DNS signal handlers completely disabled."""
-        from nautobot_dns_models import signals
 
         print("\n=== IP Assignment Performance (Absolute Baseline - No DNS Handlers) ===")
 
@@ -124,9 +130,10 @@ class IPAssignmentPerformanceTestCase(TestCase):
             print(f"Total Queries: {total_queries}")
             print(f"Queries per Assignment: {total_queries / 128:.1f}")
 
-            # Store absolute baseline for comparison
-            self.absolute_baseline_time = assignment_time_ms
-            self.absolute_baseline_queries = total_queries
+            # Store absolute baseline for comparison (using class variable)
+            print(f"Storing absolute baseline: {assignment_time_ms:.1f}ms, {total_queries} queries")
+            self.__class__.absolute_baseline_time = assignment_time_ms
+            self.__class__.absolute_baseline_queries = total_queries
 
         finally:
             # Always reconnect handlers for other tests
@@ -136,7 +143,9 @@ class IPAssignmentPerformanceTestCase(TestCase):
     def test_ip_assignment_performance_without_dns_rules(self):
         """Measure IP assignment performance with no DNS rules enabled."""
         # Ensure no DNS rules exist
-        DNSRule.objects.all().delete()
+        print("\n=== IP Assignment Performance (No DNS Rules) ===")
+        print(f"Baseline time: {self.baseline_time:.1f}ms, {self.baseline_queries} queries")
+        print(f"Absolute baseline time: {self.absolute_baseline_time:.1f}ms, {self.absolute_baseline_queries} queries")
 
         # Clear query log
         connection.queries_log.clear()
@@ -161,21 +170,21 @@ class IPAssignmentPerformanceTestCase(TestCase):
         print(f"Total Queries: {total_queries}")
         print(f"Queries per Assignment: {total_queries / 128:.1f}")
 
-        # Store baseline for comparison
-        self.baseline_time = assignment_time_ms
-        self.baseline_queries = total_queries
+        # Store baseline for comparison (using class variable)
+        self.__class__.baseline_time = assignment_time_ms
+        self.__class__.baseline_queries = total_queries
 
         # Compare to absolute baseline if available
-        if hasattr(self, "absolute_baseline_time"):
-            signal_overhead_ms = assignment_time_ms - self.absolute_baseline_time
-            signal_overhead_percent = (signal_overhead_ms / self.absolute_baseline_time) * 100
-            query_overhead = total_queries - self.absolute_baseline_queries
+        if self.__class__.absolute_baseline_time:
+            signal_overhead_ms = assignment_time_ms - self.__class__.absolute_baseline_time
+            signal_overhead_percent = (signal_overhead_ms / self.__class__.absolute_baseline_time) * 100
+            query_overhead = total_queries - self.__class__.absolute_baseline_queries
 
             print("\n=== Signal Handler Overhead ===")
             print(f"Signal Overhead: {signal_overhead_ms:.1f}ms ({signal_overhead_percent:.1f}% increase)")
             print(f"Signal Query Overhead: {query_overhead} queries")
 
-    def test_ip_assignment_performance_with_dns_rules(self):
+    def test_ip_assignment_performance_with_dns_rules(self):    # pylint: disable=too-many-locals
         """Measure IP assignment performance with DNS rules enabled."""
         # Create a DNS rule for interfaces
         DNSRule.objects.create(
@@ -198,7 +207,6 @@ class IPAssignmentPerformanceTestCase(TestCase):
         with transaction.atomic():
             for interface, ip_address in zip(self.interfaces, self.ip_addresses):
                 interface.ip_addresses.add(ip_address)
-                print("\n")
 
         end_time = time.perf_counter()
 
@@ -213,10 +221,10 @@ class IPAssignmentPerformanceTestCase(TestCase):
         print(f"Queries per Assignment: {total_queries / 128:.1f}")
 
         # Calculate DNS overhead if baseline exists
-        if hasattr(self, "baseline_time"):
-            overhead_ms = assignment_time_ms - self.baseline_time
-            overhead_percent = (overhead_ms / self.baseline_time) * 100
-            query_overhead = total_queries - self.baseline_queries
+        if self.__class__.baseline_time:
+            overhead_ms = assignment_time_ms - self.__class__.baseline_time
+            overhead_percent = (overhead_ms / self.__class__.baseline_time) * 100
+            query_overhead = total_queries - self.__class__.baseline_queries
 
             print("\n=== DNS Processing Overhead ===")
             print(f"Time Overhead: {overhead_ms:.1f}ms ({overhead_percent:.1f}% increase)")
@@ -224,10 +232,10 @@ class IPAssignmentPerformanceTestCase(TestCase):
             print(f"DNS Time per Assignment: {overhead_ms / 128:.2f}ms")
 
         # Calculate total system overhead if absolute baseline exists
-        if hasattr(self, "absolute_baseline_time"):
-            total_overhead_ms = assignment_time_ms - self.absolute_baseline_time
-            total_overhead_percent = (total_overhead_ms / self.absolute_baseline_time) * 100
-            total_query_overhead = total_queries - self.absolute_baseline_queries
+        if self.__class__.absolute_baseline_time:
+            total_overhead_ms = assignment_time_ms - self.__class__.absolute_baseline_time
+            total_overhead_percent = (total_overhead_ms / self.__class__.absolute_baseline_time) * 100
+            total_query_overhead = total_queries - self.__class__.absolute_baseline_queries
 
             print("\n=== Total DNS System Overhead ===")
             print(f"Total Overhead: {total_overhead_ms:.1f}ms ({total_overhead_percent:.1f}% vs pure Django)")
@@ -291,8 +299,6 @@ class IPAssignmentPerformanceTestCase(TestCase):
 
     def test_single_ip_assignment_sql_analysis_absolute_baseline(self):
         """Analyze SQL queries for single IP assignment with no DNS handlers at all."""
-        from nautobot_dns_models import signals
-
         print("\n=== SQL Analysis: Single IP Assignment (Absolute Baseline - No DNS Handlers) ===")
 
         # Temporarily disconnect DNS signal handlers
@@ -331,8 +337,6 @@ class IPAssignmentPerformanceTestCase(TestCase):
 
     def test_single_ip_assignment_sql_analysis_no_rules(self):
         """Analyze SQL queries for single IP assignment without DNS rules."""
-        # Ensure no DNS rules exist
-        DNSRule.objects.all().delete()
 
         print("\n=== SQL Analysis: Single IP Assignment (No DNS Rules) ===")
 
@@ -362,7 +366,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
     def test_single_ip_assignment_sql_analysis_with_rules(self):
         """Analyze SQL queries for single IP assignment with DNS rules."""
         # Create DNS rule for comparison
-        dns_rule = DNSRule.objects.create(
+        DNSRule.objects.create(
             name="SQL Analysis A Record",
             enabled=True,
             content_type=ContentType.objects.get_for_model(Interface),
@@ -405,6 +409,3 @@ class IPAssignmentPerformanceTestCase(TestCase):
         print("\nDNS Records Created:")
         print(f"A Records: {a_record_count}")
         print(f"DNSRuleRecord tracking: {tracking_count}")
-
-        # Clean up for other tests
-        dns_rule.delete()

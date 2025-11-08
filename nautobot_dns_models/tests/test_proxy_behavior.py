@@ -1,3 +1,5 @@
+"""Unit tests for Jinja template proxy objects."""
+
 from django.test import TestCase
 from nautobot.dcim.models import Device
 from nautobot.virtualization.models import VirtualMachine

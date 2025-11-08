@@ -10,6 +10,8 @@ from nautobot.apps.ui import (
     StatsPanel,
 )
 from nautobot.core.ui import object_detail
+
+# from nautobot.core.templatetags import helpers
 from nautobot.ipam.tables import PrefixTable
 
 from nautobot_dns_models.api.serializers import (
@@ -472,21 +474,16 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
     def get_object(self):
         """Get the object and build the panels."""
         obj = super().get_object()
-        self.object_detail_content = self._build_panels(obj)
+        self.object_detail_content = self._build_panels()
 
         return obj
 
-    def _get_record_type_fields(self, obj):
+    def _build_panels(self):
         record_type_fields = [
             "zone_template",
             "name_template",
             "value_template",
         ]
-
-        return record_type_fields
-
-    def _build_panels(self, obj):
-        record_type_fields = self._get_record_type_fields(obj)
         #
         # NOTE: Temporarily disabled until/unless we tweak things. At issue is that, by default, nautobot
         # puts a lot of padding around <pre> tags, so when you render a bunch of rows with them,

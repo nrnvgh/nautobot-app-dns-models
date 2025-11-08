@@ -1,4 +1,5 @@
 """Test DNS Models (DNS zones, records, and rules)."""
+# pylint: disable=too-many-lines
 
 from unittest import skip
 

@@ -36,7 +36,7 @@ class LiteralCollector(NodeVisitor):
         """Initialize the collector with an empty literals list."""
         self.literals: list[str] = []
 
-    def visit_TemplateData(self, node: nodes.TemplateData) -> None:  # type: ignore[override]
+    def visit_TemplateData(self, node: nodes.TemplateData) -> None:  # pylint: disable=invalid-name
         """Handle TemplateData nodes.
 
         This handles literal text segments such as the '.' between the expressions in:
@@ -52,7 +52,7 @@ class LiteralCollector(NodeVisitor):
         if getattr(node, "data", None):
             self.literals.append(node.data)
 
-    def visit_Const(self, node: nodes.Const) -> None:  # type: ignore[override]
+    def visit_Const(self, node: nodes.Const) -> None:  # pylint: disable=invalid-name
         """Handle Const nodes that contain string literal values.
 
         This handles literal string values within expressions, such as:
@@ -68,11 +68,13 @@ class LiteralCollector(NodeVisitor):
         if isinstance(getattr(node, "value", None), str) and node.value:
             self.literals.append(node.value)
 
-    def generic_visit(self, node: nodes.Node) -> None:  # type: ignore[override]
+    def generic_visit(self, node: nodes.Const, *args, **kwargs) -> None:
         """Fallback visitor to traverse child nodes.
 
         Args:
             node: The current AST node being visited.
+            *args: Variable length argument list.
+            **kwargs: Arbitrary keyword arguments.
 
         Returns:
             None

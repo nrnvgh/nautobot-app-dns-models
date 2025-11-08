@@ -1,4 +1,5 @@
 """Tests for nautobot_dns_models Form Classes."""
+# pylint: disable=too-many-lines
 
 from unittest import skip
 

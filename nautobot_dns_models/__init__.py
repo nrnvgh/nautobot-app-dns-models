@@ -91,9 +91,11 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
 
     def ready(self):
         """Import signal handlers when the app is ready."""
+        # pylint: disable=unused-import,import-outside-toplevel
+
         super().ready()
         # Import signals to ensure they are connected
-        import nautobot_dns_models.signals  # noqa: F401   pylint: disable=unused-import
+        import nautobot_dns_models.signals  # noqa: F401
         from nautobot_dns_models.signals import post_migrate_create_data_validation_rules
 
         nautobot_database_ready.connect(post_migrate_create_data_validation_rules, sender=self)
