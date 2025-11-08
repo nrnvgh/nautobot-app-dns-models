@@ -184,7 +184,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
             print(f"Signal Overhead: {signal_overhead_ms:.1f}ms ({signal_overhead_percent:.1f}% increase)")
             print(f"Signal Query Overhead: {query_overhead} queries")
 
-    def test_ip_assignment_performance_with_dns_rules(self):    # pylint: disable=too-many-locals
+    def test_ip_assignment_performance_with_dns_rules(self):  # pylint: disable=too-many-locals
         """Measure IP assignment performance with DNS rules enabled."""
         # Create a DNS rule for interfaces
         DNSRule.objects.create(

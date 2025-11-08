@@ -15,7 +15,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
-from jinja2 import TemplateSyntaxError, UndefinedError
+from jinja2 import TemplateSyntaxError
 from nautobot.apps.utils import render_jinja2
 from nautobot.dcim.choices import InterfaceTypeChoices
 from nautobot.dcim.models import Device, Interface, Location, LocationType
@@ -85,7 +85,9 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         """Test _render_template method behavior with array index."""
         # Add IP address to interface before rendering
         self.interface.ip_addresses.add(self.ip_addresses[0])
-        result = self._render_template("{{ obj.ip_addresses.all()[0] }}", {"obj": wrap_for_template(self.interface)}, "test_field")
+        result = self._render_template(
+            "{{ obj.ip_addresses.all()[0] }}", {"obj": wrap_for_template(self.interface)}, "test_field"
+        )
         # TemplateIPAddressProxy returns UUID string when rendered
         self.assertEqual(result, str(self.ip_addresses[0].pk))
 
@@ -99,7 +101,9 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
             status=Status.objects.get_for_model(Interface).first(),
         )
         with self.assertRaises(DNSTemplateEmptyError) as context:
-            self._render_template("{{ obj.ip_addresses.all()[0] }}", {"obj": wrap_for_template(empty_interface)}, "test_field")
+            self._render_template(
+                "{{ obj.ip_addresses.all()[0] }}", {"obj": wrap_for_template(empty_interface)}, "test_field"
+            )
 
         # When accessing index 0 on empty queryset, Jinja2 renders empty string, triggering DNSTemplateEmptyError
         self.assertIn("Template test_field rendered empty", str(context.exception))
@@ -208,7 +212,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
     Rule resolution tests.
 
     Tests that desired rule precedence is respected.
-    
+
     """
 
     def test_get_object_location_device(self):
@@ -1805,7 +1809,7 @@ class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
         DEBUG=True,
         LOGGING=TEST_LOGGING_CONFIG,
     )
-    def test_template_failure_preserves_existing_records(self): # pylint: disable=too-many-locals
+    def test_template_failure_preserves_existing_records(self):  # pylint: disable=too-many-locals
         """Test that existing DNS records are not deleted when template rendering fails."""
         # Create a DNS rule for interface IPs with a template that will fail on interfaces without roles
         dns_rule = DNSRule.objects.create(
