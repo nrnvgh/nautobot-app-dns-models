@@ -1,16 +1,22 @@
 """Unit tests for nautobot_dns_models."""
 
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
-from nautobot.apps.testing import APIViewTestCases
+from nautobot.apps.testing import APITestCase, APIViewTestCases
+from nautobot.dcim.models import Device, DeviceType, Location, LocationType, Manufacturer
+from nautobot.extras.models import Role
 from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from rest_framework import status
 
+from nautobot_dns_models import models
+from nautobot_dns_models.api.serializers import DNSRuleRecordSerializer, DNSRuleSerializer
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
     CNAMERecord,
+    DNSRule,
     DNSView,
     DNSViewPrefixAssignment,
     DNSZone,
@@ -19,6 +25,11 @@ from nautobot_dns_models.models import (
     PTRRecord,
     SRVRecord,
     TXTRecord,
+)
+
+from .mixins.api import (
+    RuleEngineDeviceIPAssignmentAPIMixin,
+    RuleEngineInterfaceIPAssignmentAPIMixin,
 )
 
 User = get_user_model()
@@ -573,3 +584,390 @@ class SRVRecordAPITestCase(APIViewTestCases.APIViewTestCase):
                 "zone": zone.id,
             },
         ]
+
+
+class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
+    """Test the Nautobot DNSRule API."""
+
+    model = models.DNSRule
+    view_namespace = "plugins-api:nautobot_dns_models"
+    bulk_update_data = {
+        "description": "Example bulk description",
+    }
+    brief_fields = [
+        "name",
+        "enabled",
+        "record_type",
+    ]
+    choices_fields = ["content_type", "record_type"]
+
+    @classmethod
+    def setUpTestData(cls):
+        # Create test data for DNSRule
+        content_type = ContentType.objects.get_for_model(Device)
+
+        # Create location and related objects for testing
+        active_status = Status.objects.get(name="Active")
+        namespace = Namespace.objects.first()
+        location_type = LocationType.objects.create(name="Site")
+        location = Location.objects.create(name="Test Site", location_type=location_type, status=active_status)
+
+        # Create sample Device objects for template validation
+        cls.manufacturer = Manufacturer.objects.create(name="Test Manufacturer")
+        cls.device_role, _ = Role.objects.get_or_create(name="Test Device Role", defaults={"color": "ff0000"})
+        cls.device_role.content_types.add(ContentType.objects.get_for_model(Device))
+        cls.device_type = DeviceType.objects.create(manufacturer=cls.manufacturer, model="Test Device Type")
+
+        # Create IP addresses for the devices
+        Prefix.objects.create(prefix="10.0.0.0/24", namespace=namespace, type="Pool", status=active_status)
+        Prefix.objects.create(prefix="2001:db8::/64", namespace=namespace, type="Pool", status=active_status)
+
+        cls.ip4 = IPAddress.objects.create(address="10.0.0.10/32", namespace=namespace, status=active_status)
+        cls.ip6 = IPAddress.objects.create(address="2001:db8::10/128", namespace=namespace, status=active_status)
+
+        # Create sample device with IP addresses for template validation
+        cls.sample_device = Device.objects.create(
+            name="sample-device",
+            device_type=cls.device_type,
+            role=cls.device_role,
+            location=location,
+            status=active_status,
+            primary_ip4=cls.ip4,
+            primary_ip6=cls.ip6,
+        )
+
+        DNSRule.objects.create(
+            name="Test Rule 1",
+            description="Test DNS rule for devices",
+            enabled=True,
+            content_type=content_type,
+            location=location,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        DNSRule.objects.create(
+            name="Test Rule 2",
+            description="Another test DNS rule",
+            enabled=False,
+            content_type=content_type,
+            zone_template="test.com",
+            record_type="AAAA",
+            name_template="{{ obj.name }}-ipv6",
+            value_template="{{ obj.primary_ip6 }}",
+        )
+
+        DNSRule.objects.create(
+            name="Test Rule 3",
+            description="Third test DNS rule",
+            enabled=True,
+            content_type=content_type,
+            zone_template="internal.com",
+            record_type="AAAA",
+            name_template="{{ obj.name }}-internal",
+            value_template="{{ obj.primary_ip6 }}",
+        )
+
+        #
+        # These use dcim.interface so as to avoid conflicts with the DNSRule records created above.
+        cls.create_data = [
+            {
+                "name": "New Test Rule 1",
+                "description": "New DNS rule via API",
+                "enabled": True,
+                "content_type": "dcim.interface",
+                "zone_template": "api.com",
+                "record_type": "A",
+                "name_template": "{{ obj.name }}-api",
+                "value_template": "{{ obj.ip_addresses.all() }}",
+            },
+            {
+                "name": "New Test Rule 2",
+                "description": "Another new DNS rule via API",
+                "enabled": False,
+                "content_type": "dcim.interface",
+                "zone_template": "api2.com",
+                "record_type": "AAAA",
+                "name_template": "{{ obj.name }}-ipv6",
+                "value_template": "{{ obj.ip_addresses.all() }}",
+            },
+            {
+                "name": "New Test Rule 3",
+                "description": "Third new DNS rule via API",
+                "enabled": True,
+                "content_type": "dcim.interface",
+                "zone_template": "api3.com",
+                "record_type": "AAAA",
+                "name_template": "{{ obj.name }}-v6",
+                "value_template": "{{ obj.ip_addresses.all() }}",
+            },
+        ]
+
+    def test_content_type_queryset_has_expected_content_types(self):
+        """DNSRule serializer content_type queryset should exactly match expected models."""
+        serializer = DNSRuleSerializer()
+        content_types = {
+            f"{content_type.app_label}.{content_type.model}"
+            for content_type in serializer.fields["content_type"].queryset
+        }
+        expected = {
+            "dcim.device",
+            "dcim.interface",
+            "virtualization.virtualmachine",
+            "virtualization.vminterface",
+            "ipam.service",
+        }
+        self.assertEqual(content_types, expected)
+
+
+class DNSRuleRecordAPITestCase(APIViewTestCases.APIViewTestCase):
+    """Test the Nautobot DNSRuleRecord API."""
+
+    model = models.DNSRuleRecord
+    view_namespace = "plugins-api:nautobot_dns_models"
+
+    # Since DNSRuleRecord is a BaseModel (like PrefixLocationAssignment),
+    # it doesn't support bulk operations the same way
+    bulk_update_data = {}
+
+    brief_fields = [
+        "rule",
+        "source_object",
+        "dns_record",
+        "display",
+        "id",
+        "url",
+    ]
+
+    # Exclude UUID fields that have different representations between model and API
+    validation_excluded_fields = [
+        "object_id",
+        "dns_record_object_id",
+    ]
+
+    choices_fields = ["content_type", "dns_record_content_type"]
+
+    @classmethod
+    def setUpTestData(cls):
+        """Set up test data for DNSRuleRecord API tests."""
+        super().setUpTestData()
+
+        device_content_type = ContentType.objects.get_for_model(Device)
+        ip_address_status = Status.objects.get_for_model(IPAddress).first()
+        prefix_status = Status.objects.get_for_model(Prefix).first()
+
+        # Create namespace, prefix and IP addresses for DNS testing
+        namespace = Namespace.objects.create(name="Test Namespace")
+        Prefix.objects.create(prefix="192.168.1.0/24", namespace=namespace, status=prefix_status)
+        cls.ip_address = IPAddress.objects.create(
+            address="192.168.1.100/24", namespace=namespace, status=ip_address_status
+        )
+
+        # Create required objects for Device creation
+        manufacturer = Manufacturer.objects.create(name="Test Manufacturer")
+        device_type = DeviceType.objects.create(manufacturer=manufacturer, model="Test Device Type")
+        location_type = LocationType.objects.create(name="Test Location Type")
+        location = Location.objects.create(
+            name="Test Location", location_type=location_type, status=Status.objects.get_for_model(Location).first()
+        )
+        device_role = Role.objects.create(
+            name="Test Device Role",
+        )
+        device_role.content_types.add(device_content_type)
+
+        # Create test data needed for DNSRuleRecord
+        cls.dns_zone = DNSZone.objects.create(
+            name="example.com",
+            filename="example.com.zone",
+            soa_mname="ns1.example.com",
+            soa_rname="admin@example.com",
+        )
+
+        cls.dns_rule = models.DNSRule.objects.create(
+            name="test-rule",
+            content_type=device_content_type,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+            enabled=True,
+        )
+
+        cls.device = Device.objects.create(
+            name="test-device",
+            device_type=device_type,
+            role=device_role,
+            status=Status.objects.get_for_model(Device).first(),
+            location=location,
+            primary_ip4=cls.ip_address,
+        )
+
+        cls.a_record = ARecord.objects.create(
+            name="test-device.example.com",
+            zone=cls.dns_zone,
+            address=cls.ip_address,
+        )
+
+        # Create additional IP addresses for other devices
+        cls.ip_address2 = IPAddress.objects.create(
+            address="192.168.1.101/24", namespace=namespace, status=ip_address_status
+        )
+
+        cls.ip_address3 = IPAddress.objects.create(
+            address="192.168.1.102/24", namespace=namespace, status=ip_address_status
+        )
+
+        # Create additional devices and records for testing
+        cls.device2 = Device.objects.create(
+            name="test-device-2",
+            device_type=device_type,
+            role=device_role,
+            status=Status.objects.get_for_model(Device).first(),
+            location=location,
+            primary_ip4=cls.ip_address2,
+        )
+
+        cls.device3 = Device.objects.create(
+            name="test-device-3",
+            device_type=device_type,
+            role=device_role,
+            status=Status.objects.get_for_model(Device).first(),
+            location=location,
+            primary_ip4=cls.ip_address3,
+        )
+
+        cls.a_record2 = ARecord.objects.create(
+            name="test-device-2.example.com",
+            zone=cls.dns_zone,
+            address=cls.ip_address2,
+        )
+
+        cls.a_record3 = ARecord.objects.create(
+            name="test-device-3.example.com",
+            zone=cls.dns_zone,
+            address=cls.ip_address3,
+        )
+
+        # Create test DNSRuleRecord instances
+        cls.create_data = [
+            {
+                "rule": cls.dns_rule.id,
+                "content_type": "dcim.device",
+                "object_id": str(cls.device.id),
+                "dns_record_content_type": "nautobot_dns_models.arecord",
+                "dns_record_object_id": str(cls.a_record.id),
+            },
+            {
+                "rule": cls.dns_rule.id,
+                "content_type": "dcim.device",
+                "object_id": str(cls.device2.id),
+                "dns_record_content_type": "nautobot_dns_models.arecord",
+                "dns_record_object_id": str(cls.a_record2.id),
+            },
+            {
+                "rule": cls.dns_rule.id,
+                "content_type": "dcim.device",
+                "object_id": str(cls.device3.id),
+                "dns_record_content_type": "nautobot_dns_models.arecord",
+                "dns_record_object_id": str(cls.a_record3.id),
+            },
+        ]
+
+    def test_content_type_queryset_has_expected_content_types(self):
+        """DNSRuleRecord serializer content_type queryset should exactly match expected models."""
+        serializer = DNSRuleRecordSerializer()
+        content_types = {
+            f"{content_type.app_label}.{content_type.model}"
+            for content_type in serializer.fields["content_type"].queryset
+        }
+        expected = {
+            "dcim.device",
+            "dcim.interface",
+            "virtualization.virtualmachine",
+            "virtualization.vminterface",
+            "ipam.service",
+        }
+        self.assertEqual(content_types, expected)
+
+
+class RuleEngineInterfaceIPAssignmentV4APITestCase(RuleEngineInterfaceIPAssignmentAPIMixin, APITestCase):
+    """Test IPv4 IP interface-IP assignment creates the appropriate A records."""
+
+    model = models.ARecord
+
+    def setUp(self):
+        super().setUp()
+
+        # Address pools
+        Prefix.objects.create(prefix="192.0.2.0/24", namespace=self.namespace, type="Pool", status=self.active_status)
+
+        # IPs to assign
+        self.ip_address_1 = IPAddress.objects.create(
+            address="192.0.2.10/32", namespace=self.namespace, status=self.active_status
+        )
+        self.ip_address_2 = IPAddress.objects.create(
+            address="192.0.2.11/32", namespace=self.namespace, status=self.active_status
+        )
+
+
+class RuleEngineInterfaceIPAssignmentV6APITestCase(RuleEngineInterfaceIPAssignmentAPIMixin, APITestCase):
+    """Test IPv6 IP interface-IP assignment creates the appropriate AAAA records."""
+
+    model = models.AAAARecord
+
+    def setUp(self):
+        super().setUp()
+
+        # Address pools
+        Prefix.objects.create(
+            prefix="2001:db8:100::/64", namespace=self.namespace, type="Pool", status=self.active_status
+        )
+
+        # IPs to assign
+        self.ip_address_1 = IPAddress.objects.create(
+            address="2001:db8:100::10/128", namespace=self.namespace, status=self.active_status
+        )
+        self.ip_address_2 = IPAddress.objects.create(
+            address="2001:db8:100::11/128", namespace=self.namespace, status=self.active_status
+        )
+
+
+class RuleEngineDeviceIPAssignmentV4APITestCase(RuleEngineDeviceIPAssignmentAPIMixin, APITestCase):
+    """Test IPv4 IP device-IP assignment creates the appropriate A records."""
+
+    model = models.ARecord
+
+    def setUp(self):
+        super().setUp()
+
+        # Address pools
+        Prefix.objects.create(prefix="192.0.2.0/24", namespace=self.namespace, type="Pool", status=self.active_status)
+
+        # IPs to assign
+        self.ip_address_1 = IPAddress.objects.create(
+            address="192.0.2.10/32", namespace=self.namespace, status=self.active_status
+        )
+        self.device_ip_field = "primary_ip4"
+
+
+class RuleEngineDeviceIPAssignmentV6APITestCase(RuleEngineDeviceIPAssignmentAPIMixin, APITestCase):
+    """Test IPv6 IP device-IP assignment creates the appropriate AAAA records."""
+
+    model = models.AAAARecord
+
+    def setUp(self):
+        super().setUp()
+
+        # Address pools
+        Prefix.objects.create(
+            prefix="2001:db8:100::/64", namespace=self.namespace, type="Pool", status=self.active_status
+        )
+
+        # IPs to assign
+        self.ip_address_1 = IPAddress.objects.create(
+            address="2001:db8:100::10/128", namespace=self.namespace, status=self.active_status
+        )
+
+        self.device_ip_field = "primary_ip6"

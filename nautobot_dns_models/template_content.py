@@ -124,12 +124,14 @@ class IPAddressDNSRecords(TemplateExtension):  # pylint: disable=abstract-method
     model = "ipam.ipaddress"
 
     object_detail_panels = [
+        #
+        # XXX: Are there prefetch/select_related optimizations to be done here?
         ForwardDNSRecordsTablePanel(
             weight=100,
             section=SectionChoices.RIGHT_HALF,
             table_class=ARecordTable,
             table_filter="address",
-            include_columns=["name", "zone", "ttl", "actions"],
+            include_columns=["name", "zone", "ttl", "actions", "source_object"],
         ),
         ReverseDNSRecordsTablePanel(
             weight=110,

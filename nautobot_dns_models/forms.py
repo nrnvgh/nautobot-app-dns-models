@@ -1,16 +1,23 @@
 """Forms for nautobot_dns_models."""
 
 from django import forms
+from django.contrib.contenttypes.models import ContentType
 from nautobot.apps.forms import (
     DynamicModelMultipleChoiceField,
     NautobotBulkEditForm,
     NautobotModelForm,
     TagsBulkEditFormMixin,
 )
+from nautobot.core.forms import add_blank_choice
+from nautobot.core.forms.widgets import StaticSelect2
+from nautobot.dcim.form_mixins import LocatableModelFilterFormMixin, LocatableModelFormMixin
 from nautobot.extras.forms import NautobotFilterForm
 from nautobot.ipam.models import Prefix
+from nautobot.tenancy.forms import TenancyFilterForm, TenancyForm
 
 from nautobot_dns_models import models
+from nautobot_dns_models.choices import DNSRecordTypeChoices
+from nautobot_dns_models.queries import DNSRuleContentTypeQuery
 
 
 class DNSViewForm(NautobotModelForm):
@@ -441,4 +448,97 @@ class SRVRecordFilterForm(NautobotFilterForm):
         "weight",
         "port",
         "target",
+    ]
+
+
+# =============================================================================
+# GUI Rule Builder Forms
+# =============================================================================
+
+
+class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
+    """DNSRule creation/edit form with dynamic field display."""
+
+    content_type = forms.ModelChoiceField(
+        queryset=DNSRuleContentTypeQuery.as_queryset(),
+        widget=StaticSelect2(),
+        help_text="Type of object this rule applies to",
+    )
+
+    record_type = forms.ChoiceField(
+        choices=add_blank_choice(DNSRecordTypeChoices),
+        widget=StaticSelect2(),
+        help_text="Type of DNS record this rule creates",
+    )
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRule
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        """Initialize form with dynamic field setup."""
+        super().__init__(*args, **kwargs)
+
+        # Add CSS classes for dynamic showing/hiding
+        template_fields = [
+            "value_template",
+        ]
+
+        for field_name in template_fields:
+            if field_name in self.fields:
+                self.fields[field_name].widget.attrs.update({"class": f"template-field {field_name.replace('_', '-')}"})
+
+
+class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
+    """DNSRule bulk edit form."""
+
+    pk = forms.ModelMultipleChoiceField(queryset=models.DNSRule.objects.all(), widget=forms.MultipleHiddenInput)
+    description = forms.CharField(required=False)
+    enabled = forms.NullBooleanField(required=False)
+    priority = forms.IntegerField(required=False)
+
+    class Meta:
+        """Meta attributes."""
+
+        nullable_fields = [
+            "description",
+        ]
+
+
+class DNSRuleFilterForm(LocatableModelFilterFormMixin, TenancyFilterForm, NautobotFilterForm):
+    """Filter form for DNSRule searches."""
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        help_text="Search within Name and Description.",
+    )
+    name = forms.CharField(required=False, label="Name")
+    enabled = forms.NullBooleanField(required=False, label="Enabled")
+    content_type = forms.ModelChoiceField(
+        queryset=ContentType.objects.all().order_by("app_label", "model"),
+        required=False,
+        label="Content Type",
+        widget=StaticSelect2(),
+    )
+
+    record_type = forms.ChoiceField(
+        choices=add_blank_choice(DNSRecordTypeChoices),
+        required=False,
+        label="Record Type",
+        widget=StaticSelect2(),
+    )
+
+    model = models.DNSRule
+
+    # Define the fields above for ordering and widget purposes
+    fields = [
+        "q",
+        "name",
+        "enabled",
+        "content_type",
+        "location",
+        "record_type",
     ]

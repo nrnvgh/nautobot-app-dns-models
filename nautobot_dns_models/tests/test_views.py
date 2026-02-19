@@ -138,7 +138,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
         dns_view = DNSView.objects.get(name="Default")
         cls.form_data = {
-            "name": "Test 1",
+            "name": "test-1",
             "dns_view": dns_view.id,
             "ttl": 3600,
             "description": "Initial model",
@@ -154,7 +154,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
         cls.csv_data = (
             "name, dns_view, ttl, description, filename, soa_mname, soa_rname, soa_refresh, soa_retry, soa_expire, soa_serial, soa_minimum",
-            f"Test 3, {dns_view.id}, 3600, Description 3, filename 3, auth-server, admin@example_three.com, 86400, 7200, 3600000, 0, 172800",
+            f"test-3, {dns_view.id}, 3600, Description 3, filename 3, auth-server, admin@example_three.com, 86400, 7200, 3600000, 0, 172800",
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
@@ -188,8 +188,8 @@ class NSRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         cls.form_data = {
-            "name": "test record",
-            "server": "test server",
+            "name": "test-record",
+            "server": "test-server",
             "zone": zone.pk,
             "ttl": 3600,
         }
@@ -210,8 +210,10 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
 
     @classmethod
     def setUpTestData(cls):
+        constance_config.nautobot_dns_models__NORMALIZE_DNS_RECORDS = True
+
         zone = DNSZone.objects.create(
-            name="example_one.com",
+            name="example-one.com",
         )
         status = Status.objects.get(name="Active")
         namespace = Namespace.objects.get(name="Global")
@@ -242,7 +244,7 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
         )
 
         cls.form_data = {
-            "name": "test record",
+            "name": "test-record",
             "address": cls.ip_addresses[0].pk,
             "ttl": 3600,
             "zone": zone.pk,
@@ -250,7 +252,7 @@ class ARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsMix
 
         cls.csv_data = (
             "name,address,zone",
-            f"Test 3,{cls.ip_addresses[0].pk},{zone.name}",
+            f"test-3,{cls.ip_addresses[0].pk},{zone.name}",
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
@@ -312,6 +314,8 @@ class AAAARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTests
 
     @classmethod
     def setUpTestData(cls):
+        constance_config.nautobot_dns_models__NORMALIZE_DNS_RECORDS = True
+
         zone = DNSZone.objects.create(
             name="example_one.com",
         )
@@ -344,7 +348,7 @@ class AAAARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTests
         )
 
         cls.form_data = {
-            "name": "test record",
+            "name": "test-record",
             "address": cls.ip_addresses[0].pk,
             "ttl": 3600,
             "zone": zone.pk,
@@ -352,10 +356,18 @@ class AAAARecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTests
 
         cls.csv_data = (
             "name,address,zone",
-            f"Test 3,{cls.ip_addresses[0].pk},{zone.name}",
+            f"test-3,{cls.ip_addresses[0].pk},{zone.name}",
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
+
+    #
+    # The test in the superclass will mutate the second record if the first two records have the same name,
+    # which breaks if normalization is disabled. Normalization doesn't matter for this test, so we can safely
+    # enable it.
+    def test_list_objects_with_constrained_permission(self):
+        constance_config.nautobot_dns_models__NORMALIZE_DNS_RECORDS = True
+        super().test_list_objects_with_constrained_permission()
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_ipaddress_detail_view_side_panel_always(self):
@@ -434,7 +446,7 @@ class CNAMERecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         cls.form_data = {
-            "name": "test record",
+            "name": "test-record",
             "alias": "test.example.com",
             "ttl": 3600,
             "zone": zone.pk,
@@ -476,8 +488,8 @@ class MXRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         cls.form_data = {
-            "name": "test record",
-            "mail_server": "test_mail.example.com",
+            "name": "test-record",
+            "mail_server": "test-mail.example.com",
             "preference": 10,
             "ttl": 3600,
             "zone": zone.pk,
@@ -485,7 +497,7 @@ class MXRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
         cls.csv_data = (
             "name,mail_server,zone",
-            f"Test 3,test_mail2.example.com,{zone.name}",
+            f"Test 3,test-mail2.example.com,{zone.name}",
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
@@ -520,8 +532,8 @@ class TXTRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         cls.form_data = {
-            "name": "test record",
-            "text": "test-text",
+            "name": "test-record",
+            "text": "test text",
             "ttl": 3600,
             "zone": zone.pk,
         }
@@ -576,7 +588,7 @@ class PTRRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase, SidePanelTestsM
         )
 
         cls.form_data = {
-            "name": "test record",
+            "name": "test-record",
             "ptrdname": "ptr-test-record",
             "ttl": 3600,
             "zone": zone.pk,

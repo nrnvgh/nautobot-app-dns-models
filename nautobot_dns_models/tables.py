@@ -1,7 +1,8 @@
 """Tables for nautobot_dns_models."""
 
 import django_tables2 as tables
-from nautobot.apps.tables import BaseTable, ButtonsColumn, ToggleColumn
+from nautobot.apps.tables import BaseTable, BooleanColumn, ButtonsColumn, ToggleColumn
+from nautobot.tenancy.tables import TenantColumn
 
 from nautobot_dns_models import models
 
@@ -10,9 +11,11 @@ class DNSRecordTable(BaseTable):  # pylint: disable=nb-no-model-found
     """Base table for DNS records list view."""
 
     pk = ToggleColumn()
-    name = tables.Column(linkify=True)
+    name = tables.LinkColumn()
     zone = tables.LinkColumn()
     ttl = tables.Column(accessor="ttl", verbose_name="TTL", orderable=False)
+    source_object = tables.LinkColumn()
+    dns_rule = tables.LinkColumn(verbose_name="DNS Rule")
 
 
 class DNSViewTable(BaseTable):
@@ -136,6 +139,8 @@ class ARecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -147,6 +152,7 @@ class ARecordTable(DNSRecordTable):
             "comment",
             "ttl",
             "actions",
+            "source_object",
         )
 
 
@@ -172,6 +178,8 @@ class AAAARecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -207,6 +215,8 @@ class CNAMERecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -242,6 +252,8 @@ class MXRecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -277,6 +289,8 @@ class TXTRecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -312,6 +326,8 @@ class PTRRecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -349,6 +365,8 @@ class SRVRecordTable(DNSRecordTable):
             "ttl",
             "description",
             "actions",
+            "source_object",
+            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -360,5 +378,34 @@ class SRVRecordTable(DNSRecordTable):
             "port",
             "target",
             "zone",
+            "actions",
+        )
+
+
+class DNSRuleTable(BaseTable):
+    """Table for DNS Rule list view."""
+
+    pk = ToggleColumn()
+    name = tables.LinkColumn()
+    enabled = BooleanColumn()
+    content_type = tables.Column()
+    location = tables.LinkColumn()
+    tenant = TenantColumn()
+    record_type = tables.Column()
+    actions = ButtonsColumn(models.DNSRule)
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.DNSRule
+        fields = (
+            "pk",
+            "name",
+            "description",
+            "enabled",
+            "content_type",
+            "location",
+            "tenant",
+            "record_type",
             "actions",
         )

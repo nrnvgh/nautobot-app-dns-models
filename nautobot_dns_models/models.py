@@ -1,12 +1,26 @@
 """Models for Nautobot DNS Models."""
 
+import logging
+from collections import defaultdict
+
 from constance import config as constance_config
-from django.core.exceptions import ValidationError
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
+from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from jinja2 import TemplateError, TemplateSyntaxError
+from nautobot.apps.constants import CHARFIELD_MAX_LENGTH
 from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
+from nautobot.apps.utils import validate_jinja2
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.ipam.choices import IPAddressVersionChoices
+
+from nautobot_dns_models.choices import DNSRecordTypeChoices
+from nautobot_dns_models.normalization import normalize_dns_name
+from nautobot_dns_models.utils_jinja_literals import collect_literal_validation_errors
+
+logger = logging.getLogger(__name__)
 
 
 def dns_wire_label_length(label):
@@ -19,6 +33,12 @@ def dns_wire_label_length(label):
 
 class DNSModel(PrimaryModel):
     """Abstract Model for Nautobot DNS Models."""
+
+    #
+    # Fields to normalize or validate; populated by subclasses.
+    #
+    # NOTE: name is handled separately in the clean() method and should not be included here.
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = []
 
     #
     # name is effectively a NOOP here; it's overridden in both subclasses but
@@ -37,6 +57,53 @@ class DNSModel(PrimaryModel):
         """Stringify instance."""
         return self.name  # pylint: disable=no-member
 
+    def clean(self):
+        """
+        Validate DNS label length and format per RFC 1035 §3.1 using punycode for wire-format length.
+
+        Ensures each label in the name is ≤ 63 bytes (octets) in wire format and not empty.
+        """
+        super().clean()
+        errors = defaultdict(list)
+
+        self._normalize_or_validate_field("name", errors)
+
+        cleaned_fields = [x for x in self.FIELDS_TO_NORMALIZE_OR_VALIDATE if x not in ("name",)]
+        for field in cleaned_fields:
+            self._normalize_or_validate_field(field, errors)
+
+        config_dns_validation_level = getattr(constance_config, "nautobot_dns_models__DNS_VALIDATION_LEVEL")
+        if config_dns_validation_level == "wire-format":
+            self._validate_wire_format_for_field(field_name="name", errors=errors)
+
+        if errors:
+            raise ValidationError(dict(errors))
+
+    @property
+    def _normalize_dns_records_enabled(self):
+        """Return whether DNS records are normalized or validated."""
+        #
+        # This is a property so to make it easier to add per-rule normalization/validation later if needed.
+        return getattr(constance_config, "nautobot_dns_models__NORMALIZE_DNS_RECORDS")
+
+    def _normalize_or_validate_field(self, field_name, errors):
+        """Normalize or validate the DNS records."""
+        field_value = getattr(self, field_name)
+        if self._normalize_dns_records_enabled:
+            setattr(self, field_name, normalize_dns_name(field_value))
+        else:
+            if field_value != normalize_dns_name(field_value):
+                errors[field_name].append("Field is not normalized.")
+
+    def _validate_wire_format_for_field(self, field_name, errors):
+        """Validate the wire format for the field."""
+        field_value = getattr(self, field_name)
+        for label in field_value.split("."):
+            try:
+                self._validate_dns_label(label, field_name)
+            except ValidationError as exc:
+                errors[field_name].extend(exc.messages)
+
     @staticmethod
     def _validate_dns_label(label, field="name"):
         """
@@ -46,26 +113,10 @@ class DNSModel(PrimaryModel):
         """
         if not label:
             raise ValidationError({field: "Empty labels are not allowed"})
+
         length = dns_wire_label_length(label)
         if length > 63:
-            raise ValidationError(
-                {field: f"Label '{label}' exceeds the maximum length of 63 bytes (octets) in wire format."}
-            )
-        return length
-
-    def clean(self):
-        """
-        Validate DNS label length and format per RFC 1035 §3.1 using punycode for wire-format length.
-
-        Ensures each label in the name is ≤ 63 bytes (octets) in wire format and not empty.
-        """
-        super().clean()
-
-        validation_level = getattr(constance_config, "nautobot_dns_models__DNS_VALIDATION_LEVEL")
-        if validation_level == "wire-format":
-            label_list = self.name.split(".")
-            for label in label_list:
-                self._validate_dns_label(label, field="name")
+            raise ValidationError(f"Label '{label}' exceeds the maximum length of 63 bytes (octets) in wire format.")
 
 
 @extras_features(
@@ -220,6 +271,12 @@ class DNSRecord(DNSModel):
     )
     description = models.TextField(help_text="Description of the Record.", blank=True)
     comment = models.CharField(max_length=200, help_text="Comment for the Record.", blank=True)
+    rule_record = GenericRelation(
+        to="nautobot_dns_models.DNSRuleRecord",
+        content_type_field="dns_record_content_type",
+        object_id_field="dns_record_object_id",
+        related_query_name="tracked_record",
+    )
 
     def clean(self):
         """
@@ -234,22 +291,30 @@ class DNSRecord(DNSModel):
 
         validation_level = getattr(constance_config, "nautobot_dns_models__DNS_VALIDATION_LEVEL")
         if validation_level == "wire-format":
-            record_label_list = self.name.split(".")
-            zone_label_list = self.zone.name.split(".")
+            self._validate_fqdn_wire_length()
 
-            wire_length = 0
-            # Record labels
-            for label in record_label_list:
-                wire_length += 1 + dns_wire_label_length(label)
-            # Zone labels
-            for label in zone_label_list:
-                wire_length += 1 + dns_wire_label_length(label)
-            wire_length += 1  # Add the final zero byte for root
+    def _validate_fqdn_wire_length(self):
+        """Validate the FQDN wire length."""
+        record_label_list = self.name.split(".")
+        zone_label_list = self.zone.name.split(".")
 
-            if wire_length > 255:
-                raise ValidationError(
-                    {"name": "Total length of DNS name cannot exceed 255 bytes (octets) in wire format."}
-                )
+        wire_length = 0
+        # Record labels
+        for label in record_label_list:
+            wire_length += 1 + dns_wire_label_length(label)
+        # Zone labels
+        for label in zone_label_list:
+            wire_length += 1 + dns_wire_label_length(label)
+        wire_length += 1  # Add the final zero byte for root
+
+        if wire_length > 255:
+            raise ValidationError({"name": "Total length of DNS name cannot exceed 255 bytes (octets) in wire format."})
+
+    #
+    # NOTE to myself: we may want to call self.full_clean() here to ensure all
+    # NOTE normalization and validation is run.
+    # def save(self, *args, **kwargs):
+    #     return super().save(*args, **kwargs)
 
     class Meta:
         """Meta attributes for DnsRecord."""
@@ -268,6 +333,14 @@ class DNSRecord(DNSModel):
         """Set the TTL value for the record."""
         self._ttl = value
 
+    @property
+    def source_object(self):
+        """Get the source object that created this DNS record via DNS rules."""
+        try:
+            return self.rule_record.get().source_object
+        except DNSRuleRecord.DoesNotExist:
+            return None
+
 
 @extras_features(
     "custom_fields",
@@ -279,6 +352,8 @@ class DNSRecord(DNSModel):
 )
 class NSRecord(DNSRecord):
     """NS Record model."""
+
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["server"]
 
     server = models.CharField(max_length=200, help_text="FQDN of an authoritative Name Server.")
 
@@ -387,6 +462,8 @@ class AAAARecord(DNSRecord):
 class CNAMERecord(DNSRecord):
     """CNAME Record model."""
 
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["alias"]
+
     alias = models.CharField(max_length=200, help_text="FQDN of the Alias.")
 
     class Meta:
@@ -407,6 +484,8 @@ class CNAMERecord(DNSRecord):
 )
 class MXRecord(DNSRecord):
     """MX Record model."""
+
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["mail_server"]
 
     preference = models.IntegerField(
         validators=[MinValueValidator(0), MaxValueValidator(65535)],
@@ -455,6 +534,8 @@ class TXTRecord(DNSRecord):
 class PTRRecord(DNSRecord):
     """PTR Record model."""
 
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["ptrdname"]
+
     ptrdname = models.CharField(
         max_length=200, help_text="A domain name that points to some location in the domain name space."
     )
@@ -482,6 +563,8 @@ class PTRRecord(DNSRecord):
 class SRVRecord(DNSRecord):
     """SRV Record model."""
 
+    FIELDS_TO_NORMALIZE_OR_VALIDATE = ["target"]
+
     priority = models.IntegerField(
         validators=[MinValueValidator(0), MaxValueValidator(65535)],
         default=0,
@@ -507,3 +590,255 @@ class SRVRecord(DNSRecord):
         unique_together = [["name", "target", "port", "zone"]]
         verbose_name = "SRV Record"
         verbose_name_plural = "SRV Records"
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "locations",
+    "relationships",
+    "webhooks",
+)
+class DNSRule(PrimaryModel):
+    """Model for DNS record auto-creation rules."""
+
+    name = models.CharField(max_length=100, unique=True, help_text="Name of the DNS rule")
+    description = models.CharField(max_length=CHARFIELD_MAX_LENGTH, blank=True, help_text="Description of the DNS rule")
+    enabled = models.BooleanField(default=True, help_text="Whether this rule is enabled")
+    content_type = models.ForeignKey(
+        ContentType, on_delete=models.CASCADE, help_text="Content type that triggers this rule"
+    )
+    location = models.ForeignKey(
+        "dcim.Location",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Scope rule to specific location. Leave blank for global rule.",
+    )
+    tenant = models.ForeignKey(
+        "tenancy.Tenant",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Scope rule to specific tenant. Leave blank for global rule.",
+    )
+
+    # Templates
+    zone_template = models.TextField(help_text="Jinja2 template for DNS zone name")
+    record_type = models.CharField(max_length=10, choices=DNSRecordTypeChoices, help_text="Type of DNS record")
+    name_template = models.TextField(help_text="Jinja2 template for record name")
+
+    value_template = models.TextField(help_text="Jinja2 template for the primary record value")
+
+    class Meta:
+        """Meta attributes for DNSRule."""
+
+        ordering = ["name"]
+        verbose_name = "DNS Rule"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["content_type", "record_type", "location", "tenant"],
+                condition=models.Q(enabled=True),
+                name="unique_enabled_rule_per_content_record_location_tenant",
+            ),
+        ]
+
+    def __str__(self):
+        """String representation of DNSRule."""
+        return self.name
+
+    def validate_unique(self, exclude=None):
+        """
+        Handle uniqueness for global rules (location=None, tenant=None).
+
+        UniqueConstraint handles scoped rules automatically,
+        but we need manual validation for global rules due to NULL behavior.
+        """
+        # Missing required fields is a larger issue that will be handled automatically, but since we
+        # use them in the if block, we need to return before the if block if they're in the exclude list.
+        exclude = exclude or []
+        if "content_type" in exclude or "record_type" in exclude:
+            super().validate_unique(exclude)
+            return
+
+        # Only handle the global rules case (location=None AND tenant=None) and only for enabled rules
+        # Scoped rules are handled by the database UniqueConstraint with condition
+        if (
+            self.location is None
+            and self.tenant is None
+            and self.enabled
+            and DNSRule.objects.exclude(pk=self.pk)
+            .filter(
+                content_type=self.content_type,
+                record_type=self.record_type,
+                location__isnull=True,
+                tenant__isnull=True,
+                enabled=True,
+            )
+            .exists()
+        ):
+            raise ValidationError(
+                {
+                    "location": f"An enabled global {self.record_type} record rule for '{self.content_type}' already exists."
+                }
+            )
+
+        super().validate_unique(exclude)
+
+    def clean(self):
+        """Validate DNS rule templates and configuration."""
+        super().clean()
+
+        errors = self._validate_templates()
+
+        # Validate content type exists
+        # NOTE: In a perfect world, there would be a mixin of some sort which would
+        # NOTE: handle this. For example, Tag, LocationType, Role, etc.
+        if self.content_type_id:
+            try:
+                content_type = self.content_type
+                model_class = content_type.model_class()
+                if not model_class:
+                    errors["content_type"].append("Selected content type does not exist")
+            except ObjectDoesNotExist:
+                errors["content_type"].append(
+                    f"Invalid content type '{self.content_type.app_label}.{self.content_type.model}'"
+                )
+
+        if errors:
+            raise ValidationError(dict(errors))
+
+    def _validate_templates(self):
+        """Validate templates for the DNS rule."""
+        template_fields = self._build_template_fields()
+        template_syntax_errors = self._validate_template_syntax(template_fields)
+        template_literal_errors = self._validate_template_literals(template_fields)
+        record_type_specific_errors = self._validate_record_type_specific_requirements()
+
+        # Merge per-field without overwriting; preserve order and dedupe
+        merged_errors = defaultdict(list)
+
+        for field_name, messages in template_syntax_errors.items():
+            merged_errors[field_name].extend(messages)
+
+        for field_name, messages in template_literal_errors.items():
+            for msg in messages:
+                if msg not in merged_errors[field_name]:
+                    merged_errors[field_name].append(msg)
+
+        for field_name, messages in record_type_specific_errors.items():
+            for msg in messages:
+                if msg not in merged_errors[field_name]:
+                    merged_errors[field_name].append(msg)
+
+        return merged_errors
+
+    def _build_template_fields(self):
+        """Build template fields for the DNS rule."""
+        #
+        # This is broken out into a separate method to make it easier to add per-record-type
+        # normalization/validation later if needed.
+        template_fields = [
+            ("zone_template", self.zone_template),
+            ("name_template", self.name_template),
+            ("value_template", self.value_template),
+        ]
+
+        return template_fields
+
+    def _validate_template_syntax(self, template_fields):
+        """Validate template syntax for the DNS rule."""
+        # Validate each template with full compilation and runtime testing
+        errors = defaultdict(list)
+        for field_name, template_content in template_fields:
+            if template_content:
+                try:
+                    # Step 1: Basic syntax validation (fast check)
+                    validate_jinja2(template_content)
+
+                    # NOTE: We explored full runtime validation here, but it introduced
+                    # NOTE: more issues than it solved (missing/optional fields, etc.).
+                    # NOTE: Alternative approaches may be possible; see:
+                    # NOTE: https://github.com/nautobot/nautobot/issues/7852
+
+                except TemplateSyntaxError as exc:
+                    # Basic syntax errors (unclosed tags, invalid operators, etc.)
+                    errors[field_name].append(f"Template syntax error on line {exc.lineno}: {exc.message}")
+                except TemplateError as exc:
+                    # Other Jinja2 template errors, just in case
+                    errors[field_name].append(f"Template error: {exc} ({type(exc).__name__})")
+
+        return errors
+
+    def _validate_template_literals(self, template_fields):
+        """
+        Validate template literals for the DNS rule.
+
+        Args:
+            template_fields: The template fields to validate.
+
+        Returns:
+            A dictionary of field names and their corresponding errors in the order in which they are encountered.
+
+        Raises:
+            ValidationError: If the template literals are not valid.
+        """
+        errors = defaultdict(list)
+
+        literal_errors = collect_literal_validation_errors(template_fields)
+        for field_name, field_error_list in literal_errors.items():
+            for msg in field_error_list:
+                if msg not in errors[field_name]:
+                    errors[field_name].append(msg)
+
+        return errors
+
+    def _validate_record_type_specific_requirements(self):
+        """Validate record-type-specific requirements for the DNS rule."""
+        errors = defaultdict(list)
+
+        # No record-type-specific requirements for A, AAAA
+
+        return errors
+
+
+class DNSRuleRecord(BaseModel):
+    """Links source objects to DNS records created by rules."""
+
+    rule = models.ForeignKey(
+        DNSRule, on_delete=models.CASCADE, related_name="rule_records", help_text="DNS rule that created this record"
+    )
+    content_type = models.ForeignKey(
+        ContentType, on_delete=models.CASCADE, help_text="Content type of the source object"
+    )
+    object_id = models.UUIDField(db_index=True, help_text="ID of the source object")
+    source_object = GenericForeignKey("content_type", "object_id")
+
+    dns_record_content_type = models.ForeignKey(
+        ContentType, on_delete=models.CASCADE, related_name="rule_records", help_text="Content type of the DNS record"
+    )
+    dns_record_object_id = models.UUIDField(db_index=True, help_text="ID of the DNS record")
+    dns_record = GenericForeignKey("dns_record_content_type", "dns_record_object_id")
+
+    class Meta:
+        """Meta attributes for DNSRuleRecord."""
+
+        # Ensure each DNS record can only be managed by a single source object.
+        # This prevents duplicate DNSRuleRecord entries and eliminates the need for DISTINCT
+        # clauses in JOIN queries (e.g. DNSRuleRecordViewSet.queryset).
+        unique_together = [
+            ["content_type", "object_id", "dns_record_content_type", "dns_record_object_id"],
+            # TODO: Enable this in the future?
+            # ["dns_record_content_type", "dns_record_object_id"],
+        ]
+        verbose_name = "DNS Rule Record"
+        verbose_name_plural = "DNS Rule Records"
+
+    def __str__(self):
+        """String representation of DNSRuleRecord."""
+        return f"{self.rule.name} -> {self.dns_record}"

@@ -1,10 +1,12 @@
 """API serializers for nautobot_dns_models."""
 
+from django.contrib.contenttypes.models import ContentType
 from drf_spectacular.utils import extend_schema_field
-from nautobot.apps.api import NautobotModelSerializer, ValidatedModelSerializer
+from nautobot.apps.api import ContentTypeField, NautobotModelSerializer, ValidatedModelSerializer
 from rest_framework import serializers
 
 from nautobot_dns_models import models
+from nautobot_dns_models.queries import DNSRuleContentTypeQuery
 
 
 class DNSViewSerializer(NautobotModelSerializer):
@@ -163,4 +165,51 @@ class SRVRecordSerializer(DNSRecordSerializer):
         """Meta attributes."""
 
         model = models.SRVRecord
+        fields = "__all__"
+
+
+class DNSRuleSerializer(NautobotModelSerializer):  # pylint: disable=too-many-ancestors
+    """DNSRule Serializer."""
+
+    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:dnsrule-detail")
+    content_type = ContentTypeField(queryset=DNSRuleContentTypeQuery.as_queryset())
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRule
+        fields = "__all__"
+
+    def to_internal_value(self, data):
+        """Ensure enabled field is present for constraint validation during partial updates."""
+        if "enabled" not in data and self.partial:
+            data["enabled"] = self.instance.enabled
+
+        return super().to_internal_value(data)
+
+
+class DNSRuleRecordSerializer(ValidatedModelSerializer):
+    """DNSRuleRecord Serializer - Following BaseModel pattern like ComputedField."""
+
+    content_type = ContentTypeField(queryset=DNSRuleContentTypeQuery.as_queryset())
+    dns_record_content_type = ContentTypeField(
+        queryset=ContentType.objects.filter(
+            app_label="nautobot_dns_models",
+            model__in=[
+                "arecord",
+                "aaaarecord",
+                "cnamerecord",
+                "mxrecord",
+                "nsrecord",
+                "ptrrecord",
+                "srvrecord",
+                "txtrecord",
+            ],
+        ).order_by("model")
+    )
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRuleRecord
         fields = "__all__"

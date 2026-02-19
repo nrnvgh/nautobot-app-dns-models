@@ -10,12 +10,15 @@ from nautobot.apps.ui import (
     StatsPanel,
 )
 from nautobot.core.ui import object_detail
+
+# from nautobot.core.templatetags import helpers
 from nautobot.ipam.tables import PrefixTable
 
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
     CNAMERecordSerializer,
+    DNSRuleSerializer,
     DNSViewSerializer,
     DNSZoneSerializer,
     MXRecordSerializer,
@@ -28,6 +31,7 @@ from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
     CNAMERecordFilterSet,
+    DNSRuleFilterSet,
     DNSViewFilterSet,
     DNSZoneFilterSet,
     MXRecordFilterSet,
@@ -46,6 +50,9 @@ from nautobot_dns_models.forms import (
     CNAMERecordBulkEditForm,
     CNAMERecordFilterForm,
     CNAMERecordForm,
+    DNSRuleBulkEditForm,
+    DNSRuleFilterForm,
+    DNSRuleForm,
     DNSViewBulkEditForm,
     DNSViewFilterForm,
     DNSViewForm,
@@ -72,6 +79,7 @@ from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
     CNAMERecord,
+    DNSRule,
     DNSView,
     DNSZone,
     MXRecord,
@@ -84,6 +92,7 @@ from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
     CNAMERecordTable,
+    DNSRuleTable,
     DNSViewTable,
     DNSZoneTable,
     MXRecordTable,
@@ -447,3 +456,63 @@ class SRVRecordUIViewSet(views.NautobotUIViewSet):
             ObjectFieldsPanel(weight=100, section=SectionChoices.LEFT_HALF, fields="__all__", additional_fields=["ttl"])
         ]
     )
+
+
+class DNSRuleUIViewSet(views.NautobotUIViewSet):
+    """DNSRule UI ViewSet."""
+
+    bulk_update_form_class = DNSRuleBulkEditForm
+    filterset_class = DNSRuleFilterSet
+    filterset_form_class = DNSRuleFilterForm
+    form_class = DNSRuleForm
+    lookup_field = "pk"
+    queryset = DNSRule.objects.all()
+    serializer_class = DNSRuleSerializer
+    table_class = DNSRuleTable
+
+    #
+    # We don't define an object_detail_content property here because we want to build the panels dynamically.
+    def get_object(self):
+        """Get the object and build the panels."""
+        obj = super().get_object()
+        self.object_detail_content = self._build_panels()
+
+        return obj
+
+    def _build_panels(self):
+        record_type_fields = [
+            "zone_template",
+            "name_template",
+            "value_template",
+        ]
+        #
+        # NOTE: Temporarily disabled until/unless we tweak things. At issue is that, by default, nautobot
+        # puts a lot of padding around <pre> tags, so when you render a bunch of rows with them,
+        # those rows take up a lot of vertical space. If/when we re-jigger how weights and the like
+        # are handled, we can revisit this; if those fields aren't templates, we can eshew <pre> tags.
+        #
+        # That said, it's (currently) really only a visible issue for SRV records, so maybe it's not
+        # the end of the world?
+
+        # template_field_transforms = {
+        #     x: [helpers.pre_tag] for x in record_type_fields if x.endswith("_template")
+        # }
+        return ObjectDetailContent(
+            #
+            # TODO: This can be done a single panel if we want. Single panel feels a bit cleaner, but
+            # TODO: using two panels gives is the option to position one of them to the right.
+            panels=[
+                ObjectFieldsPanel(
+                    weight=100,
+                    section=SectionChoices.LEFT_HALF,
+                    fields=["name", "description", "enabled", "tenant", "location", "content_type", "record_type"],
+                ),
+                ObjectFieldsPanel(
+                    label="Templates",
+                    weight=200,
+                    section=SectionChoices.LEFT_HALF,
+                    fields=record_type_fields,
+                    # value_transforms=template_field_transforms,
+                ),
+            ]
+        )
