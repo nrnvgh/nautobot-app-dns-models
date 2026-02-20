@@ -19,12 +19,12 @@ from jinja2 import TemplateSyntaxError
 from nautobot.apps.utils import render_jinja2
 from nautobot.dcim.choices import InterfaceTypeChoices
 from nautobot.dcim.models import Device, Interface, Location, LocationType
-from nautobot.extras.models import Status
+from nautobot.extras.models import CustomField, Status
 from nautobot.ipam.models import IPAddress, IPAddressToInterface, Service
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
-from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord
+from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
@@ -205,6 +205,81 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         vm_location_template = "{{ obj.virtual_machine.cluster.location.name }}"
         result = render_jinja2(vm_location_template, {"obj": wrap_for_template(self.service_vm_attached)})
         self.assertEqual(result, expected)
+
+    def test_zone_template_resolves_zone_from_custom_field(self):
+        """Test zone_template can resolve DNS zone name from object custom field data."""
+        custom_zone = "custom-zone.example.com"
+        DNSZone.objects.create(name=custom_zone)
+
+        custom_field = CustomField.objects.create(key="dns_zone_name", label="DNS Zone Name", type="text")
+        custom_field.content_types.add(ContentType.objects.get_for_model(Interface))
+
+        self.interface.cf["dns_zone_name"] = custom_zone
+        self.interface.validated_save()
+        self.interface.ip_addresses.set([self.ip_addresses[0]])
+
+        rule = DNSRule.objects.create(
+            name="interface-zone-from-cf",
+            content_type=self.interface_content_type,
+            record_type="A",
+            zone_template="{{ obj.cf.dns_zone_name }}",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["zone"].name, custom_zone)
+
+    def test_zone_template_resolves_zone_from_device_location(self):
+        """Test zone_template can resolve DNS zone name from the source device location."""
+        location_zone = f"{self.location.name.lower().replace(' ', '-')}.example.com"
+        DNSZone.objects.create(name=location_zone)
+
+        self.interface.ip_addresses.set([self.ip_addresses[0]])
+        self.device.primary_ip4 = self.ip_addresses[0]
+        self.device.save()
+
+        rule = DNSRule.objects.create(
+            name="device-zone-from-location",
+            content_type=self.device_content_type,
+            record_type="A",
+            zone_template="{{ obj.location.name|lower|replace(' ', '-') }}.example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.device)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["zone"].name, location_zone)
+
+    def test_zone_template_resolves_zone_from_device_location_custom_field(self):
+        """Test zone_template can resolve DNS zone name from a custom field on device location."""
+        location_zone = "location-cf-zone.example.com"
+        DNSZone.objects.create(name=location_zone)
+
+        custom_field = CustomField.objects.create(key="dns_zone_name", label="DNS Zone Name", type="text")
+        custom_field.content_types.add(ContentType.objects.get_for_model(Location))
+
+        self.location.cf["dns_zone_name"] = location_zone
+        self.location.validated_save()
+
+        self.interface.ip_addresses.set([self.ip_addresses[0]])
+        self.device.primary_ip4 = self.ip_addresses[0]
+        self.device.save()
+
+        rule = DNSRule.objects.create(
+            name="device-zone-from-location-cf",
+            content_type=self.device_content_type,
+            record_type="A",
+            zone_template="{{ obj.location.cf.dns_zone_name }}",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.device)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["zone"].name, location_zone)
 
 
 class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
