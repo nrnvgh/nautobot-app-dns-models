@@ -476,6 +476,11 @@ class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
 
         model = models.DNSRule
         fields = "__all__"
+        widgets = {
+            "zone_template": forms.Textarea(attrs={"rows": 6}),
+            "name_template": forms.Textarea(attrs={"rows": 6}),
+            "value_template": forms.Textarea(attrs={"rows": 6}),
+        }
 
     def __init__(self, *args, **kwargs):
         """Initialize form with dynamic field setup."""
