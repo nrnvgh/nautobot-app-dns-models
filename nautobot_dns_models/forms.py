@@ -481,14 +481,10 @@ class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
         """Initialize form with dynamic field setup."""
         super().__init__(*args, **kwargs)
 
-        # Add CSS classes for dynamic showing/hiding
-        template_fields = [
-            "value_template",
-        ]
-
-        for field_name in template_fields:
-            if field_name in self.fields:
-                self.fields[field_name].widget.attrs.update({"class": f"template-field {field_name.replace('_', '-')}"})
+        if "location" in self.fields:
+            self.fields["location"].help_text = "Apply this rule only to objects in this location"
+        if "tenant" in self.fields:
+            self.fields["tenant"].help_text = "Apply this rule only to objects in this tenant"
 
 
 class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
