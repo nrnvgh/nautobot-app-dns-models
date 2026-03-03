@@ -77,7 +77,7 @@
   - Investigation note: evaluate whether context-aware v4/v6 filtering in template proxies is worth the complexity; this may be more effort than needed versus simpler template guidance or rule-level value templates.
   - Done when: behavior is defined and documented, and proxy implementation is updated if required.
 
-- [ ] `handle-module-backed-interface-parent-fallback`
+- [x] `handle-module-backed-interface-parent-fallback`
   - Issue: module-backed `Interface` objects may have `device=None`; location/tenant extraction should fall back via `interface.parent`.
   - Done when: location/tenant resolution correctly handles module and nested-module interfaces, with targeted tests.
 

@@ -9,7 +9,7 @@ Categories:
 
 import itertools
 from unittest import skip
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
@@ -636,6 +636,87 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         # Test location extraction from interface
         result = self._get_object_location(self.interface)
         self.assertEqual(result, self.location)
+
+    def test_get_object_location_and_tenant_interface_parent_fallback(self):
+        """Module-backed interface with no device should inherit from interface.parent Device."""
+        self.device.tenant = self.tenant
+        self.device.validated_save()
+
+        child_interface = Interface(
+            name="eth0-child",
+            device=None,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+
+        class ModuleWithoutTenant:
+            tenant = None
+
+        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
+            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
+                module_property.return_value = ModuleWithoutTenant()
+                parent_property.return_value = self.device
+                location = self._get_object_location(child_interface)
+                tenant = self._get_object_tenant(child_interface)
+
+        self.assertEqual(location, self.location)
+        self.assertEqual(tenant, self.tenant)
+
+    def test_get_object_tenant_interface_module_tenant_overrides_parent_device_tenant(self):
+        """Module-backed interface should prefer module tenant over parent device tenant."""
+        parent_tenant = Tenant.objects.create(name="Parent Device Tenant")
+        module_tenant = Tenant.objects.create(name="Module Tenant")
+        self.device.tenant = parent_tenant
+        self.device.validated_save()
+
+        child_interface = Interface(
+            name="eth0-child-module-tenant",
+            device=None,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+
+        class ModuleWithTenant:
+            def __init__(self, tenant):
+                self.tenant = tenant
+
+        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
+            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
+                module_property.return_value = ModuleWithTenant(module_tenant)
+                parent_property.return_value = self.device
+                tenant = self._get_object_tenant(child_interface)
+
+        self.assertEqual(tenant, module_tenant)
+
+    def test_get_object_location_and_tenant_interface_parent_non_device_logs_warning(self):
+        """Module-backed interface should log and return None when parent is not a Device."""
+        child_interface = Interface(
+            name="eth0-child-parent-non-device",
+            device=None,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+
+        class ModuleWithoutTenant:
+            tenant = None
+
+        class ParentNotDevice:
+            pass
+
+        with patch("nautobot_dns_models.rules.engine.logger.warning") as mock_warning:
+            with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
+                with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
+                    module_property.return_value = ModuleWithoutTenant()
+                    parent_property.return_value = ParentNotDevice()
+                    location = self._get_object_location(child_interface)
+                    tenant = self._get_object_tenant(child_interface)
+
+        self.assertIsNone(location)
+        self.assertIsNone(tenant)
+        self.assertEqual(mock_warning.call_count, 2)
+
+        warning_messages = [str(call.args[0]) for call in mock_warning.call_args_list]
+        self.assertTrue(all("dnsrule_interface_parent_fallback_failed" in message for message in warning_messages))
 
     def test_get_object_location_virtualmachine_uses_cluster_location(self):
         """Test _get_object_location returns VM location (resolved via cluster.location)."""

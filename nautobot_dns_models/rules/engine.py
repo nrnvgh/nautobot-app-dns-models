@@ -39,6 +39,7 @@ REASON_RECORD_VALIDATION_ERROR = "RECORD_VALIDATION_ERROR"
 REASON_RECORD_INTEGRITY_ERROR = "RECORD_INTEGRITY_ERROR"
 REASON_RULE_PROCESSING_ERROR = "RULE_PROCESSING_ERROR"
 REASON_INVALID_ADDRESS_UUID = "INVALID_ADDRESS_UUID"
+REASON_INTERFACE_PARENT_FALLBACK_FAILED = "INTERFACE_PARENT_FALLBACK_FAILED"
 
 # Phase labels used for log consistency and queryability.
 PHASE_CREATE = "create"
@@ -355,27 +356,9 @@ class DNSRuleEngine:
             Jinja2 exceptions bubble up naturally for proper error handling.
             Empty result indicates template/data issues, not programming errors.
         """
-        # logger.debug(f"create_dns_record_from_rule: {rule} / {source_obj}")
-        logger.debug(
-            "dnsrule_create_probe rule=%s source=%s:%s",
-            rule.name,
-            self._safe_model_label(source_obj),
-            source_obj.pk,
-            extra={
-                "event": "dnsrule_engine",
-                "phase": PHASE_CREATE,
-                "rule_id": str(rule.pk),
-                "rule_name": rule.name,
-                "record_type": rule.record_type,
-                "source_ct": self._safe_model_label(source_obj),
-                "source_id": str(source_obj.pk),
-            },
-        )
-
         # Calculate what DNS records should exist (reuses update logic)
         desired_record_data_list = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_CREATE)
         if not desired_record_data_list:
-            # logger.debug(f"No record data generated for rule {rule.name}")
             return []
 
         # Create DNS records and tracking records (reuses update logic)
@@ -424,7 +407,7 @@ class DNSRuleEngine:
 
         Location extraction logic:
         - Device: device.location (required field in Nautobot)
-        - Interface: interface.device.location (device.location is required)
+        - Interface: interface.device.location, with module-backed fallback via interface.parent
         - Service: service.device.location OR service.virtual_machine.location (which is just a proxy for cluster.location)
         - VirtualMachine: vm.cluster.location
         - VMInterface: vminterface.virtual_machine.location (which is just a proxy for cluster.location)
@@ -438,7 +421,34 @@ class DNSRuleEngine:
         """
         # Interface objects are the hot path for signal-driven processing.
         if isinstance(source_obj, dcim_models.Interface):
-            return source_obj.device.location if source_obj.device else None
+            #
+            # Interface.device is set when the interface is a component of a device.
+            if source_obj.device:
+                return source_obj.device.location
+
+            # Module-backed interfaces may expose their containing Device via parent.
+            parent = source_obj.parent
+            if isinstance(parent, dcim_models.Device):
+                return parent.location
+
+            logger.warning(
+                "dnsrule_interface_parent_fallback_failed field=%s source=%s:%s parent_type=%s",
+                "location",
+                self._safe_model_label(source_obj),
+                source_obj.pk,
+                type(parent).__name__,
+                extra={
+                    "event": "dnsrule_engine",
+                    "reason_code": REASON_INTERFACE_PARENT_FALLBACK_FAILED,
+                    "phase": PHASE_UNKNOWN,
+                    "source_ct": self._safe_model_label(source_obj),
+                    "source_id": str(source_obj.pk),
+                    "source_repr": str(source_obj),
+                    "resolution_field": "location",
+                    "parent_type": type(parent).__name__,
+                },
+            )
+            return None
 
         if isinstance(source_obj, virtualization_models.VMInterface):
             if source_obj.virtual_machine:
@@ -473,7 +483,7 @@ class DNSRuleEngine:
 
         Tenant extraction logic:
         - Device: device.tenant (optional field in Nautobot)
-        - Interface: interface.device.tenant (inherited from device)
+        - Interface: interface.device.tenant, with module-backed fallback via interface.parent
         - Service: service.device.tenant OR service.virtual_machine.tenant (with cluster.tenant fallback)
         - VirtualMachine: vm.tenant (with cluster.tenant fallback)
         - VMInterface: vminterface.virtual_machine.tenant (with cluster.tenant fallback)
@@ -486,7 +496,38 @@ class DNSRuleEngine:
             Tenant object or None if object has no tenant or type is not tenant-aware
         """
         if isinstance(source_obj, dcim_models.Interface):
-            return source_obj.device.tenant if source_obj.device else None
+            if source_obj.device:
+                return source_obj.device.tenant
+
+            module = source_obj.module
+            # NOTE: This currently checks only the directly attached module tenant.
+            # NOTE: It does not walk ancestor modules/module-bays to discover tenant.
+            if module and module.tenant:
+                return module.tenant
+
+            # Module-backed interfaces may expose their containing Device via parent.
+            parent = source_obj.parent
+            if isinstance(parent, dcim_models.Device):
+                return parent.tenant
+
+            logger.warning(
+                "dnsrule_interface_parent_fallback_failed field=%s source=%s:%s parent_type=%s",
+                "tenant",
+                self._safe_model_label(source_obj),
+                source_obj.pk,
+                type(parent).__name__,
+                extra={
+                    "event": "dnsrule_engine",
+                    "reason_code": REASON_INTERFACE_PARENT_FALLBACK_FAILED,
+                    "phase": PHASE_UNKNOWN,
+                    "source_ct": self._safe_model_label(source_obj),
+                    "source_id": str(source_obj.pk),
+                    "source_repr": str(source_obj),
+                    "resolution_field": "tenant",
+                    "parent_type": type(parent).__name__,
+                },
+            )
+            return None
 
         if isinstance(source_obj, virtualization_models.VMInterface):
             if source_obj.virtual_machine:
