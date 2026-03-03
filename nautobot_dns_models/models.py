@@ -627,8 +627,11 @@ class DNSRule(PrimaryModel):
         db_index=True,
         help_text="Scope rule to specific tenant. Leave blank for global rule.",
     )
-
     # Templates
+    view_template = models.TextField(
+        blank=True,
+        help_text="Jinja2 template returning one or more DNS view names (comma/space delimited). Leave blank to use Default.",
+    )
     zone_template = models.TextField(help_text="Jinja2 template for DNS zone name")
     record_type = models.CharField(max_length=10, choices=DNSRecordTypeChoices, help_text="Type of DNS record")
     name_template = models.TextField(help_text="Jinja2 template for record name")
@@ -654,39 +657,54 @@ class DNSRule(PrimaryModel):
 
     def validate_unique(self, exclude=None):
         """
-        Handle uniqueness for global rules (location=None, tenant=None).
+        Handle uniqueness for enabled rules across the effective scope.
 
-        UniqueConstraint handles scoped rules automatically,
-        but we need manual validation for global rules due to NULL behavior.
+        We enforce one enabled rule per scope tuple:
+        (content_type, record_type, location, tenant).
+        This manual check is needed because DB-level uniqueness with nullable fields
+        does not consistently prevent duplicates when location/tenant are NULL.
         """
         # Missing required fields is a larger issue that will be handled automatically, but since we
         # use them in the if block, we need to return before the if block if they're in the exclude list.
+        logger.debug(f"validate_unique() called with exclude: {exclude}")
         exclude = exclude or []
-        if "content_type" in exclude or "record_type" in exclude:
+        if "content_type" in exclude or "record_type" in exclude or "enabled" in exclude:
             super().validate_unique(exclude)
             return
 
-        # Only handle the global rules case (location=None AND tenant=None) and only for enabled rules
-        # Scoped rules are handled by the database UniqueConstraint with condition
-        if (
-            self.location is None
-            and self.tenant is None
-            and self.enabled
-            and DNSRule.objects.exclude(pk=self.pk)
-            .filter(
+        # Database uniqueness on nullable scope columns is not sufficient for this policy:
+        # multiple enabled rules can slip through when one or more scope columns are NULL.
+        #
+        # We therefore enforce policy in model validation:
+        # exactly one enabled rule for each scope tuple
+        # (content_type, record_type, location, tenant).
+        if self.enabled and self.content_type_id and self.record_type:
+            # Use *_id comparisons for exact scope matching.
+            # Django translates `field_id=None` to `IS NULL`, so this single filter
+            # handles all permutations (global, location-only, tenant-only, both set).
+            duplicate_query = DNSRule.objects.exclude(pk=self.pk).filter(
                 content_type=self.content_type,
                 record_type=self.record_type,
-                location__isnull=True,
-                tenant__isnull=True,
+                location_id=self.location_id,
+                tenant_id=self.tenant_id,
                 enabled=True,
             )
-            .exists()
-        ):
-            raise ValidationError(
-                {
-                    "location": f"An enabled global {self.record_type} record rule for '{self.content_type}' already exists."
-                }
-            )
+
+            if not duplicate_query.exists():
+                super().validate_unique(exclude)
+                return
+
+            if self.location is None and self.tenant is None:
+                message = (
+                    f"An enabled global {self.record_type} record rule for "
+                    f"'{self.content_type}' already exists."
+                )
+            else:
+                message = (
+                    f"An enabled {self.record_type} record rule for '{self.content_type}' "
+                    "already exists for this scope."
+                )
+            raise ValidationError({"location": message})
 
         super().validate_unique(exclude)
 
@@ -715,9 +733,20 @@ class DNSRule(PrimaryModel):
 
     def _validate_templates(self):
         """Validate templates for the DNS rule."""
-        template_fields = self._build_template_fields()
-        template_syntax_errors = self._validate_template_syntax(template_fields)
-        template_literal_errors = self._validate_template_literals(template_fields)
+        hostname_related_fields, non_hostname_related_fields = self._build_template_fields()
+        all_template_fields = [*hostname_related_fields, *non_hostname_related_fields]
+        template_syntax_errors = self._validate_template_syntax(all_template_fields)
+
+        # _validate_template_literals() -> collect_literal_validation_errors() parses templates; if
+        # syntax is invalid it can raise TemplateSyntaxError directly. Skip literal checks for fields
+        #  that already failed syntax so that we can present as mucn info to the user as possible.
+        syntax_error_fields = {field_name for field_name, messages in template_syntax_errors.items() if messages}
+        syntax_valid_hostname_fields = [
+            (field_name, template_content)
+            for field_name, template_content in hostname_related_fields
+            if field_name not in syntax_error_fields
+        ]
+        template_literal_errors = self._validate_template_literals(syntax_valid_hostname_fields)
         record_type_specific_errors = self._validate_record_type_specific_requirements()
 
         # Merge per-field without overwriting; preserve order and dedupe
@@ -743,13 +772,16 @@ class DNSRule(PrimaryModel):
         #
         # This is broken out into a separate method to make it easier to add per-record-type
         # normalization/validation later if needed.
-        template_fields = [
+        hostname_related_fields = [
             ("zone_template", self.zone_template),
             ("name_template", self.name_template),
             ("value_template", self.value_template),
         ]
+        non_hostname_related_fields = [
+            ("view_template", self.view_template),
+        ]
 
-        return template_fields
+        return hostname_related_fields, non_hostname_related_fields
 
     def _validate_template_syntax(self, template_fields):
         """Validate template syntax for the DNS rule."""
@@ -777,7 +809,7 @@ class DNSRule(PrimaryModel):
 
     def _validate_template_literals(self, template_fields):
         """
-        Validate template literals for the DNS rule.
+        Validate DNS-literal fragments in template fields for the DNS rule.
 
         Args:
             template_fields: The template fields to validate.

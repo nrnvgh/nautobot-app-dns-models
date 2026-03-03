@@ -389,6 +389,7 @@ class DNSRuleTable(BaseTable):
     name = tables.LinkColumn()
     enabled = BooleanColumn()
     content_type = tables.Column()
+    view_template = tables.Column(verbose_name="View Template")
     location = tables.LinkColumn()
     tenant = TenantColumn()
     record_type = tables.Column()
@@ -404,6 +405,7 @@ class DNSRuleTable(BaseTable):
             "description",
             "enabled",
             "content_type",
+            "view_template",
             "location",
             "tenant",
             "record_type",

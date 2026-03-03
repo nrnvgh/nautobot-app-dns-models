@@ -482,6 +482,7 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
     def _build_panels(self):
         record_type_fields = [
             "zone_template",
+            "view_template",
             "name_template",
             "value_template",
         ]
@@ -505,7 +506,15 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
                 ObjectFieldsPanel(
                     weight=100,
                     section=SectionChoices.LEFT_HALF,
-                    fields=["name", "description", "enabled", "tenant", "location", "content_type", "record_type"],
+                    fields=[
+                        "name",
+                        "description",
+                        "enabled",
+                        "tenant",
+                        "location",
+                        "content_type",
+                        "record_type",
+                    ],
                 ),
                 ObjectFieldsPanel(
                     label="Templates",

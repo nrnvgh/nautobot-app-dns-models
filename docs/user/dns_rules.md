@@ -48,19 +48,73 @@ A single rule can create multiple DNS records:
 3. **Configure** the rule parameters:
    - **Name**: Unique identifier for the rule
    - **Content Type**: What type of object triggers this rule (Device, Interface, etc.)
-   - **Location**: Leave blank for global, or select specific location for scoped rules
+   - **Location**: Leave blank for non-location-scoped rules, or select a location for location-scoped rules
+   - **Tenant**: Leave blank for non-tenant-scoped rules, or select a tenant for tenant-scoped rules
    - **Record Type**: Type of DNS record to create (A, AAAA)
 4. **Define** Jinja2 templates:
-   - **Zone Template**: Which DNS zone to create records in
    - **Name Template**: The record name within the zone
    - **Value Template**: The record value (IP address, hostname, etc.)
+   - **View Template**: Optional DNS view selector template (leave blank to use `Default`)
+   - **Zone Template**: Which DNS zone to create records in
 
-### Template Syntax
+### Template Field Behavior
 
-Templates use Jinja2 syntax with access to the triggering object as `obj`:
+Templates use Jinja2 syntax, and all template fields have access to `obj` (the source object). Rule processing has two phases: object-level rendering and per-candidate rendering. For full template syntax, object context, per-candidate context, filters, patterns, and troubleshooting, see `dns_rule_templates.md`.
 
-- **Basic fields**: `{{ obj.name }}`, `{{ obj.description }}`
-- **Related objects**: `{{ obj.device.name }}`, `{{ obj.device.location.name }}`
+#### Evaluation Order
+
+Rule processing follows this order:
+
+1. `name_template` (object-level)
+2. `value_template` (object-level render, then candidate expansion)
+3. `view_template` (per-candidate view selection)
+4. `zone_template` (per-candidate zone lookup within selected view(s))
+
+#### Name Template
+
+`name_template` defines the DNS record name. It is evaluated once per source object and reused for each candidate generated from that object.
+
+#### Value Template
+
+`value_template` defines record data values and can expand into multiple candidates. This is the main source of one-to-many record generation for a single object.
+- May expand to multiple candidate records (for example, one candidate per IP from `{{ obj.ip_addresses.all() }}`).
+
+#### View Template
+
+`view_template` selects target DNS view(s) for each candidate. If unset, the engine uses `Default`; if set, rendered names must resolve to existing views.
+
+- Optional field that selects one or more DNS views for each candidate.
+- Blank `view_template` -> use `Default`.
+- Rendered view names are matched case-sensitively.
+- Multiple names are supported with comma and/or whitespace separators.
+- Configured `view_template` that renders empty -> candidate is skipped (best-effort).
+- Unknown rendered view name(s) -> candidate is skipped (best-effort).
+
+#### Zone Template
+
+`zone_template` resolves the zone after view selection. Zone lookup is constrained to the selected view(s) for that candidate.
+- If no matching zone exists in selected view(s), the candidate is skipped (best-effort).
+
+#### Best-Effort Reconciliation Behavior
+
+Best-effort processing applies to both create and update reconciliation paths.
+
+- **Mixed update outcome**: if some candidates still render/resolve and others fail (for example, empty `view_template`, unknown view name, or zone missing in selected view), the valid candidates are kept/created and only failed candidates are removed or skipped.
+- **DNS records removed during reconciliation**: if a later update to the source object or related template context data causes candidate failures, failed candidates are reconciled away; if all candidates fail, previously created DNS records for that rule/object are cleaned up and their tracking rows are removed.
+
+##### When reconciliation runs
+
+Candidate cleanup happens when rule processing runs again for the source object and enters update reconciliation.
+
+Typical triggers include:
+
+- Saving supported source objects (for example: `Device`, `Interface`, `Service`)
+- IP assignment relationship changes (add/remove/clear operations)
+- Explicit/manual processing calls
+
+Important caveat:
+
+- Some related data changes used by templates do not emit source-object rule-processing signals (for example, certain Prefix/Zone/View/relationship context changes). In those cases, stale records can remain until a later object trigger, manual processing, or a reconciliation job runs.
 
 ## Common Use Cases
 
@@ -199,8 +253,9 @@ Services inherit location and tenant from their parent object:
 
 The system prevents conflicting rules:
 
-- Only one enabled rule per `(content_type, record_type, location)` combination
-- Global and location-scoped rules can coexist for the same content type and record type
+- Only one enabled rule per `(content_type, record_type, location, tenant)` scope combination
+- Rules in different scopes can coexist for the same content type and record type (for example, global + location-scoped, or location-scoped + tenant-scoped)
+- A rule with tenant set and tenant unset are different scopes; conflicts are checked within the exact scope
 - Different record types (A, AAAA) can have separate rules
 
 ### Location Changes
@@ -212,7 +267,28 @@ When objects move between locations:
 - Global rules continue to apply regardless of location
 - DNS records are automatically updated to reflect the change
 
+### Tenant Changes
+
+When objects change tenants:
+
+- Tenant-specific rules may stop applying
+- New tenant-specific rules may start applying
+- Global rules continue to apply regardless of tenant
+- DNS records are automatically updated to reflect the change
+
 ## Troubleshooting
+
+### What "candidate records" means
+
+A candidate record is an intermediate DNS record item produced from a rule/object evaluation before final DNS create/update/delete operations are applied.
+
+Examples:
+
+- Interface rule with `{{ obj.ip_addresses.all() }}`: one candidate per interface IP
+- Service rule with multiple IPs: one candidate per service IP
+- Any template expansion that yields multiple values: one candidate per value
+
+Each candidate is processed independently for template rendering and zone/view resolution.
 
 ### Rules Not Creating Records
 
@@ -235,9 +311,20 @@ When objects move between locations:
 
 - Test templates with representative objects before deployment
 
+### DNS records were removed
+
+If records previously existed and later disappeared, most commonly:
+
+1. A later reconciliation run determined one or more candidates no longer rendered/resolved successfully (see "Best-Effort Reconciliation Behavior")
+2. Rule scope applicability changed (for example, location or tenant changed), so the old rule no longer applies
+3. A rule was disabled or changed, and a later object-triggered reconciliation removed records that were no longer desired
+4. Related context data used by templates changed (for example, view/zone/prefix/relationship data), changing rendered outcomes
+
 ### Some DNS records are not being created
 
 If A records are being created for v4 addresses and AAAA records are not being created for v6 addresses (or vice-versa), ensure you have DNS Rules for both A and AAAA.
+
+Rule execution is best-effort per candidate record. If one candidate fails template/render/view/zone resolution, other valid candidates from the same rule can still be created. Check warning logs for skipped candidates and failure reasons.
 
 ## Best Practices
 

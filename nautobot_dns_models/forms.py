@@ -464,11 +464,16 @@ class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
         widget=StaticSelect2(),
         help_text="Type of object this rule applies to",
     )
-
     record_type = forms.ChoiceField(
         choices=add_blank_choice(DNSRecordTypeChoices),
         widget=StaticSelect2(),
         help_text="Type of DNS record this rule creates",
+    )
+    view_template = forms.CharField(
+        required=False,
+        label="View Template",
+        help_text="Jinja2 template returning one or more DNS view names (comma/space delimited). Leave blank to use Default.",
+        widget=forms.Textarea(attrs={"rows": 4}),
     )
 
     class Meta:
@@ -477,6 +482,7 @@ class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
         model = models.DNSRule
         fields = "__all__"
         widgets = {
+            "view_template": forms.Textarea(attrs={"rows": 4}),
             "zone_template": forms.Textarea(attrs={"rows": 6}),
             "name_template": forms.Textarea(attrs={"rows": 6}),
             "value_template": forms.Textarea(attrs={"rows": 6}),

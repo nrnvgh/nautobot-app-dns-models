@@ -12,6 +12,7 @@ from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer
 from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
+from nautobot.tenancy.models import Tenant
 
 from nautobot_dns_models.choices import DNSRecordTypeChoices
 from nautobot_dns_models.models import (
@@ -916,6 +917,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             location_type=location_type,
             status=Status.objects.get_for_model(Location).first(),
         )
+        cls.tenant = Tenant.objects.create(name="Test Tenant")
 
         cls.manufacturer = Manufacturer.objects.create(name="Test Manufacturer")
         cls.device_type = DeviceType.objects.create(
@@ -1071,6 +1073,34 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         )
 
         self.assertEqual(rule.value_template, "{{ obj.primary_ip4 }}")
+
+    def test_dnsrule_template_syntax_validation_applies_to_all_template_fields(self):
+        """Template syntax validation should run for zone/name/value/view template fields."""
+        base_kwargs = {
+            "name": "syntax-all-fields",
+            "content_type": self.content_type_device,
+            "zone_template": "test.com",
+            "record_type": "A",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.primary_ip4 }}",
+            "view_template": "Default",
+            "enabled": False,
+        }
+        bad_syntax = "{{ obj.name "
+        template_fields = ["zone_template", "name_template", "value_template", "view_template"]
+
+        for field_name in template_fields:
+            with self.subTest(field=field_name):
+                kwargs = dict(base_kwargs)
+                kwargs[field_name] = bad_syntax
+                rule = DNSRule(**kwargs)
+
+                with self.assertRaises(ValidationError) as ctx:
+                    rule.full_clean()
+                self.assertIn(field_name, ctx.exception.message_dict)
+                self.assertTrue(
+                    any("Template syntax error" in message for message in ctx.exception.message_dict[field_name])
+                )
 
     def test_dnsrule_enabled_default_true(self):
         """Test that DNSRule enabled field defaults to True."""
@@ -1244,6 +1274,113 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         # Verify they have different location values
         self.assertIsNone(global_rule.location)
         self.assertEqual(location_rule.location, self.location)
+
+    def test_dnsrule_same_scope_different_view_template_not_allowed(self):
+        """Test enabled rules with same scope are rejected even when view_template values differ."""
+        first_rule = DNSRule.objects.create(
+            name="scope-rule-internal",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+            view_template="Internal Rule View",
+            location=self.location,
+            enabled=True,
+        )
+        self.assertTrue(DNSRule.objects.filter(id=first_rule.id).exists())
+
+        duplicate_rule = DNSRule(
+            name="scope-rule-external",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+            view_template="External Rule View",
+            location=self.location,
+            enabled=True,
+        )
+        with self.assertRaises(ValidationError) as context:
+            duplicate_rule.full_clean()
+        self.assertIn("location", context.exception.message_dict)
+
+    def test_dnsrule_uniqueness_all_scope_permutations(self):
+        """Test enabled-rule uniqueness across all location/tenant scope permutations."""
+        scope_permutations = [
+            ("global", None, None),
+            ("location-only", self.location, None),
+            ("tenant-only", None, self.tenant),
+            ("location-and-tenant", self.location, self.tenant),
+        ]
+
+        for label, location, tenant in scope_permutations:
+            with self.subTest(step="create-first", scope=label):
+                DNSRule.objects.create(
+                    name=f"perm-{label}-rule-1",
+                    content_type=self.content_type_device,
+                    zone_template="test.com",
+                    record_type="A",
+                    name_template="{{ obj.name }}",
+                    value_template="{{ obj.primary_ip4 }}",
+                    view_template="Internal",
+                    location=location,
+                    tenant=tenant,
+                    enabled=True,
+                )
+
+        for label, location, tenant in scope_permutations:
+            with self.subTest(step="reject-duplicate", scope=label):
+                duplicate_rule = DNSRule(
+                    name=f"perm-{label}-rule-2",
+                    content_type=self.content_type_device,
+                    zone_template="test.com",
+                    record_type="A",
+                    name_template="{{ obj.name }}",
+                    value_template="{{ obj.primary_ip4 }}",
+                    view_template="External",
+                    location=location,
+                    tenant=tenant,
+                    enabled=True,
+                )
+                with self.assertRaises(ValidationError) as context:
+                    duplicate_rule.full_clean()
+                self.assertIn("location", context.exception.message_dict)
+
+    def test_dnsrule_global_uniqueness_constraint_with_view_template(self):
+        """Test enabled global rule uniqueness is enforced regardless of view_template."""
+
+        first_rule = DNSRule.objects.create(
+            name="global-view-rule-1",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+            view_template="Internal Global View",
+            enabled=True,
+        )
+        self.assertTrue(DNSRule.objects.filter(id=first_rule.id).exists())
+
+        duplicate_rule = DNSRule(
+            name="global-view-rule-2",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+            view_template="External Global View",
+            enabled=True,
+        )
+        expected_message = (
+            f"An enabled global {duplicate_rule.record_type} record rule for "
+            f"'{duplicate_rule.content_type}' already exists."
+        )
+        with self.assertRaises(ValidationError) as context:
+            duplicate_rule.full_clean()
+
+        self.assertIn("location", context.exception.message_dict)
+        self.assertEqual(context.exception.message_dict["location"][0], expected_message)
 
     def test_dnsrule_disabled_rules_allow_duplicates(self):
         """Test that disabled rules can have duplicate content_type + record_type combinations."""
@@ -1460,6 +1597,22 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                     self.assertIn(
                         "Whitespace in literals is not allowed; use '-' or '.'", ctx.exception.message_dict[field]
                     )
+
+    def test_dnsrule_whitespace_allowed_in_view_template_literals(self):
+        """Whitespace in view_template literals should be allowed."""
+        rule = DNSRule(
+            name="view-template-whitespace-allowed",
+            description="Rule with spaced DNS view name literal",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+            view_template="Internal View",
+            enabled=False,
+        )
+
+        rule.full_clean()  # Should not raise
 
 
 class DNSRuleRecordTestCase(TestCase):

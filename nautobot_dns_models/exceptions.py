@@ -22,19 +22,3 @@ class DNSTemplateEmptyError(DNSProcessingError):
         self.context_keys = context_keys or []
 
         super().__init__(f"Template {field_name} rendered empty: {template_str}")
-
-
-class DNSFilterError(DNSProcessingError):
-    """Error in DNS template filter processing."""
-
-    def __init__(self, filter_name: str, message: str):
-        """
-        Initialize with filter details for debugging.
-
-        Args:
-            filter_name: The filter that failed (e.g., 'ip_address')
-            message: Specific error message from the filter
-        """
-        self.filter_name = filter_name
-        self.message = message
-        super().__init__(f"Filter '{filter_name}' error: {message}")

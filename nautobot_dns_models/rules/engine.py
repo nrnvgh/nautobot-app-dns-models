@@ -1,6 +1,7 @@
 """DNS Rule Processing Engine for Nautobot DNS Models."""
 
 import logging
+import re
 import uuid
 from collections import defaultdict
 from typing import Any
@@ -440,26 +441,111 @@ class DNSRuleEngine:
 
     def _calculate_desired_record_data(self, rule: DNSRule, source_obj: Any) -> list[dict[str, Any]]:
         """Calculate what DNS record data should exist (without creating records)."""
-        context = {"obj": wrap_for_template(source_obj)}
+        base_context = {"obj": wrap_for_template(source_obj)}
 
-        # Build base record data - exceptions bubble up naturally
-        rendered_name = self._render_template(rule.name_template, context, "name_template")
-        base_record_data = {
-            "name": normalize_dns_name(rendered_name),
-            "zone": self._get_zone_for_rule(rule, context),
-        }
+        # Build shared record fields - exceptions bubble up naturally.
+        rendered_name = self._render_template(rule.name_template, base_context, "name_template")
+        shared_record_data = {"name": normalize_dns_name(rendered_name)}
 
-        # Get variations (handles multi-record A/AAAA logic)
-        record_data_list = self._get_record_data_variations_for_rule(rule, context, base_record_data)
-        return record_data_list
+        all_record_data = []
+        record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
+        for record_data in record_variations:
+            try:
+                record_context = self._build_record_context(base_context, record_data)
+                selected_views = self._get_dns_views_for_rule(rule, record_context)
+                zones = self._get_zones_for_rule(rule, record_context, selected_views)
+                logger.debug(f"Zones for rule {rule.name}: {zones} (selected views: {selected_views})")
+                for zone in zones:
+                    all_record_data.append({**record_data, "zone": zone})
+            except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
+                logger.warning(
+                    "Skipping DNS record candidate for rule %s due to per-record error: %s (%s). Data: %s",
+                    rule.name,
+                    exc,
+                    type(exc).__name__,
+                    record_data,
+                )
+                continue
 
-    def _get_zone_for_rule(self, rule: DNSRule, context: dict[str, Any]) -> DNSZone:
-        """Extract zone logic into reusable method."""
+        return all_record_data
+
+    def _get_zones_for_rule(
+        self, rule: DNSRule, context: dict[str, Any], selected_views: list[models.DNSView]
+    ) -> list[DNSZone]:
+        """Resolve all DNSZone targets for this rule."""
         if rule.zone_template:
             zone_name = self._render_template(rule.zone_template, context, "zone_template")
-            return DNSZone.objects.get(name=zone_name)
+            view_ids = [view.id for view in selected_views]
 
-        return rule.zone_fixed
+            zones = list(DNSZone.objects.filter(name=zone_name, dns_view_id__in=view_ids))
+            found_view_ids = {zone.dns_view_id for zone in zones}
+            missing_view_ids = set(view_ids) - found_view_ids
+            if missing_view_ids:
+                missing_view_names = list(
+                    models.DNSView.objects.filter(id__in=missing_view_ids).values_list("name", flat=True)
+                )
+                raise ValidationError(
+                    {
+                        "zone_template": (
+                            f"Zone '{zone_name}' does not exist in selected DNS view(s): "
+                            f"{', '.join(sorted(missing_view_names))}"
+                        )
+                    }
+                )
+
+            return zones
+
+        raise ValidationError({"zone_template": "DNS rule must define a zone_template."})
+
+    def _build_record_context(self, base_context: dict[str, Any], record_data: dict[str, Any]) -> dict[str, Any]:
+        """Build per-record template context, including selected IP when available."""
+        context = dict(base_context)
+        context["record"] = record_data.copy()
+
+        address_id = record_data.get("address_id")
+        if address_id:
+            ip_obj = ipam_models.IPAddress.objects.filter(pk=address_id).first()
+            if ip_obj is None:
+                raise ValidationError({"value_template": f"Resolved IP address '{address_id}' was not found."})
+            context["ip"] = wrap_for_template(ip_obj)
+
+        return context
+
+    def _get_dns_views_for_rule(self, rule: DNSRule, context: dict[str, Any]) -> list[models.DNSView]:
+        """Resolve DNS views for a rule from view_template or fallback to Default."""
+        if not rule.view_template:
+            return [models.DNSView.objects.get(pk=models.get_default_view_pk())]
+
+        rendered = self._render_template(rule.view_template, context, "view_template")
+        raw_names = [token.strip() for token in re.split(r"[\s,]+", rendered) if token.strip()]
+        if not raw_names:
+            raise ValidationError({"view_template": "view_template rendered no DNS view names."})
+
+        requested_names = list(dict.fromkeys(raw_names))
+        matched_views = list(models.DNSView.objects.filter(name__in=requested_names))
+        matched_by_name = {view.name: view for view in matched_views}
+
+        missing_names = [name for name in raw_names if name not in matched_by_name]
+        if missing_names:
+            raise ValidationError(
+                {
+                    "view_template": (
+                        "DNS view(s) not found from view_template: "
+                        f"{', '.join(sorted(set(missing_names)))}"
+                    )
+                }
+            )
+
+        ordered_views = []
+        seen_ids = set()
+        for name in raw_names:
+            view = matched_by_name[name]
+            if view.id in seen_ids:
+                continue
+            ordered_views.append(view)
+            seen_ids.add(view.id)
+
+        return ordered_views
 
     def _get_existing_tracking_records(self, rule: DNSRule, source_obj: Any) -> django_models.QuerySet:
         """Get existing tracking records for a rule+object combination."""
@@ -658,7 +744,7 @@ class DNSRuleEngine:
         Args:
             rule: The DNS rule containing templates
             context: Jinja context for template rendering
-            base_record_data: Base data shared across all records (name, zone, etc.)
+            base_record_data: Base data shared across all records (name, etc.)
 
         Returns:
             List of record_data dictionaries ready for DNS record creation

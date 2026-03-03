@@ -57,18 +57,19 @@ class BaseRuleEngineMixin:
 
         # Create namespace and prefix for IP addresses
         cls.namespace = Namespace.objects.create(name="Test Namespace")
+        cls.prefix_status = Status.objects.get_for_model(Prefix).first()
         cls.prefix = Prefix.objects.create(
             network="192.168.1.0",
             prefix_length=24,
             namespace=cls.namespace,
-            status=Status.objects.get_for_model(Prefix).first(),
+            status=cls.prefix_status,
         )
 
         cls.ipv6_prefix = Prefix.objects.create(
             network="2001:db8::",
             prefix_length=64,
             namespace=cls.namespace,
-            status=Status.objects.get_for_model(Prefix).first(),
+            status=cls.prefix_status,
         )
 
         cls.ip_status = Status.objects.get_for_model(IPAddress).first()

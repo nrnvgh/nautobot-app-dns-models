@@ -605,6 +605,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
     def setUpTestData(cls):
         # Create test data for DNSRule
         content_type = ContentType.objects.get_for_model(Device)
+        cls.rule_dns_view = DNSView.objects.create(name="Rule API View")
 
         # Create location and related objects for testing
         active_status = Status.objects.get(name="Active")
@@ -636,12 +637,15 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             primary_ip6=cls.ip6,
         )
 
+        default_view = DNSView.objects.get(pk=models.get_default_view_pk())
+
         DNSRule.objects.create(
             name="Test Rule 1",
             description="Test DNS rule for devices",
             enabled=True,
             content_type=content_type,
             location=location,
+            view_template=default_view.name,
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}",
@@ -653,6 +657,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             description="Another test DNS rule",
             enabled=False,
             content_type=content_type,
+            view_template=default_view.name,
             zone_template="test.com",
             record_type="AAAA",
             name_template="{{ obj.name }}-ipv6",
@@ -664,6 +669,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             description="Third test DNS rule",
             enabled=True,
             content_type=content_type,
+            view_template=default_view.name,
             zone_template="internal.com",
             record_type="AAAA",
             name_template="{{ obj.name }}-internal",
@@ -678,6 +684,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
                 "description": "New DNS rule via API",
                 "enabled": True,
                 "content_type": "dcim.interface",
+                "view_template": cls.rule_dns_view.name,
                 "zone_template": "api.com",
                 "record_type": "A",
                 "name_template": "{{ obj.name }}-api",
@@ -720,6 +727,102 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
             "ipam.service",
         }
         self.assertEqual(content_types, expected)
+
+    def test_create_rule_with_blank_view_template(self):
+        """Creating a DNS rule with blank view_template should succeed and persist blank value."""
+        self.add_permissions("nautobot_dns_models.add_dnsrule", "nautobot_dns_models.view_dnsview")
+        url = reverse("plugins-api:nautobot_dns_models-api:dnsrule-list")
+        payload = {
+            "name": "api-default-view-create",
+            "enabled": True,
+            "content_type": "dcim.interface",
+            "view_template": "",
+            "zone_template": "api-default.example.com",
+            "record_type": "A",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.ip_addresses.all() }}",
+        }
+
+        response = self.client.post(url, data=payload, format="json", **self.header)
+        self.assertHttpStatus(response, status.HTTP_201_CREATED)
+
+        rule = DNSRule.objects.get(name="api-default-view-create")
+        self.assertEqual(rule.view_template, "")
+
+    def test_patch_rule_view_template_to_blank(self):
+        """Patching view_template to blank should preserve blank value."""
+        self.add_permissions(
+            "nautobot_dns_models.change_dnsrule",
+            "nautobot_dns_models.view_dnsrule",
+            "nautobot_dns_models.view_dnsview",
+        )
+        rule = DNSRule.objects.create(
+            name="api-default-view-update",
+            enabled=True,
+            content_type=ContentType.objects.get_for_model(Device),
+            view_template="Rule API View",
+            zone_template="api-update.example.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        url = reverse("plugins-api:nautobot_dns_models-api:dnsrule-detail", kwargs={"pk": rule.pk})
+        response = self.client.patch(url, data={"view_template": ""}, format="json", **self.header)
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+
+        rule.refresh_from_db()
+        self.assertEqual(rule.view_template, "")
+
+    def test_create_rule_with_explicit_view_template(self):
+        """Creating a DNS rule with explicit view_template should preserve it."""
+        self.add_permissions("nautobot_dns_models.add_dnsrule", "nautobot_dns_models.view_dnsview")
+        explicit_view = DNSView.objects.create(name="Serializer Explicit View")
+        url = reverse("plugins-api:nautobot_dns_models-api:dnsrule-list")
+        payload = {
+            "name": "api-explicit-view-create",
+            "enabled": True,
+            "content_type": "dcim.interface",
+            "view_template": explicit_view.name,
+            "zone_template": "api-explicit.example.com",
+            "record_type": "A",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.ip_addresses.all() }}",
+        }
+
+        response = self.client.post(url, data=payload, format="json", **self.header)
+        self.assertHttpStatus(response, status.HTTP_201_CREATED)
+
+        rule = DNSRule.objects.get(name="api-explicit-view-create")
+        self.assertEqual(rule.view_template, explicit_view.name)
+
+    def test_patch_rule_view_template_to_explicit(self):
+        """Patching view_template to an explicit value should persist that value."""
+        self.add_permissions(
+            "nautobot_dns_models.change_dnsrule",
+            "nautobot_dns_models.view_dnsrule",
+            "nautobot_dns_models.view_dnsview",
+        )
+        explicit_view = DNSView.objects.create(name="Serializer Patch Explicit View")
+        rule = DNSRule.objects.create(
+            name="api-explicit-view-update",
+            enabled=True,
+            content_type=ContentType.objects.get_for_model(Device),
+            view_template="",
+            zone_template="api-explicit-update.example.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        url = reverse("plugins-api:nautobot_dns_models-api:dnsrule-detail", kwargs={"pk": rule.pk})
+        response = self.client.patch(
+            url, data={"view_template": explicit_view.name}, format="json", **self.header
+        )
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+
+        rule.refresh_from_db()
+        self.assertEqual(rule.view_template, explicit_view.name)
 
 
 class DNSRuleRecordAPITestCase(APIViewTestCases.APIViewTestCase):

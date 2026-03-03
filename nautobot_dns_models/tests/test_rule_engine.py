@@ -20,11 +20,12 @@ from nautobot.apps.utils import render_jinja2
 from nautobot.dcim.choices import InterfaceTypeChoices
 from nautobot.dcim.models import Device, Interface, Location, LocationType
 from nautobot.extras.models import CustomField, Status
-from nautobot.ipam.models import IPAddress, IPAddressToInterface, Service
+from nautobot.ipam.models import IPAddress, IPAddressToInterface, Prefix, Service
+from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
-from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord, DNSZone
+from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord, DNSView, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
@@ -280,6 +281,340 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         results = self._calc_desired_record_data(rule, self.device)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["zone"].name, location_zone)
+
+    def test_zone_template_resolves_zone_using_view_template(self):
+        """Test zone resolution uses view_template when zone names overlap."""
+        internal_view = DNSView.objects.create(name="Internal")
+        external_view = DNSView.objects.create(name="External")
+        DNSZone.objects.create(name="example.com", dns_view=external_view)
+        internal_zone = DNSZone.objects.create(name="example.com", dns_view=internal_view)
+
+        self.interface.ip_addresses.set([self.ip_addresses[0]])
+
+        rule = DNSRule.objects.create(
+            name="interface-zone-from-view",
+            content_type=self.interface_content_type,
+            record_type="A",
+            view_template="Internal",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["zone"], internal_zone)
+
+    def test_zone_template_resolves_zone_using_case_sensitive_view_name(self):
+        """Test view_template matching is case-sensitive when views differ only by case."""
+        title_case_view = DNSView.objects.create(name="Internal")
+        lower_case_view = DNSView.objects.create(name="internal")
+        DNSZone.objects.create(name="case.example.com", dns_view=title_case_view)
+        lower_case_zone = DNSZone.objects.create(name="case.example.com", dns_view=lower_case_view)
+
+        self.interface.ip_addresses.set([self.ip_addresses[0]])
+
+        rule = DNSRule.objects.create(
+            name="interface-zone-case-sensitive-view",
+            content_type=self.interface_content_type,
+            record_type="A",
+            view_template="internal",
+            zone_template="case.example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["zone"], lower_case_zone)
+
+    def test_zone_template_uses_default_view_when_view_template_unset(self):
+        """Test zone resolution falls back to Default DNS view when view_template is unset."""
+        default_view = DNSView.objects.get(name="Default")
+        external_view = DNSView.objects.create(name="External-Ambiguous")
+        default_zone = DNSZone.objects.create(name="ambiguous.example.com", dns_view=default_view)
+        DNSZone.objects.create(name="ambiguous.example.com", dns_view=external_view)
+
+        self.interface.ip_addresses.set([self.ip_addresses[0]])
+
+        rule = DNSRule.objects.create(
+            name="interface-zone-ambiguous",
+            content_type=self.interface_content_type,
+            record_type="A",
+            zone_template="ambiguous.example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+        )
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["zone"], default_zone)
+
+    def test_zone_template_multiview_rule_creates_variations_per_view(self):
+        """Test one rule with multi-value view_template creates record data per view."""
+        internal_view = DNSView.objects.create(name="Internal-Multi")
+        guest_view = DNSView.objects.create(name="Guest-Multi")
+        internal_zone = DNSZone.objects.create(name="multi.example.com", dns_view=internal_view)
+        guest_zone = DNSZone.objects.create(name="multi.example.com", dns_view=guest_view)
+
+        self.interface.ip_addresses.set([self.ip_addresses[0]])
+        rule = DNSRule.objects.create(
+            name="interface-zone-multiview",
+            content_type=self.interface_content_type,
+            record_type="A",
+            view_template="Internal-Multi, Guest-Multi",
+            zone_template="multi.example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 2)
+        returned_zone_ids = {result["zone"].id for result in results}
+        self.assertEqual(returned_zone_ids, {internal_zone.id, guest_zone.id})
+
+    def test_view_template_resolves_views_per_ip_record(self):
+        """Test that view_template can choose different views for each IP-derived record."""
+        restricted_view = DNSView.objects.create(name="RestrictedView")
+        internal_view = DNSView.objects.create(name="InternalView")
+        restricted_zone = DNSZone.objects.create(name="split.example.com", dns_view=restricted_view)
+        internal_zone = DNSZone.objects.create(name="split.example.com", dns_view=internal_view)
+
+        restricted_prefix = Prefix.objects.create(
+            network="172.1.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        internal_prefix = Prefix.objects.create(
+            network="10.1.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+
+        restricted_ip = IPAddress.objects.create(
+            address="172.1.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=restricted_prefix,
+        )
+        internal_ip = IPAddress.objects.create(
+            address="10.1.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=internal_prefix,
+        )
+
+        self.interface.ip_addresses.set([restricted_ip, internal_ip])
+        rule = DNSRule.objects.create(
+            name="interface-zone-per-record-view",
+            content_type=self.interface_content_type,
+            record_type="A",
+            view_template=(
+                "{{ 'RestrictedView' if ip.parent.id|string == '"
+                f"{restricted_prefix.id}"
+                "' else 'InternalView' }}"
+            ),
+            zone_template="split.example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 2)
+        expected_zone_by_address = {
+            str(restricted_ip.id): restricted_zone.id,
+            str(internal_ip.id): internal_zone.id,
+        }
+        returned_zone_by_address = {result["address_id"]: result["zone"].id for result in results}
+        self.assertEqual(returned_zone_by_address, expected_zone_by_address)
+
+    def test_view_template_per_record_error_skips_only_invalid_candidate(self):
+        """Test per-record template failures skip only the failing candidate."""
+        restricted_view = DNSView.objects.create(name="RestrictedView-Partial")
+        restricted_zone = DNSZone.objects.create(name="partial.example.com", dns_view=restricted_view)
+
+        restricted_prefix = Prefix.objects.create(
+            network="172.2.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        unmatched_prefix = Prefix.objects.create(
+            network="10.2.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+
+        restricted_ip = IPAddress.objects.create(
+            address="172.2.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=restricted_prefix,
+        )
+        unmatched_ip = IPAddress.objects.create(
+            address="10.2.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=unmatched_prefix,
+        )
+
+        self.interface.ip_addresses.set([restricted_ip, unmatched_ip])
+        rule = DNSRule.objects.create(
+            name="interface-zone-per-record-partial",
+            content_type=self.interface_content_type,
+            record_type="A",
+            view_template=(
+                "{{ 'RestrictedView-Partial' if ip.parent.id|string == '"
+                f"{restricted_prefix.id}"
+                "' else '' }}"
+            ),
+            zone_template="partial.example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["address_id"], str(restricted_ip.id))
+        self.assertEqual(results[0]["zone"].id, restricted_zone.id)
+
+    def test_view_template_unknown_view_skips_only_invalid_candidate(self):
+        """Test per-candidate unknown view resolution skips only the failing candidate."""
+        valid_view = DNSView.objects.create(name="KnownView-UnknownMix")
+        valid_zone = DNSZone.objects.create(name="unknownmix.example.com", dns_view=valid_view)
+
+        valid_prefix = Prefix.objects.create(
+            network="172.4.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        invalid_prefix = Prefix.objects.create(
+            network="10.4.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+
+        valid_ip = IPAddress.objects.create(
+            address="172.4.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=valid_prefix,
+        )
+        invalid_ip = IPAddress.objects.create(
+            address="10.4.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=invalid_prefix,
+        )
+
+        self.interface.ip_addresses.set([valid_ip, invalid_ip])
+        rule = DNSRule.objects.create(
+            name="interface-zone-per-record-unknown-view",
+            content_type=self.interface_content_type,
+            record_type="A",
+            view_template=(
+                "{{ 'KnownView-UnknownMix' if ip.parent.id|string == '"
+                f"{valid_prefix.id}"
+                "' else 'MissingView-UnknownMix' }}"
+            ),
+            zone_template="unknownmix.example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["address_id"], str(valid_ip.id))
+        self.assertEqual(results[0]["zone"].id, valid_zone.id)
+
+    def test_zone_template_missing_in_selected_view_skips_only_invalid_candidate(self):
+        """Test per-candidate zone misses skip only the failing candidate."""
+        valid_view = DNSView.objects.create(name="KnownView-ZoneMissMix")
+        missing_zone_view = DNSView.objects.create(name="MissingZoneView-ZoneMissMix")
+        valid_zone = DNSZone.objects.create(name="zonemissmix.example.com", dns_view=valid_view)
+        DNSZone.objects.create(name="different.example.com", dns_view=missing_zone_view)
+
+        valid_prefix = Prefix.objects.create(
+            network="172.5.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        invalid_prefix = Prefix.objects.create(
+            network="10.5.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+
+        valid_ip = IPAddress.objects.create(
+            address="172.5.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=valid_prefix,
+        )
+        invalid_ip = IPAddress.objects.create(
+            address="10.5.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=invalid_prefix,
+        )
+
+        self.interface.ip_addresses.set([valid_ip, invalid_ip])
+        rule = DNSRule.objects.create(
+            name="interface-zone-per-record-zone-miss",
+            content_type=self.interface_content_type,
+            record_type="A",
+            view_template=(
+                "{{ 'KnownView-ZoneMissMix' if ip.parent.id|string == '"
+                f"{valid_prefix.id}"
+                "' else 'MissingZoneView-ZoneMissMix' }}"
+            ),
+            zone_template="zonemissmix.example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["address_id"], str(valid_ip.id))
+        self.assertEqual(results[0]["zone"].id, valid_zone.id)
+
+    def test_view_template_rendered_empty_skips_candidate(self):
+        """Test that a configured view_template rendering empty skips the candidate record."""
+        restricted_view = DNSView.objects.create(name="RestrictedView-Empty")
+        DNSZone.objects.create(name="empty.example.com", dns_view=restricted_view)
+
+        restricted_prefix = Prefix.objects.create(
+            network="172.3.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        restricted_ip = IPAddress.objects.create(
+            address="172.3.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=restricted_prefix,
+        )
+
+        self.interface.ip_addresses.set([restricted_ip])
+        rule = DNSRule.objects.create(
+            name="interface-zone-empty-view-template",
+            content_type=self.interface_content_type,
+            record_type="A",
+            view_template="{{ '' }}",
+            zone_template="empty.example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+        )
+
+        results = self._calc_desired_record_data(rule, self.interface)
+        self.assertEqual(results, [])
 
 
 class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
@@ -746,6 +1081,479 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
             value_template="{{ obj.primary_ip4 }}",
             enabled=True,
         )
+
+    def test_interface_a_record_created_in_each_selected_dns_view(self):
+        """Test that one interface rule can create records in multiple selected DNS views."""
+        internal_view = DNSView.objects.create(name="Internal-Integration")
+        internal_zone = DNSZone.objects.create(name="example.com", dns_view=internal_view)
+        default_view = DNSView.objects.get(name="Default")
+
+        dns_rule = self._create_dns_rule_for_interface_a_record(name="interface-a-record-multiview")
+        dns_rule.view_template = f"{default_view.name}, {internal_view.name}"
+        dns_rule.validated_save()
+
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        records = ARecord.objects.filter(name="eth0.test-device", address=self.ip_addresses[0], zone__name="example.com")
+        self.assertEqual(records.count(), 2)
+        self.assertEqual({record.zone.id for record in records}, {self.dns_zone.id, internal_zone.id})
+
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        self.assertEqual(rule_records.count(), 2)
+
+    def test_interface_a_record_created_in_case_distinct_views_with_same_name(self):
+        """Test one rule can create records in two views whose names differ only by case."""
+        upper_view = DNSView.objects.create(name="CaseView")
+        lower_view = DNSView.objects.create(name="caseview")
+        upper_zone = DNSZone.objects.create(name="example.com", dns_view=upper_view)
+        lower_zone = DNSZone.objects.create(name="example.com", dns_view=lower_view)
+
+        dns_rule = self._create_dns_rule_for_interface_a_record(name="interface-a-record-case-distinct-views")
+        dns_rule.view_template = f"{upper_view.name}, {lower_view.name}"
+        dns_rule.validated_save()
+
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        records = ARecord.objects.filter(name="eth0.test-device", address=self.ip_addresses[0], zone__name="example.com")
+
+        # One record should be created per selected view.
+        self.assertEqual(records.count(), 2)
+
+        # The two records should map exactly to the two case-distinct view zones.
+        self.assertEqual({record.zone.id for record in records}, {upper_zone.id, lower_zone.id})
+
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        # Tracking records should mirror created DNS records one-for-one.
+        self.assertEqual(rule_records.count(), 2)
+
+    def test_interface_a_record_defaults_to_default_view_when_view_template_unset(self):
+        """Test empty view_template selection creates records only in the Default view."""
+        guest_view = DNSView.objects.create(name="Guest-Integration")
+        guest_zone = DNSZone.objects.create(name="example.com", dns_view=guest_view)
+
+        self._create_dns_rule_for_interface_a_record(name="interface-a-record-default-view-fallback")
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        default_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        guest_records = ARecord.objects.filter(name="eth0.test-device", zone=guest_zone)
+        self.assertEqual(default_records.count(), 1)
+        self.assertEqual(guest_records.count(), 0)
+
+    def test_all_candidates_fail_on_create_leaves_no_records_or_tracking(self):
+        """Test create path with all candidates failing does not persist records or tracking rows."""
+        dns_rule = DNSRule.objects.create(
+            name="interface-all-candidates-fail-create",
+            description="Create A records for interfaces",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            view_template="MissingView-AllCandidatesFail",
+            enabled=True,
+        )
+
+        self.interface.ip_addresses.add(self.ip_addresses[0], self.ip_addresses[1])
+
+        a_records = ARecord.objects.filter(name="eth0.test-device", zone=self.dns_zone)
+        self.assertEqual(a_records.count(), 0, "No A records should be created when all candidates fail")
+
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        self.assertEqual(rule_records.count(), 0, "No tracking rows should be created when all candidates fail")
+
+    def test_update_reconcile_mixed_candidate_failures_cleanup_only_failed_candidates(self):
+        """Test update reconciliation removes only failed candidates and preserves valid ones."""
+        view_a = DNSView.objects.create(name="UpdateMixViewA")
+        view_b = DNSView.objects.create(name="UpdateMixViewB")
+        zone_name = "update-mix.example.com"
+        zone_a = DNSZone.objects.create(name=zone_name, dns_view=view_a)
+        zone_b = DNSZone.objects.create(name=zone_name, dns_view=view_b)
+
+        prefix_a = Prefix.objects.create(
+            network="172.6.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        prefix_b = Prefix.objects.create(
+            network="10.6.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        prefix_c = Prefix.objects.create(
+            network="192.0.6.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+
+        ip_a = IPAddress.objects.create(
+            address="172.6.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=prefix_a,
+        )
+        ip_b = IPAddress.objects.create(
+            address="10.6.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=prefix_b,
+        )
+        ip_c = IPAddress.objects.create(
+            address="192.0.6.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=prefix_c,
+        )
+
+        dns_rule = DNSRule.objects.create(
+            name="interface-update-mixed-candidates",
+            description="Reconcile mixed candidate failures",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template=zone_name,
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            view_template=(
+                "{{ 'UpdateMixViewA' if ip.parent.id|string == '"
+                f"{prefix_a.id}"
+                "' else ('UpdateMixViewB' if ip.parent.id|string == '"
+                f"{prefix_b.id}"
+                "' else 'MissingView-UpdateMix') }}"
+            ),
+            enabled=True,
+        )
+
+        # Initial create path: two valid candidates -> two records.
+        self.interface.ip_addresses.set([ip_a, ip_b])
+        initial_records = ARecord.objects.filter(name="eth0.test-device", zone__name=zone_name)
+        self.assertEqual(initial_records.count(), 2, "Expected two initial records for two valid candidates")
+        self.assertEqual(
+            {record.zone.id for record in initial_records},
+            {zone_a.id, zone_b.id},
+            "Expected one initial record in each selected valid view",
+        )
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(),
+            2,
+            "Expected two tracking rows for initial valid candidates",
+        )
+
+        # Update path: replace one valid candidate with one that resolves to an unknown view.
+        self.interface.ip_addresses.set([ip_a, ip_c])
+
+        final_records = ARecord.objects.filter(name="eth0.test-device", zone__name=zone_name)
+        self.assertEqual(final_records.count(), 1, "Only the valid candidate should remain after reconciliation")
+        remaining_record = final_records.first()
+        self.assertEqual(str(remaining_record.address_id), str(ip_a.id))
+        self.assertEqual(remaining_record.zone.id, zone_a.id)
+
+        final_rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        self.assertEqual(final_rule_records.count(), 1, "Tracking should be cleaned up for failed candidate")
+        self.assertEqual(str(final_rule_records.first().dns_record_object_id), str(remaining_record.id))
+
+    def test_update_reconcile_all_candidates_fail_cleans_up_existing_records_and_tracking(self):
+        """Test update reconciliation deletes existing records when all candidates begin failing."""
+        valid_view = DNSView.objects.create(name="AllFailUpdateKnownView")
+        zone_name = "all-fail-update.example.com"
+        valid_zone = DNSZone.objects.create(name=zone_name, dns_view=valid_view)
+
+        valid_prefix_1 = Prefix.objects.create(
+            network="172.7.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        valid_prefix_2 = Prefix.objects.create(
+            network="10.7.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        invalid_prefix_1 = Prefix.objects.create(
+            network="192.0.7.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        invalid_prefix_2 = Prefix.objects.create(
+            network="198.51.7.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+
+        valid_ip_1 = IPAddress.objects.create(
+            address="172.7.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=valid_prefix_1,
+        )
+        valid_ip_2 = IPAddress.objects.create(
+            address="10.7.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=valid_prefix_2,
+        )
+        invalid_ip_1 = IPAddress.objects.create(
+            address="192.0.7.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=invalid_prefix_1,
+        )
+        invalid_ip_2 = IPAddress.objects.create(
+            address="198.51.7.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=invalid_prefix_2,
+        )
+
+        dns_rule = DNSRule.objects.create(
+            name="interface-update-all-candidates-fail",
+            description="Reconcile all candidates failing",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template=zone_name,
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            view_template=(
+                "{{ 'AllFailUpdateKnownView' if ip.parent.id|string in ['"
+                f"{valid_prefix_1.id}"
+                "', '"
+                f"{valid_prefix_2.id}"
+                "'] else 'MissingView-AllFailUpdate' }}"
+            ),
+            enabled=True,
+        )
+
+        # Initial create path: two valid candidates.
+        self.interface.ip_addresses.set([valid_ip_1, valid_ip_2])
+        self.assertEqual(
+            ARecord.objects.filter(name="eth0.test-device", zone=valid_zone).count(),
+            2,
+            "Expected initial records to exist before all-fail update",
+        )
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(),
+            2,
+            "Expected initial tracking rows to exist before all-fail update",
+        )
+
+        # Update path: all candidates now fail due to unknown views.
+        self.interface.ip_addresses.set([invalid_ip_1, invalid_ip_2])
+
+        self.assertEqual(
+            ARecord.objects.filter(name="eth0.test-device", zone=valid_zone).count(),
+            0,
+            "All existing records should be removed when all candidates fail on update",
+        )
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(),
+            0,
+            "All tracking rows should be removed when all candidates fail on update",
+        )
+
+    def test_update_reconcile_empty_view_render_cleans_up_failed_candidate_only(self):
+        """Test update reconciliation with empty view render removes only the failing candidate."""
+        view_a = DNSView.objects.create(name="UpdateEmptyViewA")
+        view_b = DNSView.objects.create(name="UpdateEmptyViewB")
+        zone_name = "update-empty.example.com"
+        zone_a = DNSZone.objects.create(name=zone_name, dns_view=view_a)
+        zone_b = DNSZone.objects.create(name=zone_name, dns_view=view_b)
+
+        candidate_specs = {
+            "survive": "172.8.1.0",
+            "initial_valid": "10.8.1.0",
+            "empty_on_update": "192.0.8.0",
+        }
+        candidates = {}
+        for role, network in candidate_specs.items():
+            prefix = Prefix.objects.create(
+                network=network,
+                prefix_length=24,
+                namespace=self.namespace,
+                status=self.prefix_status,
+            )
+            ip = IPAddress.objects.create(
+                address=f"{network[:-1]}10/24",
+                status=self.ip_status,
+                namespace=self.namespace,
+                parent=prefix,
+            )
+            candidates[role] = {"prefix": prefix, "ip": ip}
+
+        dns_rule = DNSRule.objects.create(
+            name="interface-update-empty-render-candidate",
+            description="Reconcile empty render candidate failure",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template=zone_name,
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            view_template=(
+                "{{ 'UpdateEmptyViewA' if ip.parent.id|string == '"
+                f"{candidates['survive']['prefix'].id}"
+                "' else ('UpdateEmptyViewB' if ip.parent.id|string == '"
+                f"{candidates['initial_valid']['prefix'].id}"
+                "' else '') }}"
+            ),
+            enabled=True,
+        )
+
+        # Initial create path: two valid candidates.
+        self.interface.ip_addresses.set([candidates["survive"]["ip"], candidates["initial_valid"]["ip"]])
+        self.assertEqual(ARecord.objects.filter(name="eth0.test-device", zone__name=zone_name).count(), 2)
+        self.assertEqual(DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(), 2)
+
+        # Update path: second candidate now renders empty view template and should be cleaned up.
+        self.interface.ip_addresses.set([candidates["survive"]["ip"], candidates["empty_on_update"]["ip"]])
+
+        final_records = ARecord.objects.filter(name="eth0.test-device", zone__name=zone_name)
+        self.assertEqual(final_records.count(), 1, "Only non-empty candidate should remain after update")
+        remaining = final_records.first()
+        self.assertEqual(str(remaining.address_id), str(candidates["survive"]["ip"].id))
+        self.assertEqual(remaining.zone.id, zone_a.id)
+
+        final_tracking = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        self.assertEqual(final_tracking.count(), 1, "Tracking should be removed for empty-render candidate")
+        self.assertEqual(str(final_tracking.first().dns_record_object_id), str(remaining.id))
+        self.assertNotEqual(zone_b.id, remaining.zone.id)
+
+    def test_update_reconcile_in_place_context_change_to_empty_view_cleans_up_records(self):
+        """Test in-place context mutation to empty view render cleans up existing records."""
+        in_place_view = DNSView.objects.create(name="InPlaceView-Empty")
+        zone_name = "in-place-empty.example.com"
+        zone = DNSZone.objects.create(name=zone_name, dns_view=in_place_view)
+
+        view_selector_cf = CustomField.objects.create(
+            key="dns_view_selector_in_place",
+            label="DNS View Selector In Place",
+            type="text",
+        )
+        view_selector_cf.content_types.add(ContentType.objects.get_for_model(Prefix))
+
+        prefix = Prefix.objects.create(
+            network="172.10.1.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+        prefix.cf["dns_view_selector_in_place"] = in_place_view.name
+        prefix.validated_save()
+
+        ip = IPAddress.objects.create(
+            address="172.10.1.10/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=prefix,
+        )
+
+        dns_rule = DNSRule.objects.create(
+            name="interface-in-place-empty-view-context",
+            description="In-place context mutation for view_template",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template=zone_name,
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            view_template="{{ ip.parent.cf.dns_view_selector_in_place }}",
+            enabled=True,
+        )
+
+        # Initial create path with same attached IP candidate.
+        self.interface.ip_addresses.set([ip])
+        self.assertEqual(ARecord.objects.filter(name="eth0.test-device", zone=zone).count(), 1)
+        self.assertEqual(DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(), 1)
+
+        # In-place mutation: same attached IP, but view context now renders empty.
+        prefix.cf["dns_view_selector_in_place"] = ""
+        prefix.validated_save()
+        self.engine.process_object(self.interface, created=False)
+
+        self.assertEqual(
+            ARecord.objects.filter(name="eth0.test-device", zone=zone).count(),
+            0,
+            "Existing record should be removed after in-place context changes render view empty",
+        )
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(),
+            0,
+            "Tracking rows should be removed after in-place context changes render view empty",
+        )
+
+    def test_update_reconcile_zone_miss_cleans_up_failed_candidate_only(self):
+        """Test update reconciliation with zone miss removes only the failing candidate."""
+        view_a = DNSView.objects.create(name="UpdateZoneMissViewA")
+        view_b = DNSView.objects.create(name="UpdateZoneMissViewB")
+        view_c = DNSView.objects.create(name="UpdateZoneMissViewC")
+        zone_name = "update-zonemiss.example.com"
+        zone_a = DNSZone.objects.create(name=zone_name, dns_view=view_a)
+        zone_b = DNSZone.objects.create(name=zone_name, dns_view=view_b)
+
+        # View C intentionally lacks zone_name so zone resolution fails when selected.
+        DNSZone.objects.create(name="other-update-zonemiss.example.com", dns_view=view_c)
+
+        candidate_specs = {
+            "survive": "172.9.1.0",
+            "initial_valid": "10.9.1.0",
+            "zone_miss_on_update": "192.0.9.0",
+        }
+        candidates = {}
+        for role, network in candidate_specs.items():
+            prefix = Prefix.objects.create(
+                network=network,
+                prefix_length=24,
+                namespace=self.namespace,
+                status=self.prefix_status,
+            )
+            ip = IPAddress.objects.create(
+                address=f"{network[:-1]}10/24",
+                status=self.ip_status,
+                namespace=self.namespace,
+                parent=prefix,
+            )
+            candidates[role] = {"prefix": prefix, "ip": ip}
+
+        dns_rule = DNSRule.objects.create(
+            name="interface-update-zone-miss-candidate",
+            description="Reconcile zone miss candidate failure",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template=zone_name,
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            view_template=(
+                "{{ 'UpdateZoneMissViewA' if ip.parent.id|string == '"
+                f"{candidates['survive']['prefix'].id}"
+                "' else ('UpdateZoneMissViewB' if ip.parent.id|string in ['"
+                f"{candidates['initial_valid']['prefix'].id}"
+                "'] else 'UpdateZoneMissViewC') }}"
+            ),
+            enabled=True,
+        )
+
+        # Initial create path: two valid candidates.
+        self.interface.ip_addresses.set([candidates["survive"]["ip"], candidates["initial_valid"]["ip"]])
+        self.assertEqual(ARecord.objects.filter(name="eth0.test-device", zone__name=zone_name).count(), 2)
+        self.assertEqual(
+            {record.zone.id for record in ARecord.objects.filter(name="eth0.test-device", zone__name=zone_name)},
+            {zone_a.id, zone_b.id},
+        )
+        self.assertEqual(DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(), 2)
+
+        # Update path: candidate in view B now points to a view without the requested zone.
+        self.interface.ip_addresses.set([candidates["survive"]["ip"], candidates["zone_miss_on_update"]["ip"]])
+
+        final_records = ARecord.objects.filter(name="eth0.test-device", zone__name=zone_name)
+        self.assertEqual(final_records.count(), 1, "Only non-zone-miss candidate should remain after update")
+        remaining = final_records.first()
+        self.assertEqual(str(remaining.address_id), str(candidates["survive"]["ip"].id))
+        self.assertEqual(remaining.zone.id, zone_a.id)
+
+        final_tracking = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        self.assertEqual(final_tracking.count(), 1, "Tracking should be removed for zone-miss candidate")
+        self.assertEqual(str(final_tracking.first().dns_record_object_id), str(remaining.id))
 
     def test_interface_a_record_created_on_ip_addition_via_m2m_api(self):
         """Test that A records are created when IP is added to interface via Django M2M API."""
@@ -1438,8 +2246,8 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         self.assertEqual(interface_record.zone.name, "example.com")
         self.assertEqual(interface_record.address, self.ip_addresses[0])
 
-    def test_device_location_change_updates_dns_records(self):
-        """Test that DNS records are updated when a device moves between locations."""
+    def test_device_location_change_updates_dns_records_for_new_scope(self):
+        """Test that location changes update DNS records to match the new scope."""
         # Create second location
         location_type_2 = LocationType.objects.create(name="Site 2")
         location_type_2.content_types.add(ContentType.objects.get_for_model(Device))
@@ -1470,7 +2278,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
             value_template="{{ obj.primary_ip4 }}",
         )
 
-        # Create device in location 1 with primary IP assigned
+        # Initial state: device in location 1
         device = Device.objects.create(
             name="test-moving-device",
             device_type=self.device_type,
@@ -1483,21 +2291,170 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         device.primary_ip4 = self.ip_addresses[0]
         device.save()
 
-        # Should have location-1 record
+        # Initial assertions
         loc1_records = ARecord.objects.filter(name="test-moving-device-loc1")
         loc2_records = ARecord.objects.filter(name="test-moving-device-loc2")
         self.assertEqual(loc1_records.count(), 1)
         self.assertEqual(loc2_records.count(), 0)
 
-        # Move device to location 2; signal handlers should update DNS records
+        # Scope change: move to location 2
         device.location = location_2
         device.save()
 
-        # Should now have location-2 record, not location-1 record
+        # Post-change assertions
         loc1_records = ARecord.objects.filter(name="test-moving-device-loc1")
         loc2_records = ARecord.objects.filter(name="test-moving-device-loc2")
         self.assertEqual(loc1_records.count(), 0)
         self.assertEqual(loc2_records.count(), 1)
+
+    def test_device_location_change_uses_global_fallback_when_new_location_has_no_specific_rule(self):
+        """Test that location changes use global fallback when the new location has no specific rule."""
+        location_type_2 = LocationType.objects.create(name="Site Fallback 2")
+        location_type_2.content_types.add(ContentType.objects.get_for_model(Device))
+        location_2 = Location.objects.create(
+            name="Test Site Fallback 2",
+            location_type=location_type_2,
+            status=Status.objects.get_for_model(Location).first(),
+        )
+
+        # Global fallback rule.
+        DNSRule.objects.create(
+            name="global-device-fallback-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=None,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-global",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        # Location-1-specific rule should override global while in location 1.
+        DNSRule.objects.create(
+            name="location-1-specific-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=self.location,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-loc1",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        # Initial state: device in location 1
+        device = Device.objects.create(
+            name="test-moving-device-fallback",
+            device_type=self.device_type,
+            location=self.location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        device.primary_ip4 = self.ip_addresses[0]
+        device.save()
+
+        # Initial assertions
+        self.assertEqual(ARecord.objects.filter(name="test-moving-device-fallback-loc1").count(), 1)
+        self.assertEqual(ARecord.objects.filter(name="test-moving-device-fallback-global").count(), 0)
+
+        # Scope change: move to location 2 with no location-specific rule
+        device.location = location_2
+        device.save()
+
+        # Post-change assertions
+        self.assertEqual(ARecord.objects.filter(name="test-moving-device-fallback-loc1").count(), 0)
+        self.assertEqual(ARecord.objects.filter(name="test-moving-device-fallback-global").count(), 1)
+
+    def test_device_tenant_change_updates_dns_records_for_new_scope(self):
+        """Test that tenant changes update DNS records to match the new scope."""
+        tenant_2 = Tenant.objects.create(name="Test Tenant 2")
+
+        DNSRule.objects.create(
+            name="tenant-1-device-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            tenant=self.tenant,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-tenant1",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+        DNSRule.objects.create(
+            name="tenant-2-device-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            tenant=tenant_2,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-tenant2",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        # Initial state: device in tenant 1
+        device = Device.objects.create(
+            name="test-moving-tenant-device",
+            device_type=self.device_type,
+            location=self.location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        device.primary_ip4 = self.ip_addresses[0]
+        device.save()
+
+        # Initial assertions
+        self.assertEqual(ARecord.objects.filter(name="test-moving-tenant-device-tenant1").count(), 1)
+        self.assertEqual(ARecord.objects.filter(name="test-moving-tenant-device-tenant2").count(), 0)
+
+        # Scope change: move to tenant 2
+        device.tenant = tenant_2
+        device.save()
+
+        # Post-change assertions
+        self.assertEqual(ARecord.objects.filter(name="test-moving-tenant-device-tenant1").count(), 0)
+        self.assertEqual(ARecord.objects.filter(name="test-moving-tenant-device-tenant2").count(), 1)
+
+    def test_device_tenant_change_uses_global_fallback_when_new_tenant_has_no_specific_rule(self):
+        """Test that tenant changes use global fallback when the new tenant has no specific rule."""
+        tenant_2 = Tenant.objects.create(name="Test Tenant Fallback 2")
+
+        DNSRule.objects.create(
+            name="global-device-tenant-fallback-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            location=None,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-global",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+        DNSRule.objects.create(
+            name="tenant-1-specific-device-rule",
+            content_type=ContentType.objects.get_for_model(Device),
+            tenant=self.tenant,
+            zone_template="example.com",
+            record_type="A",
+            name_template="{{ obj.name }}-tenant1",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        # Initial state: device in tenant 1
+        device = Device.objects.create(
+            name="test-moving-tenant-fallback-device",
+            device_type=self.device_type,
+            location=self.location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        device.primary_ip4 = self.ip_addresses[0]
+        device.save()
+
+        # Initial assertions
+        self.assertEqual(ARecord.objects.filter(name="test-moving-tenant-fallback-device-tenant1").count(), 1)
+        self.assertEqual(ARecord.objects.filter(name="test-moving-tenant-fallback-device-global").count(), 0)
+
+        # Scope change: move to tenant 2 with no tenant-specific rule
+        device.tenant = tenant_2
+        device.save()
+
+        # Post-change assertions
+        self.assertEqual(ARecord.objects.filter(name="test-moving-tenant-fallback-device-tenant1").count(), 0)
+        self.assertEqual(ARecord.objects.filter(name="test-moving-tenant-fallback-device-global").count(), 1)
 
     def test_multi_record_cleanup_on_ip_removal(self):
         """

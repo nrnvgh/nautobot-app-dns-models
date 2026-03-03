@@ -14,6 +14,7 @@ All templates have access to the triggering object as `obj` and can traverse Dja
 {{ obj.name }}                    # Object name
 {{ obj.device.name }}             # Related device name
 {{ obj.device.location.name }}    # Device location name
+{{ obj.ip_addresses.first() }}    # First IP address on the interface
 ```
 
 ### `Device` Examples
@@ -21,7 +22,7 @@ All templates have access to the triggering object as `obj` and can traverse Dja
 {{ obj.primary_ip4.address }}     # Primary IP address object (e.g. for devices)
 ```
 
-### Service Object Examples
+### `Service` Examples
 
 Service objects provide access to their parent (device or virtual machine) and service-specific fields:
 
@@ -56,7 +57,7 @@ Every DNS rule must define these core templates:
 
 **Purpose**: Convert IP address objects to DNS record values for A/AAAA records.
 
-**Usage**:
+**Usage**
 
 - `{{ obj.primary_ip4 }}` - Creates 1 A record
 - `{{ obj.ip_addresses.all() }}` - Creates 1 record per IP address  
@@ -68,14 +69,14 @@ Every DNS rule must define these core templates:
 
 ### Device Templates
 
-**Basic Device A Record**:
+**Basic Device A Record**
 ```jinja2
 Zone Template: example.com
 Name Template: {{ obj.name }}
 Value Template: {{ obj.primary_ip4 }}
 ```
 
-**Location-Aware Device Record**:
+**Location-Aware Device Record**
 ```jinja2
 Zone Template: {{ obj.location.name | lower }}.example.com
 Name Template: {{ obj.name }}
@@ -84,7 +85,7 @@ Value Template: {{ obj.primary_ip4 }}
 
 ### Interface Templates
 
-**Interface A Records or AAAA (Multi-IP)**:
+**Interface A Records or AAAA (Multi-IP)**
 ```jinja2
 Zone Template: example.com
 Name Template: {{ obj.name }}.{{ obj.device.name }}
@@ -93,14 +94,14 @@ Value Template: {{ obj.ip_addresses.all() }}
 
 ### Service Templates
 
-**Basic Service A or AAAA Record**:
+**Basic Service A or AAAA Record**
 ```jinja2
 Zone Template: services.example.com
 Name Template: {{ obj.name }}
 Value Template: {{ obj.ip_addresses.all() }}
 ```
 
-**Service with Parent Context**:
+**Service with Parent Context**
 ```jinja2
 # Device-attached service
 Zone Template: {{ obj.device.location.name | lower }}.example.com
@@ -113,7 +114,7 @@ Name Template: {{ obj.name }}.{{ obj.virtual_machine.name }}
 Value Template: {{ obj.ip_addresses.all() }}
 ```
 
-**Conditional Service Templates**:
+**Conditional Service Templates**
 ```jinja2
 # Handle both device and VM-attached services
 Zone Template: {% if obj.device %}{{ obj.device.location.name }}{% else %}{{ obj.virtual_machine.cluster.location.name }}{% endif %}.example.com
@@ -125,7 +126,7 @@ Value Template: {{ obj.ip_addresses.all() }}
 
 ### Conditional Logic
 
-**Handle Optional Fields**:
+**Handle Optional Fields**
 ```jinja2
 {% if obj.primary_ip4 %}
 {{ obj.primary_ip4 }}
@@ -134,7 +135,7 @@ Value Template: {{ obj.ip_addresses.all() }}
 {% endif %}
 ```
 
-**Location-Specific Behavior**:
+**Location-Specific Behavior**
 ```jinja2
 {% if obj.device.location.name == "London" %}
 {{ obj.name }}.lon.example.com
@@ -145,12 +146,12 @@ Value Template: {{ obj.ip_addresses.all() }}
 
 ### Complex Naming Schemes
 
-**Hierarchical Names**:
+**Hierarchical Names**
 ```jinja2
 {{ obj.name }}.{{ obj.device.rack.name }}.{{ obj.device.location.name }}
 ```
 
-**Role-Based Names**:
+**Role-Based Names**
 ```jinja2
 {% if obj.device.role.name == "Web Server" %}
 web-{{ obj.name }}
@@ -159,6 +160,78 @@ db-{{ obj.name }}
 {% else %}
 {{ obj.name }}
 {% endif %}
+```
+
+### DNS View Selection by IP
+
+These patterns are intended for `view_template` and rely on per-candidate context (`ip`) when processing A/AAAA records.
+
+**Prefix-Based View Selection**
+A naive example which shows what's possible:
+
+```jinja2
+{{ "RestrictedView" if ip.parent.prefix|string == "172.1.1.0/24" else "InternalView" }}
+```
+
+**Ancestor Walk with Default Fallback**
+Walk parent prefixes from most specific to least specific, use the first `cf.dns_view` value found, and fall back to `Default` if none is set.
+```jinja2
+{%- set ns = namespace(current=ip.parent, value=None) -%}
+{%- for _ in range(20) -%}
+  {%- if not ns.current -%}
+    {%- break -%}
+  {%- endif -%}
+  {%- if ns.current.cf.dns_view -%}
+    {%- set ns.value = ns.current.cf.dns_view -%}
+    {%- break -%}
+  {%- endif -%}
+  {%- set ns.current = ns.current.parent -%}
+{%- endfor -%}
+{{ ns.value or "Default" }}
+```
+
+**Relationship-Based View Resolution via IPAddress Computed Field**
+
+Use this pattern when DNS view intent is modeled as a relationship on `Prefix` (instead of a custom field), and the DNS rule should consume the resolved view from the `IPAddress`.
+
+1. Create a relationship on `Prefix` that points to the DNS View object (or an object that can provide a DNS view name).
+2. Add an `IPAddress` computed field (for example `dns_view_relationship`) that walks parent prefixes until it finds the first prefix with that relationship set.
+3. Use that computed field in the DNS rule `view_template`.
+
+Example `view_template`:
+```jinja2
+{{ ip.get_computed_fields()["dns_view_relationship"] }}
+```
+
+Note: returning `Default` from the computed field itself is often preferable to applying fallback in `view_template`. This keeps fallback behavior centralized and reusable, so every rule that consumes the computed field gets the same resolution semantics. It also ensures that all `IPAddress` objects will have an explicit value set for their view.
+
+Example `IPAddress` computed field template (pattern):
+```jinja2
+{# Computed Field template for IPAddress objects #}
+{#- Expects relationship key: prefix-to-dns_view (adjust if your key is prefix_to_dns_view) -#}
+
+{%- set relationship_key = "prefix_to_dns_view" -%}
+{%- set resolved = namespace(value="") -%}
+
+{%- if obj.parent -%}
+  {%- for prefix in obj.parent.supernets(include_self=True).order_by("-prefix_length") -%}
+    {%- if not resolved.value -%}
+      {%- set rels = prefix.get_relationships_with_related_objects(include_hidden=True).source -%}
+      {%- for relationship, related in rels.items() -%}
+        {%- if relationship.key == relationship_key and related -%}
+          {%- set joined = namespace(text="") -%}
+          {%- for dns_view in related -%}
+            {%- if joined.text -%}{%- set joined.text = joined.text ~ ", " -%}{%- endif -%}
+            {%- set joined.text = joined.text ~ dns_view.name -%}
+          {%- endfor -%}
+          {%- set resolved.value = joined.text -%}
+        {%- endif -%}
+      {%- endfor -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endif -%}
+
+{{ resolved.value or "Default" }}
 ```
 
 ## Template Validation
@@ -173,7 +246,7 @@ Templates are validated when rules are saved:
 
 ### Testing Templates
 
-**Recommended Approach**:
+**Recommended Approach**
 
 1. Create rule with simple templates first
 2. Test with representative objects
@@ -184,24 +257,24 @@ Templates are validated when rules are saved:
 
 ### Undefined Variables
 
-**Problem**:
+**Problem**
 ```jinja2
 {{ obj.nonexistent_field }}  # Field doesn't exist
 ```
 
-**Solution**:
+**Solution**
 ```jinja2
 {{ obj.nonexistent_field | default('fallback-value') }}
 ```
 
 ### Missing Related Objects
 
-**Problem**:
+**Problem**
 ```jinja2
 {{ obj.primary_ip4.address }}  # When primary_ip4 is None
 ```
 
-**Solution**:
+**Solution**
 The rendering engine expects a Nautobot `IPAddress` object, so referencing the `.address` attribute, which isn't an `IPAddress` object, will do no good. Use this:
 
 ```jinja2
