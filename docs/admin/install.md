@@ -76,3 +76,91 @@ This setting controls the DNS validation level applied to zones and records:
     - Each label (the parts of the name separated by dots) must be no more than 63 bytes in wire format
     - Empty labels (e.g., consecutive dots or leading/trailing dots) are not allowed
     - The total length of the fully qualified DNS name (including all dots, in wire format) must not exceed 255 bytes
+
+## Logging
+
+`nautobot_dns_models` emits hybrid logs: human-readable messages plus structured fields in the Python logging `extra` payload.
+
+To include structured fields in output, customize logging in `nautobot_config.py` by adding a formatter/handler for the `nautobot_dns_models` logger. For example, to render `phase`:
+
+```python
+LOGGING = {
+    # ...
+    "formatters": {
+        "dns_models": {
+            "()": "logging.Formatter",
+            "format": "%(asctime)s %(levelname)s %(name)s phase=%(phase)s : %(message)s",
+            "defaults": {"phase": "-"},
+        },
+    },
+    "handlers": {
+        "dns_models_console": {
+            "class": "logging.StreamHandler",
+            "formatter": "dns_models",
+        },
+    },
+    "loggers": {
+        "nautobot_dns_models": {
+            "handlers": ["dns_models_console"],
+            "level": "INFO",
+        },
+    },
+}
+```
+
+If a formatter references fields such as `%(phase)s`, use formatter defaults (or a plugin-specific handler) so non-plugin logs do not fail formatting.
+
+Structured fields currently emitted include:
+
+- `event` - Static event namespace for plugin engine logs.
+- `reason_code` - Stable machine-readable reason for warning/error conditions.
+- `phase` - Processing phase, such as `create` or `update_reconcile`.
+- `rule_id` - UUID of the `DNSRule` being evaluated.
+- `rule_name` - Human-readable name of the `DNSRule`.
+- `record_type` - DNS record type targeted by the rule, such as `A` or `AAAA`.
+- `source_ct` - Source object content type label, for example `dcim.interface`.
+- `source_id` - UUID of the source object being processed.
+- `source_repr` - String representation of the source object.
+- `exception_type` - Exception class name when an exception is logged.
+- `error` - Exception message when an exception is logged.
+- `cleanup` - Boolean indicating whether cleanup/removal was attempted.
+- `candidate_address_id` - Candidate IP address UUID for per-candidate logs.
+- `candidate_name` - Rendered DNS record name for a candidate.
+- `candidate_zone_id` - DNS zone UUID selected for the candidate.
+- `existing_count` - Number of existing tracked records for reconciliation.
+- `desired_count` - Number of desired records computed during reconciliation.
+- `keep_count` - Number of records preserved because they already match desired state.
+- `create_count` - Number of records created in the reconciliation pass.
+- `delete_count` - Number of records deleted in the reconciliation pass.
+- `skipped_count` - Number of desired candidates skipped due to failures.
+
+If your logging pipeline expects structured output, you can configure the plugin logger with a JSON formatter instead of a text formatter. For example:
+
+```python
+LOGGING = {
+    # ...
+    "formatters": {
+        "dns_models_json": {
+            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+            "format": (
+                "%(asctime)s %(levelname)s %(name)s %(message)s %(event)s %(reason_code)s "
+                "%(phase)s %(rule_id)s %(rule_name)s %(record_type)s %(source_ct)s %(source_id)s"
+            ),
+        },
+    },
+    "handlers": {
+        "dns_models_json_console": {
+            "class": "logging.StreamHandler",
+            "formatter": "dns_models_json",
+        },
+    },
+    "loggers": {
+        "nautobot_dns_models": {
+            "handlers": ["dns_models_json_console"],
+            "level": "INFO",
+        },
+    },
+}
+```
+
+This example uses `python-json-logger`. If you use a different JSON logging library, replace the formatter class accordingly.

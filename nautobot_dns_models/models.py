@@ -666,7 +666,6 @@ class DNSRule(PrimaryModel):
         """
         # Missing required fields is a larger issue that will be handled automatically, but since we
         # use them in the if block, we need to return before the if block if they're in the exclude list.
-        logger.debug(f"validate_unique() called with exclude: {exclude}")
         exclude = exclude or []
         if "content_type" in exclude or "record_type" in exclude or "enabled" in exclude:
             super().validate_unique(exclude)

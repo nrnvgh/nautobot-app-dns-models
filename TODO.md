@@ -66,7 +66,7 @@
   - Issue: behavior for bullet point 3 (update-path reconciliation mixes) and bullet point 4b (previously valid then all candidates fail) is not explicitly documented.
   - Done when: user docs clearly explain expected record/tracking behavior for both scenarios.
 
-- [ ] `improve-view-template-observability`
+- [x] `improve-view-template-observability`
   - Issue: warning/error logs for per-candidate skips should be more operator-friendly.
   - Done when: logs include enough context (rule, source object, candidate/rdata, reason) to troubleshoot quickly.
 

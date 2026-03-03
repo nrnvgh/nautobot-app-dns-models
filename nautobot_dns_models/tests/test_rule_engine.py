@@ -2850,6 +2850,86 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
                 self.assertEqual(rule_records.count(), 2, f"Should have two tracking records for {record_type}")
 
 
+class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
+    """Structured logging field coverage for DNS rule engine helpers."""
+
+    def test_build_log_extra_exposes_candidate_and_error_fields(self):
+        """Ensure structured extra contains documented candidate/error fields."""
+        rule = DNSRule.objects.create(
+            name="logging-extra-fields-rule",
+            description="Structured logging field coverage",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=True,
+        )
+        record_data = {"address_id": str(self.ip_addresses[0].pk), "name": "eth0.test-device", "zone": self.dns_zone}
+        exc = ValidationError("test logging error")
+
+        # pylint: disable=protected-access
+        extra = self.engine._build_log_extra(
+            rule=rule,
+            source_obj=self.interface,
+            reason_code="TEST_REASON",
+            phase="create",
+            exc=exc,
+            record_data=record_data,
+            cleanup=False,
+        )
+
+        expected_keys = {
+            "event",
+            "reason_code",
+            "phase",
+            "rule_id",
+            "rule_name",
+            "record_type",
+            "source_ct",
+            "source_id",
+            "source_repr",
+            "exception_type",
+            "error",
+            "cleanup",
+            "candidate_address_id",
+            "candidate_name",
+            "candidate_zone_id",
+        }
+        self.assertEqual(set(extra.keys()), expected_keys)
+
+    def test_reconcile_summary_exposes_count_fields(self):
+        """Ensure reconcile summary logging includes documented count fields."""
+        rule = DNSRule.objects.create(
+            name="logging-summary-fields-rule",
+            description="Structured logging summary coverage",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=True,
+        )
+        counts = {"existing": 4, "desired": 3, "keep": 2, "create": 1, "delete": 2, "skipped": 0}
+
+        with patch("nautobot_dns_models.rules.engine.logger.info") as mock_info:
+            # pylint: disable=protected-access
+            self.engine._log_reconcile_summary(rule=rule, source_obj=self.interface, counts=counts)
+
+        self.assertTrue(mock_info.called)
+        _, kwargs = mock_info.call_args
+        extra = kwargs["extra"]
+
+        expected_count_keys = {"existing_count", "desired_count", "keep_count", "create_count", "delete_count", "skipped_count"}
+        self.assertTrue(expected_count_keys.issubset(extra.keys()))
+        self.assertEqual(extra["existing_count"], counts["existing"])
+        self.assertEqual(extra["desired_count"], counts["desired"])
+        self.assertEqual(extra["keep_count"], counts["keep"])
+        self.assertEqual(extra["create_count"], counts["create"])
+        self.assertEqual(extra["delete_count"], counts["delete"])
+        self.assertEqual(extra["skipped_count"], counts["skipped"])
+
+
 class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
     """Template validation, runtime errors, filter validation."""
 

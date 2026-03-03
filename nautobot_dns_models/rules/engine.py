@@ -29,6 +29,23 @@ from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
 logger = logging.getLogger(__name__)
 
+# Candidate/rule processing reason codes used for warning/error logs.
+REASON_VIEW_TEMPLATE_EMPTY = "VIEW_TEMPLATE_EMPTY"
+REASON_VIEW_NOT_FOUND = "VIEW_NOT_FOUND"
+REASON_ZONE_NOT_FOUND = "ZONE_NOT_FOUND"
+REASON_CANDIDATE_TEMPLATE_ERROR = "CANDIDATE_TEMPLATE_ERROR"
+REASON_CANDIDATE_ERROR = "CANDIDATE_ERROR"
+REASON_RECORD_VALIDATION_ERROR = "RECORD_VALIDATION_ERROR"
+REASON_RECORD_INTEGRITY_ERROR = "RECORD_INTEGRITY_ERROR"
+REASON_RULE_PROCESSING_ERROR = "RULE_PROCESSING_ERROR"
+REASON_INVALID_ADDRESS_UUID = "INVALID_ADDRESS_UUID"
+
+# Phase labels used for log consistency and queryability.
+PHASE_CREATE = "create"
+PHASE_UPDATE_RECONCILE = "update_reconcile"
+PHASE_CANDIDATE_EXPANSION = "candidate_expansion"
+PHASE_UNKNOWN = "unknown"
+
 
 class DNSRuleEngine:
     """Engine for processing DNS rules and creating DNS records."""
@@ -92,6 +109,176 @@ class DNSRuleEngine:
     # Internal methods
     #
 
+    @staticmethod
+    def _safe_model_label(obj: Any) -> str:
+        """Return model label if available, else object type name."""
+        meta = getattr(obj, "_meta", None)
+        return getattr(meta, "label_lower", obj.__class__.__name__)
+
+    def _build_log_extra(
+        self,
+        rule: DNSRule,
+        source_obj: Any,
+        reason_code: str,
+        phase: str,
+        exc: Exception | None = None,
+        record_data: dict[str, Any] | None = None,
+        cleanup: bool | None = None,
+    ) -> dict[str, Any]:
+        """Build structured logging context for hybrid log output."""
+        extra = {
+            "event": "dnsrule_engine",
+            "reason_code": reason_code,
+            "phase": phase,
+            "rule_id": str(rule.pk),
+            "rule_name": rule.name,
+            "record_type": rule.record_type,
+            "source_ct": self._safe_model_label(source_obj),
+            "source_id": str(source_obj.pk),
+            "source_repr": str(source_obj),
+        }
+
+        if exc is not None:
+            extra["exception_type"] = type(exc).__name__
+            extra["error"] = str(exc)
+
+        if cleanup is not None:
+            extra["cleanup"] = cleanup
+
+        if record_data is not None:
+            extra["candidate_address_id"] = str(record_data.get("address_id", ""))
+            extra["candidate_name"] = record_data.get("name")
+            zone = record_data.get("zone")
+            extra["candidate_zone_id"] = str(getattr(zone, "id", "")) if zone is not None else ""
+
+        return extra
+
+    @staticmethod
+    def _infer_reason_code(exc: Exception, default_reason: str) -> str:
+        """Infer stable reason code from known exception shapes."""
+        if isinstance(exc, DNSTemplateEmptyError):
+            message = str(exc)
+            if "view_template" in message:
+                return REASON_VIEW_TEMPLATE_EMPTY
+            return REASON_CANDIDATE_TEMPLATE_ERROR
+
+        if isinstance(exc, TemplateError):
+            return REASON_CANDIDATE_TEMPLATE_ERROR
+
+        if isinstance(exc, ValidationError):
+            message_dict = getattr(exc, "message_dict", {})
+            view_errors = " ".join(message_dict.get("view_template", []))
+            if "rendered no DNS view names" in view_errors:
+                return REASON_VIEW_TEMPLATE_EMPTY
+            if "not found from view_template" in view_errors:
+                return REASON_VIEW_NOT_FOUND
+
+            zone_errors = " ".join(message_dict.get("zone_template", []))
+            if "does not exist in selected DNS view" in zone_errors:
+                return REASON_ZONE_NOT_FOUND
+
+        return default_reason
+
+    def _log_rule_processing_error(
+        self, rule: DNSRule, source_obj: Any, exc: Exception, phase: str, cleanup: bool = False
+    ) -> None:
+        """Emit hybrid warning for top-level rule processing failures."""
+        reason_code = self._infer_reason_code(exc, REASON_RULE_PROCESSING_ERROR)
+        logger.warning(
+            "dnsrule_rule_failed reason=%s rule=%s source=%s:%s cleanup=%s error=%s",
+            reason_code,
+            rule.name,
+            self._safe_model_label(source_obj),
+            source_obj.pk,
+            cleanup,
+            exc,
+            extra=self._build_log_extra(
+                rule=rule,
+                source_obj=source_obj,
+                reason_code=reason_code,
+                phase=phase,
+                exc=exc,
+                cleanup=cleanup,
+            ),
+        )
+
+    def _log_candidate_skip(
+        self, rule: DNSRule, source_obj: Any, record_data: dict[str, Any], exc: Exception, phase: str
+    ) -> None:
+        """Emit hybrid warning for per-candidate skip decisions."""
+        reason_code = self._infer_reason_code(exc, REASON_CANDIDATE_ERROR)
+        logger.warning(
+            "dnsrule_candidate_skipped reason=%s rule=%s source=%s:%s addr=%s error=%s",
+            reason_code,
+            rule.name,
+            self._safe_model_label(source_obj),
+            source_obj.pk,
+            record_data.get("address_id"),
+            exc,
+            extra=self._build_log_extra(
+                rule=rule,
+                source_obj=source_obj,
+                reason_code=reason_code,
+                phase=phase,
+                exc=exc,
+                record_data=record_data,
+            ),
+        )
+
+    def _log_record_create_failure(
+        self, rule: DNSRule, source_obj: Any, record_data: dict[str, Any], exc: Exception, phase: str
+    ) -> None:
+        """Emit hybrid warning for record creation failures."""
+        reason_code = (
+            REASON_RECORD_INTEGRITY_ERROR if isinstance(exc, IntegrityError) else REASON_RECORD_VALIDATION_ERROR
+        )
+        logger.warning(
+            "dnsrule_record_create_failed reason=%s rule=%s source=%s:%s addr=%s error=%s",
+            reason_code,
+            rule.name,
+            self._safe_model_label(source_obj),
+            source_obj.pk,
+            record_data.get("address_id"),
+            exc,
+            extra=self._build_log_extra(
+                rule=rule,
+                source_obj=source_obj,
+                reason_code=reason_code,
+                phase=phase,
+                exc=exc,
+                record_data=record_data,
+            ),
+        )
+
+    def _log_reconcile_summary(self, rule: DNSRule, source_obj: Any, counts: dict[str, int]) -> None:
+        """Emit per-rule reconciliation outcome summary."""
+        logger.info(
+            "dnsrule_reconcile_summary rule=%s source=%s:%s existing=%s desired=%s keep=%s create=%s delete=%s skipped=%s",
+            rule.name,
+            self._safe_model_label(source_obj),
+            source_obj.pk,
+            counts["existing"],
+            counts["desired"],
+            counts["keep"],
+            counts["create"],
+            counts["delete"],
+            counts["skipped"],
+            extra={
+                **self._build_log_extra(
+                    rule=rule,
+                    source_obj=source_obj,
+                    reason_code="RECONCILE_SUMMARY",
+                    phase=PHASE_UPDATE_RECONCILE,
+                ),
+                "existing_count": counts["existing"],
+                "desired_count": counts["desired"],
+                "keep_count": counts["keep"],
+                "create_count": counts["create"],
+                "delete_count": counts["delete"],
+                "skipped_count": counts["skipped"],
+            },
+        )
+
     def _create_dns_records_for_object(self, source_obj: Any, applicable_rules: django_models.QuerySet) -> None:
         """
         Create DNS records for an object by processing all applicable rules.
@@ -119,7 +306,7 @@ class DNSRuleEngine:
                 #     for record in created_records:
                 #         logger.debug(f"Created record: {record}")
             except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                logger.warning("Rule %s failed for %s: %s", rule.name, source_obj, exc)
+                self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_CREATE, cleanup=False)
                 continue
 
     def _object_needs_dns_records_for_rule(self, source_obj: Any, rule: DNSRule) -> bool:
@@ -131,14 +318,19 @@ class DNSRuleEngine:
             rule: The rule to check
         """
         if rule.record_type in ("A", "AAAA"):
+            target_ip_version = 4 if rule.record_type == "A" else 6
+
             if isinstance(source_obj, (dcim_models.Interface, virtualization_models.VMInterface)):
-                return source_obj.ip_addresses.count() > 0
+                return source_obj.ip_addresses.filter(ip_version=target_ip_version).exists()
+
             if isinstance(source_obj, (dcim_models.Device, virtualization_models.VirtualMachine)):
                 return (rule.record_type == "A" and source_obj.primary_ip4 is not None) or (
                     rule.record_type == "AAAA" and source_obj.primary_ip6 is not None
                 )
+
             if isinstance(source_obj, ipam_models.Service):
-                return source_obj.ip_addresses.count() > 0
+                return source_obj.ip_addresses.filter(ip_version=target_ip_version).exists()
+
             return False
 
         #
@@ -164,15 +356,32 @@ class DNSRuleEngine:
             Empty result indicates template/data issues, not programming errors.
         """
         # logger.debug(f"create_dns_record_from_rule: {rule} / {source_obj}")
+        logger.debug(
+            "dnsrule_create_probe rule=%s source=%s:%s",
+            rule.name,
+            self._safe_model_label(source_obj),
+            source_obj.pk,
+            extra={
+                "event": "dnsrule_engine",
+                "phase": PHASE_CREATE,
+                "rule_id": str(rule.pk),
+                "rule_name": rule.name,
+                "record_type": rule.record_type,
+                "source_ct": self._safe_model_label(source_obj),
+                "source_id": str(source_obj.pk),
+            },
+        )
 
         # Calculate what DNS records should exist (reuses update logic)
-        desired_record_data_list = self._calculate_desired_record_data(rule, source_obj)
+        desired_record_data_list = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_CREATE)
         if not desired_record_data_list:
             # logger.debug(f"No record data generated for rule {rule.name}")
             return []
 
         # Create DNS records and tracking records (reuses update logic)
-        created_records = self._create_records_from_data(rule, source_obj, desired_record_data_list)
+        created_records = self._create_records_from_data(
+            rule, source_obj, desired_record_data_list, phase=PHASE_CREATE
+        )
 
         # logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
         return created_records
@@ -189,7 +398,6 @@ class DNSRuleEngine:
             applicable_rules: Pre-fetched QuerySet of applicable rules
         """
         # logger.debug(f"[_update_dns_records_for_object] {source_obj} / {applicable_rules}")
-
         # Clean up records from rules that are no longer applicable
         self._cleanup_orphaned_records(source_obj, applicable_rules)
 
@@ -205,12 +413,8 @@ class DNSRuleEngine:
             try:
                 self._reconcile_records_for_rule(rule, source_obj)
             except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                logger.warning(
-                    "[%s] Error for rule %s on %s: %s - cleaning up records",
-                    type(exc).__name__,
-                    rule.name,
-                    source_obj,
-                    exc,
+                self._log_rule_processing_error(
+                    rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
                 )
                 self._cleanup_records_for_rule(rule, source_obj)
 
@@ -429,17 +633,33 @@ class DNSRuleEngine:
             pass
 
         # STEP 4: Create missing records
+        created_records = []
         if records_to_create:
             records_to_create_data = [desired_records_by_content[key] for key in records_to_create]
             # logger.debug(f"Creating {len(records_to_create_data)} new records for {rule.name}")
-            self._create_records_from_data(rule, source_obj, records_to_create_data)
+            created_records = self._create_records_from_data(
+                rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
+            )
             # logger.debug(f"Created {len(created_records)} records for '{rule.name}' on {source_obj}")
 
         # STEP 5: Log summary
-        # total_after = len(records_to_keep) + len(records_to_create)
-        # logger.debug(f"Reconciliation complete for {rule.name}: {total_after} total records")
+        skipped_create = len(records_to_create) - len(created_records)
+        self._log_reconcile_summary(
+            rule=rule,
+            source_obj=source_obj,
+            counts={
+                "existing": len(existing_keys),
+                "desired": len(desired_keys),
+                "keep": len(records_to_keep),
+                "create": len(created_records),
+                "delete": len(records_to_delete),
+                "skipped": skipped_create,
+            },
+        )
 
-    def _calculate_desired_record_data(self, rule: DNSRule, source_obj: Any) -> list[dict[str, Any]]:
+    def _calculate_desired_record_data(
+        self, rule: DNSRule, source_obj: Any, phase: str = PHASE_UNKNOWN
+    ) -> list[dict[str, Any]]:
         """Calculate what DNS record data should exist (without creating records)."""
         base_context = {"obj": wrap_for_template(source_obj)}
 
@@ -458,13 +678,7 @@ class DNSRuleEngine:
                 for zone in zones:
                     all_record_data.append({**record_data, "zone": zone})
             except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
-                logger.warning(
-                    "Skipping DNS record candidate for rule %s due to per-record error: %s (%s). Data: %s",
-                    rule.name,
-                    exc,
-                    type(exc).__name__,
-                    record_data,
-                )
+                self._log_candidate_skip(rule, source_obj, record_data, exc, phase=phase)
                 continue
 
         return all_record_data
@@ -565,7 +779,7 @@ class DNSRuleEngine:
         return existing_records_by_content
 
     def _get_desired_records_by_rule_and_object(self, rule: DNSRule, source_obj: Any) -> dict[str, dict[str, Any]]:
-        desired_record_data = self._calculate_desired_record_data(rule, source_obj)
+        desired_record_data = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_UPDATE_RECONCILE)
         desired_records_by_content = {}
         for record_data in desired_record_data:
             content_key = self._get_record_content_key_from_data(record_data, rule.record_type)
@@ -606,7 +820,7 @@ class DNSRuleEngine:
             self._cleanup_records_for_rule(tracking_record.rule, source_obj)
 
     def _create_records_from_data(
-        self, rule: DNSRule, source_obj: Any, record_data_list: list[dict[str, Any]]
+        self, rule: DNSRule, source_obj: Any, record_data_list: list[dict[str, Any]], phase: str = PHASE_UNKNOWN
     ) -> list[Any]:
         """Create DNS records and tracking records from prepared data, returning the created DNS records."""
         record_class = self._get_record_class(rule.record_type)
@@ -628,14 +842,7 @@ class DNSRuleEngine:
                         dns_record_object_id=dns_record.id,
                     )
             except (ValidationError, IntegrityError) as exc:
-                logger.warning(
-                    "Failed to create DNS record from rule %s for %s: %s (%s)",
-                    rule.name,
-                    source_obj,
-                    exc,
-                    type(exc).__name__,
-                )
-                logger.warning("Record data: %s", record_data)
+                self._log_record_create_failure(rule, source_obj, record_data, exc, phase=phase)
                 continue
 
             created_records.append(dns_record)
@@ -795,9 +1002,19 @@ class DNSRuleEngine:
                 uuid.UUID(address_id)
             except ValueError:
                 logger.warning(
-                    "Skipping record for rule %s: invalid UUID '%s'",
+                    "dnsrule_candidate_skipped reason=%s rule=%s invalid_address_id=%s",
+                    REASON_INVALID_ADDRESS_UUID,
                     rule.name,
                     address_id,
+                    extra={
+                        "event": "dnsrule_engine",
+                        "reason_code": REASON_INVALID_ADDRESS_UUID,
+                        "phase": PHASE_CANDIDATE_EXPANSION,
+                        "rule_id": str(rule.pk),
+                        "rule_name": rule.name,
+                        "record_type": rule.record_type,
+                        "invalid_address_id": address_id,
+                    },
                 )
                 continue
 
