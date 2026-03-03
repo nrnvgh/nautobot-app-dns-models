@@ -3441,8 +3441,10 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
         )
         self.interface.ip_addresses.clear()
 
-        with self.assertRaises(DNSTemplateEmptyError):
+        with self.assertRaises(DNSTemplateEmptyError) as context:
             self._calc_desired_record_data(rule, self.interface)
+
+        self.assertIn("Template value_template rendered empty", str(context.exception))
 
     def test_interface_filter_first_and_last(self):
         """Interface filter(...).first()/last() should render UUIDs respecting the filter."""

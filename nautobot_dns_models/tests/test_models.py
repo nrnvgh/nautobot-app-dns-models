@@ -1007,7 +1007,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         )
 
         # Attempt to create another rule with the same name
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(ValidationError) as context:
             duplicate_rule = DNSRule(
                 name="unique-test",
                 content_type=self.content_type_device,
@@ -1015,8 +1015,11 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 record_type="A",
                 name_template="{{ obj.name }}",
                 value_template="{{ obj.primary_ip4 }}",
+                enabled=False,
             )
             duplicate_rule.full_clean()
+        self.assertIn("name", context.exception.message_dict)
+        self.assertIn("already exists", context.exception.message_dict["name"][0])
 
     def test_dnsrule_record_type_choices(self):
         """Test that DNSRule record_type validates against DNSRecordTypeChoices."""
@@ -1037,7 +1040,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             rule.full_clean()  # Should not raise
 
         # Test invalid record type
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(ValidationError) as context:
             invalid_rule = DNSRule(
                 name="invalid-type",
                 content_type=self.content_type_device,
@@ -1047,6 +1050,8 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 value_template="test-value",
             )
             invalid_rule.full_clean()
+        self.assertIn("record_type", context.exception.message_dict)
+        self.assertIn("not a valid choice", context.exception.message_dict["record_type"][0])
 
     def test_get_absolute_url(self):
         """Test DNSRule get_absolute_url method."""
@@ -1117,7 +1122,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
 
     def test_dnsrule_value_template_required(self):
         """Test that value_template is required and cannot be omitted."""
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(ValidationError) as context:
             rule = DNSRule(
                 name="missing-value-template",
                 content_type=self.content_type_device,
@@ -1127,63 +1132,76 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 # value_template is intentionally omitted
             )
             rule.full_clean()
+        self.assertIn("value_template", context.exception.message_dict)
+        self.assertIn("This field cannot be blank.", context.exception.message_dict["value_template"][0])
 
     def test_dnsrule_required_fields_validation(self):
         """Test that all required fields throw validation errors when missing."""
-        # Test missing name
-        with self.assertRaises(ValidationError):
-            rule = DNSRule(
-                content_type=self.content_type_device,
-                zone_template="test.com",
-                record_type="A",
-                name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4 }}",
-            )
-            rule.full_clean()
+        test_cases = [
+            (
+                "name",
+                {
+                    "content_type": self.content_type_device,
+                    "zone_template": "test.com",
+                    "record_type": "A",
+                    "name_template": "{{ obj.name }}",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be blank.",
+            ),
+            (
+                "zone_template",
+                {
+                    "name": "missing-zone-template",
+                    "content_type": self.content_type_device,
+                    "record_type": "A",
+                    "name_template": "{{ obj.name }}",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be blank.",
+            ),
+            (
+                "name_template",
+                {
+                    "name": "missing-name-template",
+                    "content_type": self.content_type_device,
+                    "zone_template": "test.com",
+                    "record_type": "A",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be blank.",
+            ),
+            (
+                "record_type",
+                {
+                    "name": "missing-record-type",
+                    "content_type": self.content_type_device,
+                    "zone_template": "test.com",
+                    "name_template": "{{ obj.name }}",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be blank.",
+            ),
+            (
+                "content_type",
+                {
+                    "name": "missing-content-type",
+                    "zone_template": "test.com",
+                    "record_type": "A",
+                    "name_template": "{{ obj.name }}",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be null.",
+            ),
+        ]
 
-        # Test missing zone_template
-        with self.assertRaises(ValidationError):
-            rule = DNSRule(
-                name="missing-zone-template",
-                content_type=self.content_type_device,
-                record_type="A",
-                name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4 }}",
-            )
-            rule.full_clean()
-
-        # Test missing name_template
-        with self.assertRaises(ValidationError):
-            rule = DNSRule(
-                name="missing-name-template",
-                content_type=self.content_type_device,
-                zone_template="test.com",
-                record_type="A",
-                value_template="{{ obj.primary_ip4 }}",
-            )
-            rule.full_clean()
-
-        # Test missing record_type
-        with self.assertRaises(ValidationError):
-            rule = DNSRule(
-                name="missing-record-type",
-                content_type=self.content_type_device,
-                zone_template="test.com",
-                name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4 }}",
-            )
-            rule.full_clean()
-
-        # Test missing content_type
-        with self.assertRaises(ValidationError):
-            rule = DNSRule(
-                name="missing-content-type",
-                zone_template="test.com",
-                record_type="A",
-                name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4 }}",
-            )
-            rule.full_clean()
+        for missing_field, kwargs, expected_message in test_cases:
+            with self.subTest(field=missing_field):
+                with self.assertRaises(ValidationError) as context:
+                    rule = DNSRule(**kwargs)
+                    rule.full_clean()
+                self.assertIn(missing_field, context.exception.message_dict)
+                self.assertIn(expected_message, context.exception.message_dict[missing_field][0])
 
     def test_dnsrule_global_uniqueness_constraint(self):
         """Test that two enabled global rules with same content_type + record_type fails."""
@@ -1200,7 +1218,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         )
 
         # Attempt to create second enabled global rule with same content_type + record_type
-        with self.assertRaises(ValidationError):  # Model validation error
+        with self.assertRaises(ValidationError) as context:  # Model validation error
             duplicate_rule = DNSRule(
                 name="global-rule-2",
                 content_type=self.content_type_device,
@@ -1212,6 +1230,8 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 enabled=True,  # Same: enabled
             )
             duplicate_rule.full_clean()  # Triggers validate_unique()
+        self.assertIn("location", context.exception.message_dict)
+        self.assertIn("already exists", context.exception.message_dict["location"][0])
 
     @skip(
         "Skipping test_dnsrule_enabling_disabled_rule_with_enabled_duplicate_fails since we disabled that check. We maybe revert it, so leaving the test here."
