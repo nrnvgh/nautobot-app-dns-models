@@ -695,8 +695,7 @@ class DNSRule(PrimaryModel):
 
             if self.location is None and self.tenant is None:
                 message = (
-                    f"An enabled global {self.record_type} record rule for "
-                    f"'{self.content_type}' already exists."
+                    f"An enabled global {self.record_type} record rule for " f"'{self.content_type}' already exists."
                 )
             else:
                 message = (

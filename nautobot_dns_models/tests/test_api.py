@@ -816,9 +816,7 @@ class DNSRuleAPITestCase(APIViewTestCases.APIViewTestCase):
         )
 
         url = reverse("plugins-api:nautobot_dns_models-api:dnsrule-detail", kwargs={"pk": rule.pk})
-        response = self.client.patch(
-            url, data={"view_template": explicit_view.name}, format="json", **self.header
-        )
+        response = self.client.patch(url, data={"view_template": explicit_view.name}, format="json", **self.header)
         self.assertHttpStatus(response, status.HTTP_200_OK)
 
         rule.refresh_from_db()

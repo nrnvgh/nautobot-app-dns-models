@@ -411,9 +411,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
             content_type=self.interface_content_type,
             record_type="A",
             view_template=(
-                "{{ 'RestrictedView' if ip.parent.id|string == '"
-                f"{restricted_prefix.id}"
-                "' else 'InternalView' }}"
+                "{{ 'RestrictedView' if ip.parent.id|string == '" f"{restricted_prefix.id}" "' else 'InternalView' }}"
             ),
             zone_template="split.example.com",
             name_template="{{ obj.name }}",
@@ -466,9 +464,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
             content_type=self.interface_content_type,
             record_type="A",
             view_template=(
-                "{{ 'RestrictedView-Partial' if ip.parent.id|string == '"
-                f"{restricted_prefix.id}"
-                "' else '' }}"
+                "{{ 'RestrictedView-Partial' if ip.parent.id|string == '" f"{restricted_prefix.id}" "' else '' }}"
             ),
             zone_template="partial.example.com",
             name_template="{{ obj.name }}",
@@ -1175,7 +1171,9 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 
         self.interface.ip_addresses.add(self.ip_addresses[0])
 
-        records = ARecord.objects.filter(name="eth0.test-device", address=self.ip_addresses[0], zone__name="example.com")
+        records = ARecord.objects.filter(
+            name="eth0.test-device", address=self.ip_addresses[0], zone__name="example.com"
+        )
         self.assertEqual(records.count(), 2)
         self.assertEqual({record.zone.id for record in records}, {self.dns_zone.id, internal_zone.id})
 
@@ -1195,7 +1193,9 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 
         self.interface.ip_addresses.add(self.ip_addresses[0])
 
-        records = ARecord.objects.filter(name="eth0.test-device", address=self.ip_addresses[0], zone__name="example.com")
+        records = ARecord.objects.filter(
+            name="eth0.test-device", address=self.ip_addresses[0], zone__name="example.com"
+        )
 
         # One record should be created per selected view.
         self.assertEqual(records.count(), 2)
@@ -3001,7 +3001,14 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
         _, kwargs = mock_info.call_args
         extra = kwargs["extra"]
 
-        expected_count_keys = {"existing_count", "desired_count", "keep_count", "create_count", "delete_count", "skipped_count"}
+        expected_count_keys = {
+            "existing_count",
+            "desired_count",
+            "keep_count",
+            "create_count",
+            "delete_count",
+            "skipped_count",
+        }
         self.assertTrue(expected_count_keys.issubset(extra.keys()))
         self.assertEqual(extra["existing_count"], counts["existing"])
         self.assertEqual(extra["desired_count"], counts["desired"])

@@ -362,9 +362,7 @@ class DNSRuleEngine:
             return []
 
         # Create DNS records and tracking records (reuses update logic)
-        created_records = self._create_records_from_data(
-            rule, source_obj, desired_record_data_list, phase=PHASE_CREATE
-        )
+        created_records = self._create_records_from_data(rule, source_obj, desired_record_data_list, phase=PHASE_CREATE)
 
         # logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
         return created_records
@@ -396,9 +394,7 @@ class DNSRuleEngine:
             try:
                 self._reconcile_records_for_rule(rule, source_obj)
             except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                self._log_rule_processing_error(
-                    rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
-                )
+                self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True)
                 self._cleanup_records_for_rule(rule, source_obj)
 
     def _get_object_location(self, source_obj: Any) -> Any:
@@ -785,8 +781,7 @@ class DNSRuleEngine:
             raise ValidationError(
                 {
                     "view_template": (
-                        "DNS view(s) not found from view_template: "
-                        f"{', '.join(sorted(set(missing_names)))}"
+                        "DNS view(s) not found from view_template: " f"{', '.join(sorted(set(missing_names)))}"
                     )
                 }
             )
