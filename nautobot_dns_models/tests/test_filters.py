@@ -1,6 +1,8 @@
 """Test DNSZone Filter."""
 
 from django.test import TestCase
+from django.contrib.contenttypes.models import ContentType
+from nautobot.dcim.models import Interface
 from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
@@ -8,6 +10,7 @@ from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
     CNAMERecordFilterSet,
+    DNSRuleFilterSet,
     DNSViewFilterSet,
     DNSViewPrefixAssignmentFilterSet,
     DNSZoneFilterSet,
@@ -24,6 +27,7 @@ from nautobot_dns_models.models import (
     DNSView,
     DNSViewPrefixAssignment,
     DNSZone,
+    DNSRule,
     MXRecord,
     NSRecord,
     PTRRecord,
@@ -649,3 +653,39 @@ class SRVRecordFilterTestCase(TestCase):
         self.assertEqual(self.filterset({"q": "_sip._tcp"}, self.queryset).qs.count(), 2)
         self.assertEqual(self.filterset({"q": "sip2"}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"q": "example.com"}, self.queryset).qs.count(), 3)
+
+
+class DNSRuleFilterTestCase(TestCase):
+    """DNSRule filter test case."""
+
+    queryset = DNSRule.objects.all()
+    filterset = DNSRuleFilterSet
+
+    @classmethod
+    def setUpTestData(cls):
+        """Setup test data for DNSRule search behavior."""
+        interface_content_type = ContentType.objects.get_for_model(Interface)
+        DNSRule.objects.create(
+            name="api-q-match-name",
+            description="rule one",
+            content_type=interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all | ip_address }}",
+        )
+        DNSRule.objects.create(
+            name="api-q-second",
+            description="match-on-description",
+            content_type=interface_content_type,
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all | ip_address }}",
+        )
+
+    def test_search(self):
+        """Test filtering DNSRule by q over name and description."""
+        self.assertEqual(self.filterset({"q": "api-q-match-name"}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"q": "match-on-description"}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"q": "api-q"}, self.queryset).qs.count(), 2)

@@ -241,6 +241,13 @@ class SRVRecordFilterSet(DNSRecordFilterSet):
 class DNSRuleFilterSet(NautobotFilterSet, LocatableModelFilterSetMixin, TenancyModelFilterSetMixin):
     """Filter for DNSRule."""
 
+    q = SearchFilter(
+        filter_predicates={
+            "name": "icontains",
+            "description": "icontains",
+        }
+    )
+
     class Meta:
         """Meta attributes for filter."""
 
