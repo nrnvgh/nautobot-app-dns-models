@@ -15,7 +15,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
-from jinja2 import TemplateSyntaxError
+from jinja2 import TemplateError, TemplateSyntaxError
 from nautobot.apps.utils import render_jinja2
 from nautobot.dcim.choices import InterfaceTypeChoices
 from nautobot.dcim.models import Device, Interface, Location, LocationType
@@ -3016,6 +3016,97 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(extra["create_count"], counts["create"])
         self.assertEqual(extra["delete_count"], counts["delete"])
         self.assertEqual(extra["skipped_count"], counts["skipped"])
+
+    def test_infer_reason_code_template_error_maps_to_candidate_template_error(self):
+        """TemplateError should map to CANDIDATE_TEMPLATE_ERROR reason code."""
+        # pylint: disable=protected-access
+        reason = self.engine._infer_reason_code(TemplateError("template failure"), "DEFAULT")
+        self.assertEqual(reason, "CANDIDATE_TEMPLATE_ERROR")
+
+    def test_infer_reason_code_view_and_zone_validation_mappings(self):
+        """ValidationError message_dict values should map to stable reason codes."""
+        # pylint: disable=protected-access
+        view_empty_reason = self.engine._infer_reason_code(
+            ValidationError({"view_template": "view_template rendered no DNS view names."}), "DEFAULT"
+        )
+        view_missing_reason = self.engine._infer_reason_code(
+            ValidationError({"view_template": "DNS view(s) not found from view_template: MissingView"}), "DEFAULT"
+        )
+        zone_missing_reason = self.engine._infer_reason_code(
+            ValidationError({"zone_template": "Zone 'x' does not exist in selected DNS view(s): Default"}), "DEFAULT"
+        )
+
+        self.assertEqual(view_empty_reason, "VIEW_TEMPLATE_EMPTY")
+        self.assertEqual(view_missing_reason, "VIEW_NOT_FOUND")
+        self.assertEqual(zone_missing_reason, "ZONE_NOT_FOUND")
+
+    def test_update_path_top_level_template_error_logs_and_cleans_up(self):
+        """Top-level reconcile TemplateError should log and clean up for the rule."""
+        rule = DNSRule.objects.create(
+            name="logging-update-top-level-error",
+            description="Top-level reconcile exception handling",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=True,
+        )
+
+        with patch.object(self.engine, "_cleanup_orphaned_records") as cleanup_orphaned_mock:
+            with patch.object(self.engine, "_object_needs_dns_records_for_rule", return_value=True):
+                with patch.object(self.engine, "_reconcile_records_for_rule", side_effect=TemplateError("boom")):
+                    with patch.object(self.engine, "_log_rule_processing_error") as log_error_mock:
+                        with patch.object(self.engine, "_cleanup_records_for_rule") as cleanup_rule_mock:
+                            self.engine._update_dns_records_for_object(self.interface, DNSRule.objects.filter(pk=rule.pk))
+
+        cleanup_orphaned_mock.assert_called_once()
+        log_error_mock.assert_called_once()
+        cleanup_rule_mock.assert_called_once_with(rule, self.interface)
+        _, kwargs = log_error_mock.call_args
+        self.assertEqual(kwargs["phase"], "update_reconcile")
+        self.assertTrue(kwargs["cleanup"])
+
+    def test_get_dns_views_for_rule_empty_rendered_names_raises_validation_error(self):
+        """View template that renders only separators should raise view_template ValidationError."""
+        rule = DNSRule.objects.create(
+            name="view-template-empty-names",
+            description="View template empty names path",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+            view_template="{{ ',,,' }}",
+            enabled=True,
+        )
+        context = {"obj": wrap_for_template(self.interface)}
+
+        # pylint: disable=protected-access
+        with self.assertRaises(ValidationError) as exc:
+            self.engine._get_dns_views_for_rule(rule, context)
+        self.assertIn("view_template", exc.exception.message_dict)
+        self.assertIn("rendered no DNS view names", exc.exception.message_dict["view_template"][0])
+
+    def test_get_record_data_variations_for_rule_missing_value_template_raises(self):
+        """A/AAAA rule without value_template should raise DNSTemplateEmptyError in variations builder."""
+        rule = DNSRule.objects.create(
+            name="missing-value-template-runtime",
+            description="Missing value template runtime path",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="",
+            enabled=True,
+        )
+        context = {"obj": wrap_for_template(self.interface)}
+        base_record_data = {"name": "eth0.test-device"}
+
+        # pylint: disable=protected-access
+        with self.assertRaises(DNSTemplateEmptyError) as exc:
+            self.engine._get_record_data_variations_for_rule(rule, context, base_record_data)
+        self.assertIn("Template value_template rendered empty", str(exc.exception))
 
 
 class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):

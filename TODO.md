@@ -103,3 +103,8 @@
 - [ ] `enforce-template-permissions-for-record-creation`
   - Issue: check whether template-driven rule processing needs guardrails so users without DNS record create permissions cannot create records indirectly.
   - Done when: permission model is reviewed, required protections are documented, and enforcement is implemented if needed.
+
+- [ ] `document-rbac-implications-of-rule-driven-record-creation`
+  - Issue: creating a DNS rule can allow users who can edit source objects (for example Device/Interface/Service) to indirectly create A/AAAA records through signal-driven processing, bypassing direct DNS record create RBAC controls.
+  - Done when: admin/user docs clearly describe this permission model implication, expected operator controls, and recommended mitigation patterns.
+  - Notes: see previous item; if documentation is sufficient, then it closes as well.
