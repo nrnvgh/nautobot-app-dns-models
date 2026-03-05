@@ -4,21 +4,134 @@ from urllib.parse import urlencode
 
 from constance import config as constance_config
 from django.urls import reverse
-from nautobot.apps.ui import ObjectsTablePanel, SectionChoices, TemplateExtension
+from nautobot.apps.ui import Button, ButtonColorChoices, ObjectsTablePanel, SectionChoices, TemplateExtension
 from nautobot.core.views.utils import get_obj_from_context
 from netutils.ip import ipaddress_address
 
+from nautobot_dns_models.constants.supported_models import (
+    SUPPORTED_PARENT_CHILD_MODEL_RELATIONS,
+    SUPPORTED_SOURCE_MODEL_MAP,
+)
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
     DNSZone,
     PTRRecord,
 )
+from nautobot_dns_models.rules.engine import rule_engine
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
     PTRRecordTable,
 )
+
+
+class ReconcileDNSObjectButton(Button):
+    """Object-detail button that links to single-object DNS reconciliation."""
+
+    @staticmethod
+    def _get_parent_object_name(obj):
+        """Return parent object display name for child-source models, if available."""
+        parent_device = getattr(obj, "device", None)
+        if parent_device is not None:
+            return str(parent_device)
+
+        parent_vm = getattr(obj, "virtual_machine", None)
+        if parent_vm is not None:
+            return str(parent_vm)
+
+        return None
+
+    def get_link(self, context):
+        """Build run URL for reconciliation job with single-object inputs pre-populated."""
+        obj = get_obj_from_context(context)
+        query_params = {
+            "object_model": obj._meta.label_lower,
+            "object_id": str(obj.pk),
+            "object_name": str(obj),
+            "object_url": obj.get_absolute_url(),
+        }
+        parent_object_name = self._get_parent_object_name(obj)
+        if parent_object_name:
+            query_params["parent_object_name"] = parent_object_name
+        if obj._meta.label_lower in SUPPORTED_PARENT_CHILD_MODEL_RELATIONS:
+            query_params["include_children"] = "true"
+        query = urlencode(query_params)
+        return f"{reverse('extras:job_run_by_class_path', kwargs={'class_path': 'nautobot_dns_models.jobs.ReconcileDNSObjectJob'})}?{query}"
+
+    def should_render(self, context):
+        """Render button only when user can run jobs and at least one rule is in scope."""
+        if not super().should_render(context):
+            return False
+
+        obj = get_obj_from_context(context)
+        if obj._meta.label_lower not in SUPPORTED_SOURCE_MODEL_MAP:
+            return False
+
+        try:
+            if rule_engine._get_applicable_rules(obj).exists():  # pylint: disable=protected-access
+                return True
+
+            relation = SUPPORTED_PARENT_CHILD_MODEL_RELATIONS.get(obj._meta.label_lower)
+            if relation is None:
+                return False
+
+            _child_model_label, related_manager_name = relation
+            child_manager = getattr(obj, related_manager_name, None)
+            if child_manager is None:
+                return False
+
+            for child_obj in child_manager.all():
+                if rule_engine._get_applicable_rules(child_obj).exists():  # pylint: disable=protected-access
+                    return True
+
+            return False
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+
+
+class _BaseReconcileDNSAction(TemplateExtension):  # pylint: disable=abstract-method
+    """Shared per-model reconcile button extension."""
+
+    object_detail_buttons = (
+        ReconcileDNSObjectButton(
+            weight=950,
+            label="Reconcile DNS",
+            color=ButtonColorChoices.BLUE,
+            icon="mdi-dns",
+            required_permissions=["extras.run_job"],
+        ),
+    )
+
+
+class DeviceReconcileDNSAction(_BaseReconcileDNSAction):
+    """Device detail-page reconcile DNS action."""
+
+    model = "dcim.device"
+
+
+class InterfaceReconcileDNSAction(_BaseReconcileDNSAction):
+    """Interface detail-page reconcile DNS action."""
+
+    model = "dcim.interface"
+
+
+class ServiceReconcileDNSAction(_BaseReconcileDNSAction):
+    """Service detail-page reconcile DNS action."""
+
+    model = "ipam.service"
+
+
+class VirtualMachineReconcileDNSAction(_BaseReconcileDNSAction):
+    """VirtualMachine detail-page reconcile DNS action."""
+
+    model = "virtualization.virtualmachine"
+
+
+class VMInterfaceReconcileDNSAction(_BaseReconcileDNSAction):
+    """VMInterface detail-page reconcile DNS action."""
+
+    model = "virtualization.vminterface"
 
 
 class ForwardDNSRecordsTablePanel(ObjectsTablePanel):
@@ -143,4 +256,11 @@ class IPAddressDNSRecords(TemplateExtension):  # pylint: disable=abstract-method
     ]
 
 
-template_extensions = [IPAddressDNSRecords]
+template_extensions = [
+    IPAddressDNSRecords,
+    DeviceReconcileDNSAction,
+    InterfaceReconcileDNSAction,
+    ServiceReconcileDNSAction,
+    VirtualMachineReconcileDNSAction,
+    VMInterfaceReconcileDNSAction,
+]

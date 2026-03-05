@@ -116,6 +116,15 @@ Important caveat:
 
 - Some related data changes used by templates do not emit source-object rule-processing signals (for example, certain Prefix/Zone/View/relationship context changes). In those cases, stale records can remain until a later object trigger, manual processing, or a reconciliation job runs.
 
+##### Reconciliation job workflows
+
+Use reconciliation jobs when you need to repair drift.
+
+- **Per-object reconcile from detail views**: supported source objects (`Device`, `Interface`, `Service`, `VirtualMachine`, `VMInterface`) expose a `Reconcile DNS` button when at least one enabled rule is in scope. The button opens `Reconcile DNS Records (Object)` pre-populated with that object.
+- **Bulk reconcile from Jobs UI**: run `Reconcile DNS Records (Bulk)` from `Jobs > Jobs` and select filters to process all supported source models or an arbitrary subset.
+- **Supported bulk filters**: source model(s), explicit rule(s), location(s), tenant(s), `limit`, and `batch_size`.
+- **Dry-run mode**: set `dryrun=True` to enumerate targets and scope matches without calling reconciliation writes.
+
 ## Common Use Cases
 
 ### Device DNS Records

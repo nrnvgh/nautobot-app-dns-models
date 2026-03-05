@@ -164,3 +164,18 @@ LOGGING = {
 ```
 
 This example uses `python-json-logger`. If you use a different JSON logging library, replace the formatter class accordingly.
+
+## DNS Reconciliation Jobs
+
+The app provides two Nautobot Jobs for operator-driven drift repair:
+
+- `Reconcile DNS Records (Bulk)` for global/subset execution.
+- `Reconcile DNS Records (Object)` for single-object execution.
+
+- Launch it from `Jobs > Jobs`.
+- Enable the job in the Job detail page before first use (standard Nautobot job enable workflow).
+- Grant operators the `extras.run_job` permission so they can execute it.
+- Use filters to run globally or on a subset (model/rule/location/tenant/limit/batch size).
+- Use `dryrun` to preview targets without applying updates.
+
+Supported per-object detail views also expose a `Reconcile DNS` button (when rules are in scope), which opens the object job pre-populated for that object.

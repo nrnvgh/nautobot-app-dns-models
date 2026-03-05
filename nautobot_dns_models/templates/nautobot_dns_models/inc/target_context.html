@@ -1,0 +1,47 @@
+<input type="hidden" id="id_object_model" name="object_model" value="{{ obj_model }}">
+<input type="hidden" id="id_object_id" name="object_id" value="{{ obj_id }}">
+<input type="hidden" id="id_object_name" name="object_name" value="{{ obj_name }}">
+
+<div class="alert alert-info">
+    <i class="mdi mdi-information-outline"></i>
+    <strong>Reconcile target:</strong>
+    <table style="margin-top: 6px; margin-left: 25px; color: #000; background: transparent;">
+        <tbody>
+            <tr>
+                <td style="padding: 2px 10px 2px 0;"><strong>Model:</strong></td>
+                <td style="padding: 2px 0;">{{ obj_model }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 2px 10px 2px 0;"><strong>Object:</strong></td>
+                <td style="padding: 2px 0;">
+                    {% if request.GET.object_url %}
+                        <a href="{{ request.GET.object_url }}">{{ request.GET.object_name|default:"(unknown object)" }}</a>
+                    {% else %}
+                        {{ request.GET.object_name|default:"(unknown object)" }}
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <td style="padding: 2px 10px 2px 0;"><strong>UUID:</strong></td>
+                <td style="padding: 2px 0;">
+                    <span class="hover_copy">
+                        <span id="reconcile_target_uuid_copy">{{ obj_id }}</span>
+                        <button
+                            type="button"
+                            class="btn btn-inline btn-default hover_copy_button reconcile-target-copy-btn"
+                            data-clipboard-text="{{ obj_id }}"
+                        >
+                            <span class="mdi mdi-content-copy"></span>
+                        </button>
+                    </span>
+                </td>
+            </tr>
+            {% if request.GET.parent_object_name %}
+                <tr>
+                    <td style="padding: 2px 10px 2px 0;"><strong>Parent:</strong></td>
+                    <td style="padding: 2px 0;">{{ request.GET.parent_object_name }}</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>

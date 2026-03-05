@@ -3058,7 +3058,9 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
                 with patch.object(self.engine, "_reconcile_records_for_rule", side_effect=TemplateError("boom")):
                     with patch.object(self.engine, "_log_rule_processing_error") as log_error_mock:
                         with patch.object(self.engine, "_cleanup_records_for_rule") as cleanup_rule_mock:
-                            self.engine._update_dns_records_for_object(self.interface, DNSRule.objects.filter(pk=rule.pk))
+                            self.engine._update_dns_records_for_object(
+                                self.interface, DNSRule.objects.filter(pk=rule.pk)
+                            )
 
         cleanup_orphaned_mock.assert_called_once()
         log_error_mock.assert_called_once()

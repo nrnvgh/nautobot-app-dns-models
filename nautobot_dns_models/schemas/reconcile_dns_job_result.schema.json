@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nautobot.example/schemas/reconcile_dns_job_result.schema.json",
+  "title": "Reconcile DNS Job Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "scope",
+    "execution",
+    "reconciliation",
+    "errors"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dryrun",
+        "single_object",
+        "include_children"
+      ],
+      "properties": {
+        "dryrun": { "type": "boolean" },
+        "single_object": { "type": "boolean" },
+        "include_children": { "type": "boolean" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scanned_models",
+        "filters"
+      ],
+      "properties": {
+        "scanned_models": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "filters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_models",
+            "rule_ids",
+            "location_ids",
+            "tenant_ids",
+            "limit",
+            "batch_size"
+          ],
+          "properties": {
+            "source_models": { "type": "array", "items": { "type": "string" } },
+            "rule_ids": { "type": "array", "items": { "type": "string" } },
+            "location_ids": { "type": "array", "items": { "type": "string" } },
+            "tenant_ids": { "type": "array", "items": { "type": "string" } },
+            "limit": { "type": ["integer", "null"], "minimum": 1 },
+            "batch_size": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targets_seen",
+        "processed_count",
+        "success_count",
+        "failure_count",
+        "skipped_scope_count"
+      ],
+      "properties": {
+        "targets_seen": { "type": "integer", "minimum": 0 },
+        "processed_count": { "type": "integer", "minimum": 0 },
+        "success_count": { "type": "integer", "minimum": 0 },
+        "failure_count": { "type": "integer", "minimum": 0 },
+        "skipped_scope_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objects_with_existing_rule_records",
+        "existing_rule_record_count",
+        "objects_changed",
+        "record_ops_create_count",
+        "record_ops_delete_count",
+        "record_ops_total_count",
+        "changed_record_count"
+      ],
+      "properties": {
+        "objects_with_existing_rule_records": { "type": "integer", "minimum": 0 },
+        "existing_rule_record_count": { "type": "integer", "minimum": 0 },
+        "objects_changed": { "type": "integer", "minimum": 0 },
+        "record_ops_create_count": { "type": "integer", "minimum": 0 },
+        "record_ops_delete_count": { "type": "integer", "minimum": 0 },
+        "record_ops_total_count": { "type": "integer", "minimum": 0 },
+        "changed_record_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  }
+}

@@ -100,6 +100,26 @@
   - Notes: relationship/computed-field driven template context can change via related-object updates that do not emit source-object DNS processing signals.
   - Done when: reconciliation job scope, trigger model, and operator workflow are defined and documented; implementation is added if approved.
 
+- [ ] `expose-rule-driven-dns-record-panels-on-source-object-detail-views`
+  - Issue: ensure DNS records created/managed by rules are visible in source object detail pages (at minimum Interface; also Device/Service/VirtualMachine/VMInterface as applicable).
+  - Done when: detail views consistently show relevant DNS records for supported source models and tests verify panel visibility/content.
+
+- [ ] `bugfix-dnsrule-column-empty-on-dns-record-tables`
+  - Issue: optional `dnsrule` column on DNS record tables (for example A/AAAA) is currently blank and does not show associated rule metadata when tracking exists.
+  - Done when: `dnsrule` column reliably renders linked DNSRule context for rule-managed records, remains empty for manual records, and has table/UI test coverage.
+
+- [ ] `add-dnsrule-list-record-counter`
+  - Issue: determine whether DNSRule list rows should display a count of associated records (for example DNSRuleRecord entries / managed DNS records) per rule.
+  - Done when: decision is documented; if approved, list/table implementation is added with acceptable query performance and test coverage.
+
+- [ ] `investigate-no-op-resave-rule-retrigger`
+  - Issue: determine whether re-saving an object with no model field changes should still trigger DNS rule evaluation, to pick up rule/template changes that would now render different records.
+  - Done when: behavior decision is documented, signal/engine implementation is updated if needed, and tests cover no-op save + changed-rule scenarios.
+
+- [ ] `refactor-dnsrule-contenttype-query-to-supported-model-constants`
+  - Issue: `DNSRuleContentTypeQuery` in `queries.py` currently hardcodes app/model filters; refactor it to derive supported content types from `constants/supported_models.py`.
+  - Done when: query helper uses shared supported-model constants as source of truth and existing forms/queryset behavior remains unchanged with test coverage.
+
 - [ ] `enforce-template-permissions-for-record-creation`
   - Issue: check whether template-driven rule processing needs guardrails so users without DNS record create permissions cannot create records indirectly.
   - Done when: permission model is reviewed, required protections are documented, and enforcement is implemented if needed.
