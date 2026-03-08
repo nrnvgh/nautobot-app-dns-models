@@ -171,9 +171,13 @@ class _BaseReconcileDNSJob(Job):
         self,
         target_labels: list[str],
         batch_size: int,
+        limit: int | None = None,
     ):
         """Yield `(model_label, object)` pairs for reconciliation."""
+        remaining = limit
         for model_label in target_labels:
+            if remaining is not None and remaining <= 0:
+                break
             model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
             queryset = model_class.objects.order_by("pk")
             if model_label == "dcim.interface":
@@ -182,8 +186,14 @@ class _BaseReconcileDNSJob(Job):
                 queryset = queryset.select_related("device", "device__tenant", "device__location").prefetch_related(
                     "ip_addresses"
                 )
+            if remaining is not None:
+                queryset = queryset[:remaining]
             for obj in queryset.iterator(chunk_size=batch_size):
                 yield model_label, obj
+                if remaining is not None:
+                    remaining -= 1
+                    if remaining <= 0:
+                        break
 
     @staticmethod
     def _iter_single_object_targets(object_model, obj, include_children=False):
@@ -457,7 +467,7 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
             }
 
         target_labels = self._resolve_target_models(selected_rules=rules, selected_model_labels=selected_model_labels)
-        targets = self._iter_targets(target_labels=target_labels, batch_size=batch_size)
+        targets = self._iter_targets(target_labels=target_labels, batch_size=batch_size, limit=limit)
         summary = self._process_targets(
             targets,
             dryrun=dryrun,
@@ -617,6 +627,16 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
         max_value=5000,
         description="Pipeline batch size for fetch/render/delta/execute phases.",
     )
+    pipeline_strategy = ChoiceVar(
+        choices=(
+            ("python_first", "Python-first"),
+            ("hybrid", "Hybrid"),
+            ("sql_heavy", "SQL-heavy"),
+        ),
+        default="python_first",
+        required=False,
+        description="Experimental pipeline strategy selector for comparative benchmarking.",
+    )
 
     def run(
         self,
@@ -628,12 +648,15 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
         tenants=None,
         limit=None,
         batch_size=500,
+        pipeline_strategy="python_first",
     ):  # pylint: disable=too-many-arguments,arguments-differ
         """Execute experimental batch-native DNS reconciliation."""
         del performance_mode
         performance_mode = "experimental"
         selected_engine = get_experimental_pipeline_engine()
         selected_engine.reset_runtime_caches()
+        selected_engine.reset_pipeline_stage_metrics()
+        selected_engine.set_pipeline_strategy(pipeline_strategy)
 
         location_ids = {location.id for location in (locations or [])}
         tenant_ids = {tenant.id for tenant in (tenants or [])}
@@ -652,7 +675,7 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
             }
 
         target_labels = self._resolve_target_models(selected_rules=rules, selected_model_labels=selected_model_labels)
-        targets = self._iter_targets(target_labels=target_labels, batch_size=batch_size)
+        targets = self._iter_targets(target_labels=target_labels, batch_size=batch_size, limit=limit)
         summary = ReconcileRunSummary()
         summary.scanned_model_labels.update(target_labels)
 
@@ -697,6 +720,8 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
             limit=limit,
             batch_size=batch_size,
         )
+        result["mode"]["pipeline_strategy"] = selected_engine.pipeline_strategy
+        result["mode"]["pipeline_stage_metrics"] = selected_engine.get_pipeline_stage_metrics()
         self._log_result_summary(result)
         return result
 

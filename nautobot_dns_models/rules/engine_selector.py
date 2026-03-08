@@ -25,5 +25,7 @@ def get_rule_engine(performance_mode: str | None):
 
 def get_experimental_pipeline_engine():
     """Return dedicated experimental engine for batch-native pipeline job."""
+    # Future simplification option: return a fresh ExperimentalPipelineDNSRuleEngine()
+    # per call for stronger state isolation, if benchmarked performance impact is negligible.
     return rule_engine_experimental_pipeline
 

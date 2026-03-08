@@ -25,6 +25,7 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
     def __init__(self):
         """Initialize experimental runtime caches."""
         self._default_view_cache: Any | None = None
+        self._view_lookup_cache: dict[tuple[str, ...], list[Any]] = {}
         self._zone_lookup_cache: dict[tuple[str, tuple[int, ...]], list[DNSZone]] = {}
         self._applicable_rules_cache: dict[tuple[int, Any | None, Any | None], list[DNSRule]] = {}
         self._compiled_template_cache: dict[str, Any] = {}
@@ -33,6 +34,7 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
     def reset_runtime_caches(self) -> None:
         """Clear per-run scope cache to avoid stale rule objects across jobs."""
         self._default_view_cache = None
+        self._view_lookup_cache.clear()
         self._zone_lookup_cache.clear()
         self._applicable_rules_cache.clear()
 
@@ -91,7 +93,7 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
         return selected_rules
 
     def _get_dns_views_for_rule(self, rule: DNSRule, context: dict[str, Any]) -> list[Any]:
-        """Experimental tuning: cache default DNS view for no-view-template path."""
+        """Experimental tuning: cache DNS view resolution for repeated templates."""
         if not rule.view_template:
             if self._default_view_cache is None:
                 self._default_view_cache = models.DNSView.objects.get(pk=models.get_default_view_pk())
@@ -101,6 +103,10 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
         if not raw_names:
             raise ValidationError({"view_template": "view_template rendered no DNS view names."})
         requested_names = list(dict.fromkeys(raw_names))
+        cache_key = tuple(requested_names)
+        cached_views = self._view_lookup_cache.get(cache_key)
+        if cached_views is not None:
+            return cached_views
         matched_views = list(models.DNSView.objects.filter(name__in=requested_names))
         matched_by_name = {view.name: view for view in matched_views}
         missing_names = [name for name in raw_names if name not in matched_by_name]
@@ -116,6 +122,7 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
                 continue
             ordered_views.append(view)
             seen_ids.add(view.id)
+        self._view_lookup_cache[cache_key] = ordered_views
         return ordered_views
 
     def _get_zones_for_rule(self, rule: DNSRule, context: dict[str, Any], selected_views: list[Any]) -> list[DNSZone]:
