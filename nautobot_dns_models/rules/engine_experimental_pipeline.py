@@ -13,7 +13,11 @@ from nautobot_dns_models.rules.engine import (
     DNSZone,
     PHASE_UPDATE_RECONCILE,
     TemplateError,
+    ValidationError,
+    ipam_models,
     logger,
+    normalize_dns_name,
+    wrap_for_template,
 )
 from nautobot_dns_models.rules.engine_experimental import ExperimentalDNSRuleEngine
 
@@ -37,6 +41,8 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
             tracking_by_object_id[str(tracking_row.object_id)].append(tracking_row)
 
         prepared_entries = []
+        pending_rule_calculations: list[dict[str, Any]] = []
+        batch_address_ids: set[str] = set()
         for source_obj in source_objects:
             rules = self._get_applicable_rules(source_obj)
             desired_by_rule_id: dict[Any, list[dict[str, Any]]] = {}
@@ -45,8 +51,26 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
                 if not self._object_needs_dns_records_for_rule(source_obj, rule):
                     continue
                 try:
-                    desired_by_rule_id[rule.pk] = self._calculate_desired_record_data(
-                        rule, source_obj, phase=PHASE_UPDATE_RECONCILE
+                    base_context = {"obj": wrap_for_template(source_obj)}
+                    rendered_name = self._render_template(rule.name_template, base_context, "name_template")
+                    shared_record_data = {"name": normalize_dns_name(rendered_name)}
+                    record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
+                    requires_ip_context = self._requires_ip_context(rule)
+                    if requires_ip_context:
+                        for record_data in record_variations:
+                            address_id = record_data.get("address_id")
+                            if address_id:
+                                batch_address_ids.add(str(address_id))
+                    pending_rule_calculations.append(
+                        {
+                            "source_obj": source_obj,
+                            "rule": rule,
+                            "base_context": base_context,
+                            "record_variations": record_variations,
+                            "requires_ip_context": requires_ip_context,
+                            "desired_by_rule_id": desired_by_rule_id,
+                            "failed_rule_ids": failed_rule_ids,
+                        }
                     )
                 except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                     self._log_rule_processing_error(
@@ -63,10 +87,67 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
                 }
             )
 
+        preloaded_ip_by_id: dict[str, Any] = {}
+        if batch_address_ids:
+            preloaded_ip_by_id = {
+                str(pk): ip_obj for pk, ip_obj in ipam_models.IPAddress.objects.in_bulk(batch_address_ids).items()
+            }
+
+        for pending in pending_rule_calculations:
+            rule: DNSRule = pending["rule"]
+            source_obj = pending["source_obj"]
+            base_context: dict[str, Any] = pending["base_context"]
+            record_variations: list[dict[str, Any]] = pending["record_variations"]
+            requires_ip_context: bool = pending["requires_ip_context"]
+            desired_by_rule_id: dict[Any, list[dict[str, Any]]] = pending["desired_by_rule_id"]
+            failed_rule_ids: set[Any] = pending["failed_rule_ids"]
+
+            if rule.pk in failed_rule_ids:
+                continue
+
+            all_record_data: list[dict[str, Any]] = []
+            for record_data in record_variations:
+                try:
+                    if requires_ip_context:
+                        record_context = self._build_record_context_with_preloaded_ips(
+                            base_context, record_data, preloaded_ip_by_id
+                        )
+                    else:
+                        record_context = dict(base_context)
+                        record_context["record"] = record_data.copy()
+                    selected_views = self._get_dns_views_for_rule(rule, record_context)
+                    zones = self._get_zones_for_rule(rule, record_context, selected_views)
+                    for zone in zones:
+                        all_record_data.append({**record_data, "zone": zone})
+                except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
+                    self._log_candidate_skip(rule, source_obj, record_data, exc, phase=PHASE_UPDATE_RECONCILE)
+                    continue
+
+            desired_by_rule_id[rule.pk] = all_record_data
+
         summaries: list[dict[str, Any]] = []
         for entry in prepared_entries:
             summaries.append(self._apply_prepared_reconcile_entry(entry))
         return summaries
+
+    def _build_record_context_with_preloaded_ips(
+        self, base_context: dict[str, Any], record_data: dict[str, Any], preloaded_ip_by_id: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Build context using preloaded batch IP map, with fallback lookup for misses."""
+        context = dict(base_context)
+        context["record"] = record_data.copy()
+
+        address_id = record_data.get("address_id")
+        if not address_id:
+            return context
+
+        ip_obj = preloaded_ip_by_id.get(str(address_id))
+        if ip_obj is None:
+            ip_obj = ipam_models.IPAddress.objects.filter(pk=address_id).first()
+        if ip_obj is None:
+            raise ValidationError({"value_template": f"Resolved IP address '{address_id}' was not found."})
+        context["ip"] = wrap_for_template(ip_obj)
+        return context
 
     def _apply_prepared_reconcile_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
         """Apply prepared desired/tracking data for one source object."""
