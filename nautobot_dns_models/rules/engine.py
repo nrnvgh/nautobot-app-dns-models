@@ -1,8 +1,8 @@
 """DNS Rule Processing Engine for Nautobot DNS Models."""
 
 import logging
-import re
 import uuid
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Any
 
@@ -48,8 +48,65 @@ PHASE_CANDIDATE_EXPANSION = "candidate_expansion"
 PHASE_UNKNOWN = "unknown"
 
 
-class DNSRuleEngine:
-    """Engine for processing DNS rules and creating DNS records."""
+class BaseDNSRuleEngine(ABC):
+    """Abstract base engine for DNS rule reconciliation."""
+
+    @abstractmethod
+    def process_object(self, source_obj: Any, created: bool = False) -> dict[str, int | bool]:
+        """Process a source object against all applicable rules."""
+
+    @abstractmethod
+    def _use_lookup_cache(self) -> bool:
+        """Return whether cached view/zone lookups should be enabled."""
+
+    @abstractmethod
+    def _use_direct_update(self) -> bool:
+        """Return whether in-place updates should use direct SQL update path."""
+
+    @abstractmethod
+    def _requires_ip_context(self, rule: DNSRule) -> bool:
+        """Return whether desired-data rendering should resolve per-candidate ip context."""
+
+    @abstractmethod
+    def _create_dns_records_for_object(self, source_obj: Any, applicable_rules: list[DNSRule]) -> dict[str, int | bool]:
+        """Create DNS records for a source object using applicable rules."""
+
+    @abstractmethod
+    def _update_dns_records_for_object(self, source_obj: Any, applicable_rules: list[DNSRule]) -> dict[str, int | bool]:
+        """Reconcile DNS records for a source object using applicable rules."""
+
+    @abstractmethod
+    def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> dict[str, int]:
+        """Reconcile existing and desired records for one rule/object pair."""
+
+    @abstractmethod
+    def _calculate_desired_record_data(
+        self, rule: DNSRule, source_obj: Any, phase: str = PHASE_UNKNOWN
+    ) -> list[dict[str, Any]]:
+        """Calculate desired record data for one rule/object pair."""
+
+    @abstractmethod
+    def _get_zones_for_rule(
+        self, rule: DNSRule, context: dict[str, Any], selected_views: list[models.DNSView], use_cache: bool = False
+    ) -> list[DNSZone]:
+        """Resolve DNS zones for one rule/context pair."""
+
+    @abstractmethod
+    def _get_dns_views_for_rule(
+        self, rule: DNSRule, context: dict[str, Any], use_cache: bool = False
+    ) -> list[models.DNSView]:
+        """Resolve DNS views for one rule/context pair."""
+
+    @abstractmethod
+    def _update_tracking_record_dns_record(
+        self,
+        rule: DNSRule,
+        source_obj: Any,
+        tracking_record: DNSRuleRecord,
+        desired_record_data: dict[str, Any],
+        phase: str,
+    ) -> str:
+        """Apply in-place update for an existing tracking record."""
 
     def delete_dns_records_for_object(self, source_obj: Any) -> None:
         """
@@ -64,6 +121,15 @@ class DNSRuleEngine:
         for rule_record in rule_records:
             self._delete_tracking_and_dns_record(rule_record)
 
+    def preload_tracking_records_for_objects(self, source_objects: list[Any]) -> None:
+        """Optionally preload tracking records for a batch of source objects."""
+        del source_objects
+        return None
+
+    def reset_runtime_caches(self) -> None:
+        """Clear per-engine runtime caches before a new reconciliation run."""
+        return None
+
     @staticmethod
     def _initialize_processing_summary() -> dict[str, int | bool]:
         """Default object-level processing summary."""
@@ -75,61 +141,6 @@ class DNSRuleEngine:
             "record_ops_create_count": 0,
             "record_ops_delete_count": 0,
         }
-
-    def process_object(self, source_obj: Any, created: bool = False) -> dict[str, int | bool]:
-        """
-        Process an object against all applicable DNS rules.
-
-        Args:
-            source_obj: The object that triggered the rule processing
-            created: Whether this is a newly created object
-        """
-        summary = self._initialize_processing_summary()
-        content_type = ContentType.objects.get_for_model(source_obj)
-        # Get all applicable rules for this object type
-        rules = self._get_applicable_rules(source_obj)
-        rules_count = rules.count()
-
-        if rules_count == 0:
-            logger.debug(f"No DNS rules found for {content_type} - skipping DNS record processing for {source_obj}")
-            return summary
-
-        # Check if this object already has DNS records
-        logger.debug(f"Processing {source_obj} (type: {content_type}) - found {rules_count} rules")
-        existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=str(source_obj.pk))
-
-        # We'll need this more than once
-        existing_count = existing_records.count()
-        summary["existing_rule_record_count"] = existing_count
-        summary["had_existing_rule_records"] = existing_count > 0
-        logger.debug(
-            f"DNS record lookup for {source_obj} (pk={source_obj.pk}, name=\"{getattr(source_obj, 'name', 'N/A')}\"): found {existing_count} existing records"
-        )
-
-        if created or existing_count == 0:
-            # Create new DNS records for new objects OR objects with no existing records
-            # if created:
-            #     logger.debug(
-            #         f"Taking CREATE path for {source_obj} (created={created}, existing_records={existing_count})"
-            #     )
-            # else:
-            #     logger.debug(f"UPDATE scenario with no existing records - no records currently exist for {source_obj}")
-            #     pass
-            create_summary = self._create_dns_records_for_object(source_obj, rules)
-            summary["changed_record_count"] = create_summary["changed_record_count"]
-            summary["changed"] = create_summary["changed"]
-            summary["record_ops_create_count"] = create_summary["record_ops_create_count"]
-            summary["record_ops_delete_count"] = create_summary["record_ops_delete_count"]
-        else:
-            # Update existing DNS records for modified objects
-            # logger.debug(f"Taking UPDATE path for {source_obj} (existing_records={existing_count})")
-            update_summary = self._update_dns_records_for_object(source_obj, rules)
-            summary["changed_record_count"] = update_summary["changed_record_count"]
-            summary["changed"] = update_summary["changed"]
-            summary["record_ops_create_count"] = update_summary["record_ops_create_count"]
-            summary["record_ops_delete_count"] = update_summary["record_ops_delete_count"]
-
-        return summary
 
     #
     # Internal methods
@@ -276,6 +287,31 @@ class DNSRuleEngine:
             ),
         )
 
+    def _log_record_update_failure(
+        self, rule: DNSRule, source_obj: Any, record_data: dict[str, Any], exc: Exception, phase: str
+    ) -> None:
+        """Emit hybrid warning for record update failures."""
+        reason_code = (
+            REASON_RECORD_INTEGRITY_ERROR if isinstance(exc, IntegrityError) else REASON_RECORD_VALIDATION_ERROR
+        )
+        logger.warning(
+            "dnsrule_record_update_failed reason=%s rule=%s source=%s:%s addr=%s error=%s",
+            reason_code,
+            rule.name,
+            self._safe_model_label(source_obj),
+            source_obj.pk,
+            record_data.get("address_id"),
+            exc,
+            extra=self._build_log_extra(
+                rule=rule,
+                source_obj=source_obj,
+                reason_code=reason_code,
+                phase=phase,
+                exc=exc,
+                record_data=record_data,
+            ),
+        )
+
     def _log_reconcile_summary(self, rule: DNSRule, source_obj: Any, counts: dict[str, int]) -> None:
         """Emit per-rule reconciliation outcome summary."""
         logger.info(
@@ -304,48 +340,6 @@ class DNSRuleEngine:
                 "skipped_count": counts["skipped"],
             },
         )
-
-    def _create_dns_records_for_object(
-        self, source_obj: Any, applicable_rules: django_models.QuerySet
-    ) -> dict[str, int | bool]:
-        """
-        Create DNS records for an object by processing all applicable rules.
-
-        Uses same exception handling pattern as update_dns_records_for_object
-        for consistent multi-rule processing.
-
-        Args:
-            source_obj: The source object to create DNS records for
-            applicable_rules: Pre-fetched QuerySet of applicable rules
-        """
-        # logger.debug(f"[_create_dns_records_for_object] {source_obj} / {applicable_rules}")
-        changed_record_count = 0
-
-        for rule in applicable_rules:
-            if not self._object_needs_dns_records_for_rule(source_obj, rule):
-                # logger.debug(f"Object {source_obj} does not need DNS records for rule {rule.name} - skipping")
-                continue
-
-            # logger.debug(f"Object {source_obj} needs DNS records for rule {rule.name} - creating records")
-            try:
-                created_records = self._create_dns_record_from_rule(rule, source_obj)
-                changed_record_count += len(created_records)
-                # if not created_records:
-                #     logger.debug(f"No records created from rule {rule.name} for {source_obj}")
-                # else:
-                #     logger.debug(f"Created {len(created_records)} records from rule {rule.name} for {source_obj}")
-                #     for record in created_records:
-                #         logger.debug(f"Created record: {record}")
-            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_CREATE, cleanup=False)
-                continue
-
-        return {
-            "changed": changed_record_count > 0,
-            "changed_record_count": changed_record_count,
-            "record_ops_create_count": changed_record_count,
-            "record_ops_delete_count": 0,
-        }
 
     def _object_needs_dns_records_for_rule(self, source_obj: Any, rule: DNSRule) -> bool:
         """
@@ -403,50 +397,6 @@ class DNSRuleEngine:
 
         # logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
         return created_records
-
-    def _update_dns_records_for_object(
-        self, source_obj: Any, applicable_rules: django_models.QuerySet
-    ) -> dict[str, int | bool]:
-        """
-        Update DNS records for an object by reconciling current vs desired state.
-
-        Uses reconciliation pattern: compare what should exist vs what does exist,
-        then make minimal changes to achieve desired state.
-
-        Args:
-            source_obj: The source object whose DNS records should be updated
-            applicable_rules: Pre-fetched QuerySet of applicable rules
-        """
-        # logger.debug(f"[_update_dns_records_for_object] {source_obj} / {applicable_rules}")
-        # Clean up records from rules that are no longer applicable
-        delete_count = self._cleanup_orphaned_records(source_obj, applicable_rules)
-        create_count = 0
-
-        for rule in applicable_rules:
-            if not self._object_needs_dns_records_for_rule(source_obj, rule):
-                #
-                # Object needs no DNS records for this rule; ensure all records for this rule are deleted
-                # logger.debug(f"Object {source_obj} does not need DNS records for rule {rule.name} - running cleanup")
-                delete_count += self._cleanup_records_for_rule(rule, source_obj)
-                continue
-
-            # logger.debug(f"Object {source_obj} needs DNS records for rule {rule.name} - reconciling records")
-            try:
-                reconcile_summary = self._reconcile_records_for_rule(rule, source_obj)
-                create_count += reconcile_summary["create"]
-                delete_count += reconcile_summary["delete"]
-            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True)
-                delete_count += self._cleanup_records_for_rule(rule, source_obj)
-
-        changed_record_count = create_count + delete_count
-
-        return {
-            "changed": changed_record_count > 0,
-            "changed_record_count": changed_record_count,
-            "record_ops_create_count": create_count,
-            "record_ops_delete_count": delete_count,
-        }
 
     def _get_object_location(self, source_obj: Any) -> Any:
         """
@@ -603,7 +553,7 @@ class DNSRuleEngine:
         # Object type is not tenant-aware or has no tenant assigned
         return None
 
-    def _get_applicable_rules(self, source_obj: Any) -> django_models.QuerySet:
+    def _get_applicable_rules(self, source_obj: Any) -> list[DNSRule]:
         """
         Get all DNS rules that apply to the given source object.
 
@@ -620,17 +570,26 @@ class DNSRuleEngine:
             source_obj: The object to find applicable rules for
 
         Returns:
-            QuerySet of applicable DNSRule objects
+            List of applicable DNSRule objects
         """
         content_type = ContentType.objects.get_for_model(source_obj)
         object_location = self._get_object_location(source_obj)
         object_tenant = self._get_object_tenant(source_obj)
+        return self._resolve_applicable_rules_for_scope(content_type, object_location, object_tenant)
+
+    def _resolve_applicable_rules_for_scope(
+        self,
+        content_type,
+        object_location: Any,
+        object_tenant: Any,
+    ) -> list[DNSRule]:
+        """Resolve rules for a specific content-type/location/tenant scope."""
 
         # Early return for objects with no location or tenant - only global rules can apply
         if object_location is None and object_tenant is None:
             # logger.debug(f"Using global rules for {source_obj} (no location, no tenant)")
-            return DNSRule.objects.filter(
-                content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
+            return list(
+                DNSRule.objects.filter(content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True)
             )
 
         # Build query for all potentially applicable rules
@@ -640,7 +599,7 @@ class DNSRuleEngine:
         location_conditions = django_models.Q(location=object_location) | django_models.Q(location__isnull=True)
         tenant_conditions = django_models.Q(tenant=object_tenant) | django_models.Q(tenant__isnull=True)
 
-        all_rules = base_query.filter(location_conditions & tenant_conditions)
+        all_rules = list(base_query.filter(location_conditions & tenant_conditions))
 
         # Group rules by record type and precedence level
         rules_by_type = defaultdict(
@@ -680,133 +639,9 @@ class DNSRuleEngine:
                 final_rule_pks.extend([r.pk for r in rules["global"]])
                 # logger.debug(f"Using global rule for {source_obj} record type {record_type}")
 
-        # Return QuerySet filtered to selected rules
-        return DNSRule.objects.filter(pk__in=final_rule_pks)
-
-    def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> dict[str, int]:
-        """
-        Reconcile DNS records using differential updates to preserve existing records.
-
-        Uses content-based comparison to identify what records need to be:
-        - Kept (already exist and are correct)
-        - Deleted (exist but no longer needed)
-        - Created (needed but don't exist)
-
-        This approach preserves existing DNS record IDs when possible.
-
-        All exceptions result in cleanup to prevent transaction failures.
-        """
-        # logger.debug(f"Reconciling records for rule {rule.name} on {source_obj}")
-
-        # STEP 1: Determine what records need to be kept, deleted, and created
-        existing_records_by_content = self._get_existing_records_by_rule_and_object(rule, source_obj)
-        desired_records_by_content = self._get_desired_records_by_rule_and_object(rule, source_obj)
-
-        existing_keys = set(existing_records_by_content.keys())
-        desired_keys = set(desired_records_by_content.keys())
-
-        records_to_keep = existing_keys & desired_keys  # Intersection - no change needed
-        records_to_delete = existing_keys - desired_keys  # Only in existing - delete
-        records_to_create = desired_keys - existing_keys  # Only in desired - create
-
-        # STEP 2: Delete obsolete records
-        for content_key in records_to_delete:
-            tracking_record = existing_records_by_content[content_key]
-            # logger.debug(f"Deleting obsolete record for {rule.name}: {content_key}")
-            self._delete_tracking_and_dns_record(tracking_record)
-
-        # STEP 3: Keep existing records (log but no action needed)
-        if records_to_keep:
-            # logger.debug(f"Preserving {len(records_to_keep)} existing records for {rule.name}")
-            pass
-
-        # STEP 4: Create missing records
-        created_records = []
-        if records_to_create:
-            records_to_create_data = [desired_records_by_content[key] for key in records_to_create]
-            # logger.debug(f"Creating {len(records_to_create_data)} new records for {rule.name}")
-            created_records = self._create_records_from_data(
-                rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
-            )
-            # logger.debug(f"Created {len(created_records)} records for '{rule.name}' on {source_obj}")
-
-        # STEP 5: Log summary
-        skipped_create = len(records_to_create) - len(created_records)
-        self._log_reconcile_summary(
-            rule=rule,
-            source_obj=source_obj,
-            counts={
-                "existing": len(existing_keys),
-                "desired": len(desired_keys),
-                "keep": len(records_to_keep),
-                "create": len(created_records),
-                "delete": len(records_to_delete),
-                "skipped": skipped_create,
-            },
-        )
-        return {
-            "existing": len(existing_keys),
-            "desired": len(desired_keys),
-            "keep": len(records_to_keep),
-            "create": len(created_records),
-            "delete": len(records_to_delete),
-            "skipped": skipped_create,
-            "changed_record_count": len(created_records) + len(records_to_delete),
-        }
-
-    def _calculate_desired_record_data(
-        self, rule: DNSRule, source_obj: Any, phase: str = PHASE_UNKNOWN
-    ) -> list[dict[str, Any]]:
-        """Calculate what DNS record data should exist (without creating records)."""
-        base_context = {"obj": wrap_for_template(source_obj)}
-
-        # Build shared record fields - exceptions bubble up naturally.
-        rendered_name = self._render_template(rule.name_template, base_context, "name_template")
-        shared_record_data = {"name": normalize_dns_name(rendered_name)}
-
-        all_record_data = []
-        record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
-        for record_data in record_variations:
-            try:
-                record_context = self._build_record_context(base_context, record_data)
-                selected_views = self._get_dns_views_for_rule(rule, record_context)
-                zones = self._get_zones_for_rule(rule, record_context, selected_views)
-                logger.debug(f"Zones for rule {rule.name}: {zones} (selected views: {selected_views})")
-                for zone in zones:
-                    all_record_data.append({**record_data, "zone": zone})
-            except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
-                self._log_candidate_skip(rule, source_obj, record_data, exc, phase=phase)
-                continue
-
-        return all_record_data
-
-    def _get_zones_for_rule(
-        self, rule: DNSRule, context: dict[str, Any], selected_views: list[models.DNSView]
-    ) -> list[DNSZone]:
-        """Resolve all DNSZone targets for this rule."""
-        if rule.zone_template:
-            zone_name = self._render_template(rule.zone_template, context, "zone_template")
-            view_ids = [view.id for view in selected_views]
-
-            zones = list(DNSZone.objects.filter(name=zone_name, dns_view_id__in=view_ids))
-            found_view_ids = {zone.dns_view_id for zone in zones}
-            missing_view_ids = set(view_ids) - found_view_ids
-            if missing_view_ids:
-                missing_view_names = list(
-                    models.DNSView.objects.filter(id__in=missing_view_ids).values_list("name", flat=True)
-                )
-                raise ValidationError(
-                    {
-                        "zone_template": (
-                            f"Zone '{zone_name}' does not exist in selected DNS view(s): "
-                            f"{', '.join(sorted(missing_view_names))}"
-                        )
-                    }
-                )
-
-            return zones
-
-        raise ValidationError({"zone_template": "DNS rule must define a zone_template."})
+        # Return selected rules from the already-fetched candidate set.
+        final_rule_pk_set = set(final_rule_pks)
+        return [rule for rule in all_rules if rule.pk in final_rule_pk_set]
 
     def _build_record_context(self, base_context: dict[str, Any], record_data: dict[str, Any]) -> dict[str, Any]:
         """Build per-record template context, including selected IP when available."""
@@ -821,41 +656,6 @@ class DNSRuleEngine:
             context["ip"] = wrap_for_template(ip_obj)
 
         return context
-
-    def _get_dns_views_for_rule(self, rule: DNSRule, context: dict[str, Any]) -> list[models.DNSView]:
-        """Resolve DNS views for a rule from view_template or fallback to Default."""
-        if not rule.view_template:
-            return [models.DNSView.objects.get(pk=models.get_default_view_pk())]
-
-        rendered = self._render_template(rule.view_template, context, "view_template")
-        raw_names = [token.strip() for token in re.split(r"[\s,]+", rendered) if token.strip()]
-        if not raw_names:
-            raise ValidationError({"view_template": "view_template rendered no DNS view names."})
-
-        requested_names = list(dict.fromkeys(raw_names))
-        matched_views = list(models.DNSView.objects.filter(name__in=requested_names))
-        matched_by_name = {view.name: view for view in matched_views}
-
-        missing_names = [name for name in raw_names if name not in matched_by_name]
-        if missing_names:
-            raise ValidationError(
-                {
-                    "view_template": (
-                        "DNS view(s) not found from view_template: " f"{', '.join(sorted(set(missing_names)))}"
-                    )
-                }
-            )
-
-        ordered_views = []
-        seen_ids = set()
-        for name in raw_names:
-            view = matched_by_name[name]
-            if view.id in seen_ids:
-                continue
-            ordered_views.append(view)
-            seen_ids.add(view.id)
-
-        return ordered_views
 
     def _get_existing_tracking_records(self, rule: DNSRule, source_obj: Any) -> django_models.QuerySet:
         """Get existing tracking records for a rule+object combination."""
@@ -1011,6 +811,15 @@ class DNSRuleEngine:
 
         return f"{base_key}:{suffix}"
 
+    def _get_record_identity_key(self, dns_record) -> str:
+        """Generate an identity key that excludes mutable fields such as rendered name."""
+        record_type = dns_record.__class__.__name__
+
+        if hasattr(dns_record, "address_id"):  # A/AAAA
+            return f"{record_type}:{dns_record.zone_id}:{dns_record.address_id}"
+
+        return self._get_record_content_key(dns_record)
+
     def _get_record_content_key_from_data(self, record_data: dict, rule_record_type: str) -> str:
         """Generate content key from record data dict."""
         zone_id = record_data["zone"].id
@@ -1023,6 +832,16 @@ class DNSRuleEngine:
             raise ValueError(f"Unsupported record type for content key generation: {rule_record_type}")
 
         return f"{record_type}:{name}:{zone_id}:{suffix}"
+
+    def _get_record_identity_key_from_data(self, record_data: dict, rule_record_type: str) -> str:
+        """Generate identity key from record data dict."""
+        zone_id = record_data["zone"].id
+        record_type = f"{rule_record_type}Record"
+
+        if rule_record_type in ("A", "AAAA"):
+            return f"{record_type}:{zone_id}:{record_data['address_id']}"
+
+        return self._get_record_content_key_from_data(record_data, rule_record_type)
 
     def _delete_tracking_and_dns_record(self, tracking_record) -> None:
         """Delete both the DNS record and its tracking record."""
@@ -1154,5 +973,3 @@ class DNSRuleEngine:
             record_type_method(rule, context, record_data)  # pylint: disable=not-callable
 
 
-# Global instance for use by signal handlers
-rule_engine = DNSRuleEngine()

@@ -18,7 +18,7 @@ from nautobot_dns_models.models import (
     DNSZone,
     PTRRecord,
 )
-from nautobot_dns_models.rules.engine import rule_engine
+from nautobot_dns_models.rules.engine_selector import rule_engine_safe as rule_engine
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
@@ -69,7 +69,7 @@ class ReconcileDNSObjectButton(Button):
             return False
 
         try:
-            if rule_engine._get_applicable_rules(obj).exists():  # pylint: disable=protected-access
+            if rule_engine._get_applicable_rules(obj):  # pylint: disable=protected-access
                 return True
 
             relation = SUPPORTED_PARENT_CHILD_MODEL_RELATIONS.get(obj._meta.label_lower)
@@ -82,7 +82,7 @@ class ReconcileDNSObjectButton(Button):
                 return False
 
             for child_obj in child_manager.all():
-                if rule_engine._get_applicable_rules(child_obj).exists():  # pylint: disable=protected-access
+                if rule_engine._get_applicable_rules(child_obj):  # pylint: disable=protected-access
                     return True
 
             return False

@@ -27,7 +27,7 @@ from nautobot_dns_models.constants.supported_models import (
     SUPPORTED_SOURCE_MODEL_MAP,
 )
 from nautobot_dns_models.models import DNSRule
-from nautobot_dns_models.rules.engine import rule_engine
+from nautobot_dns_models.rules.engine_selector import get_experimental_pipeline_engine, get_rule_engine
 
 name = "DNS reconciliation jobs"
 
@@ -106,6 +106,21 @@ class _BaseReconcileDNSJob(Job):
     """Shared reconciliation helpers for bulk and object jobs."""
 
     dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
+    performance_mode = ChoiceVar(
+        choices=(
+            ("safe", "Safe (default semantics)"),
+            ("fast", "Fast (reduced safeguards)"),
+            ("experimental", "Experimental (safe baseline)"),
+        ),
+        default="safe",
+        required=False,
+        description=(
+            "Execution mode for reconciliation internals. "
+            "'safe' preserves normal model save semantics; "
+            "'fast' uses performance-oriented shortcuts; "
+            "'experimental' starts from safe semantics for isolated testing."
+        ),
+    )
 
     @staticmethod
     def _normalize_model_labels(source_models) -> tuple[set[str], set[str]]:
@@ -117,6 +132,14 @@ class _BaseReconcileDNSJob(Job):
         valid_labels = requested_labels & set(SUPPORTED_SOURCE_MODEL_MAP.keys())
         invalid_labels = requested_labels - valid_labels
         return valid_labels, invalid_labels
+
+    @staticmethod
+    def _normalize_performance_mode(performance_mode: str | None) -> str:
+        """Normalize performance mode input to supported values."""
+        mode = (performance_mode or "safe").strip().lower()
+        if mode not in {"safe", "fast", "experimental"}:
+            return "safe"
+        return mode
 
     def _get_rule_queryset(self, selected_rules, selected_model_labels: set[str]):
         """Build enabled-rule queryset constrained by explicit rule/model filters."""
@@ -153,6 +176,12 @@ class _BaseReconcileDNSJob(Job):
         for model_label in target_labels:
             model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
             queryset = model_class.objects.order_by("pk")
+            if model_label == "dcim.interface":
+                # Fast-path bulk runs repeatedly dereference device tenant/location.
+                # Load them in the base interface query to reduce per-object SQL chatter.
+                queryset = queryset.select_related("device", "device__tenant", "device__location").prefetch_related(
+                    "ip_addresses"
+                )
             for obj in queryset.iterator(chunk_size=batch_size):
                 yield model_label, obj
 
@@ -181,6 +210,7 @@ class _BaseReconcileDNSJob(Job):
         summary: ReconcileRunSummary,
         *,
         dryrun: bool,
+        performance_mode: str,
         single_object: bool,
         include_children: bool,
         selected_model_labels: set[str],
@@ -195,6 +225,7 @@ class _BaseReconcileDNSJob(Job):
             "schema_version": 1,
             "mode": {
                 "dryrun": bool(dryrun),
+                "performance_mode": performance_mode,
                 "single_object": bool(single_object),
                 "include_children": bool(include_children),
             },
@@ -214,38 +245,117 @@ class _BaseReconcileDNSJob(Job):
             "errors": [],
         }
 
-    def _process_targets(self, targets, *, dryrun, location_ids, tenant_ids, limit) -> ReconcileRunSummary:
+    def _process_targets(
+        self, targets, *, dryrun, performance_mode, location_ids, tenant_ids, limit, batch_size
+    ) -> ReconcileRunSummary:
         """Process target iterator and return aggregated execution/reconciliation summary."""
         summary = ReconcileRunSummary()
+        selected_engine = get_rule_engine(performance_mode)
+        selected_engine.reset_runtime_caches()
 
+        buffered_targets = []
         for model_label, obj in targets:
+            buffered_targets.append((model_label, obj))
+            if len(buffered_targets) >= batch_size:
+                self._process_target_batch(
+                    buffered_targets,
+                    summary=summary,
+                    selected_engine=selected_engine,
+                    dryrun=dryrun,
+                    performance_mode=performance_mode,
+                    location_ids=location_ids,
+                    tenant_ids=tenant_ids,
+                    limit=limit,
+                )
+                buffered_targets = []
             if limit and summary.targets_seen >= limit:
                 break
 
-            object_location = rule_engine._get_object_location(obj)  # pylint: disable=protected-access
-            if location_ids and (object_location is None or object_location.id not in location_ids):
-                summary.mark_scope_skipped()
-                continue
+        if buffered_targets and (not limit or summary.targets_seen < limit):
+            self._process_target_batch(
+                buffered_targets,
+                summary=summary,
+                selected_engine=selected_engine,
+                dryrun=dryrun,
+                performance_mode=performance_mode,
+                location_ids=location_ids,
+                tenant_ids=tenant_ids,
+                limit=limit,
+            )
 
-            object_tenant = rule_engine._get_object_tenant(obj)  # pylint: disable=protected-access
-            if tenant_ids and (object_tenant is None or object_tenant.id not in tenant_ids):
-                summary.mark_scope_skipped()
-                continue
+        return summary
+
+    def _process_target_batch(
+        self,
+        buffered_targets,
+        *,
+        summary: ReconcileRunSummary,
+        selected_engine,
+        dryrun,
+        performance_mode,
+        location_ids,
+        tenant_ids,
+        limit,
+    ) -> None:
+        """Process one buffered target batch."""
+        if performance_mode == "fast":
+            interface_objects = [obj for model_label, obj in buffered_targets if model_label == "dcim.interface"]
+            if interface_objects:
+                selected_engine.preload_tracking_records_for_objects(interface_objects)
+
+        in_scope_targets = []
+        for model_label, obj in buffered_targets:
+            if limit and summary.targets_seen >= limit:
+                break
+
+            if location_ids:
+                object_location = selected_engine._get_object_location(obj)  # pylint: disable=protected-access
+                if object_location is None or object_location.id not in location_ids:
+                    summary.mark_scope_skipped()
+                    continue
+
+            if tenant_ids:
+                object_tenant = selected_engine._get_object_tenant(obj)  # pylint: disable=protected-access
+                if object_tenant is None or object_tenant.id not in tenant_ids:
+                    summary.mark_scope_skipped()
+                    continue
 
             summary.mark_target_seen()
+            in_scope_targets.append((model_label, obj))
 
             if dryrun:
                 self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
-                continue
+        if dryrun or not in_scope_targets:
+            return
 
+        if performance_mode == "experimental" and hasattr(selected_engine, "process_objects_batch"):
+            targets_by_model_label = {}
+            for model_label, obj in in_scope_targets:
+                targets_by_model_label.setdefault(model_label, []).append(obj)
+
+            for model_label, model_objects in targets_by_model_label.items():
+                batch_summaries = selected_engine.process_objects_batch(model_objects, created=False)
+                for obj, processing_summary in zip(model_objects, batch_summaries):
+                    if processing_summary.get("_batch_failed"):
+                        summary.mark_processed_failure()
+                        self.logger.error(
+                            "reconcile failure target=%s:%s error=%s",
+                            model_label,
+                            obj.pk,
+                            processing_summary.get("_batch_error"),
+                            extra={"object": obj},
+                        )
+                        continue
+                    summary.mark_processed_success(processing_summary)
+            return
+
+        for model_label, obj in in_scope_targets:
             try:
-                processing_summary = rule_engine.process_object(obj, created=False)
+                processing_summary = selected_engine.process_object(obj, created=False)
                 summary.mark_processed_success(processing_summary)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 summary.mark_processed_failure()
                 self.logger.error("reconcile failure target=%s:%s error=%s", model_label, obj.pk, exc, extra={"object": obj})
-
-        return summary
 
     def _log_result_summary(self, result) -> None:
         """Emit standard reconciliation summary log line."""
@@ -320,6 +430,7 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
     def run(
         self,
         dryrun,
+        performance_mode="safe",
         source_models=None,
         rules=None,
         locations=None,
@@ -328,6 +439,7 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
         batch_size=100,
     ):  # pylint: disable=too-many-arguments,arguments-differ
         """Execute bulk DNS reconciliation."""
+        performance_mode = self._normalize_performance_mode(performance_mode)
         location_ids = {location.id for location in (locations or [])}
         tenant_ids = {tenant.id for tenant in (tenants or [])}
 
@@ -349,15 +461,18 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
         summary = self._process_targets(
             targets,
             dryrun=dryrun,
+            performance_mode=performance_mode,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
             limit=limit,
+            batch_size=batch_size,
         )
         summary.scanned_model_labels.update(target_labels)
 
         result = self._build_result_payload(
             summary,
             dryrun=bool(dryrun),
+            performance_mode=performance_mode,
             single_object=False,
             include_children=False,
             selected_model_labels=selected_model_labels,
@@ -407,9 +522,10 @@ class ReconcileDNSObjectJob(_BaseReconcileDNSJob):
     )
 
     def run(  # pylint: disable=arguments-differ
-        self, dryrun, object_model, object_id, object_name="", include_children=False
+        self, dryrun, performance_mode="safe", object_model=None, object_id=None, object_name="", include_children=False
     ):
         """Execute single-object DNS reconciliation."""
+        performance_mode = self._normalize_performance_mode(performance_mode)
         del object_name  # Display-only field; not used in reconciliation logic.
         model_class = SUPPORTED_SOURCE_MODEL_MAP.get(object_model)
         if model_class is None:
@@ -432,15 +548,18 @@ class ReconcileDNSObjectJob(_BaseReconcileDNSJob):
         summary = self._process_targets(
             targets,
             dryrun=dryrun,
+            performance_mode=performance_mode,
             location_ids=set(),
             tenant_ids=set(),
             limit=None,
+            batch_size=100,
         )
         summary.scanned_model_labels.update({model_label for model_label, _ in targets})
 
         result = self._build_result_payload(
             summary,
             dryrun=bool(dryrun),
+            performance_mode=performance_mode,
             single_object=True,
             include_children=bool(include_children),
             selected_model_labels=set(),
@@ -454,5 +573,197 @@ class ReconcileDNSObjectJob(_BaseReconcileDNSJob):
         return result
 
 
-jobs = (ReconcileDNSBulkJob, ReconcileDNSObjectJob)
+class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
+    """Experimental bulk job using batch-native fetch/render/delta/execute pipeline."""
+
+    class Meta:
+        """Metadata for experimental pipeline job definition."""
+
+        name = "Reconcile DNS Records (Bulk, Experimental Pipeline)"
+        description = (
+            "Experimental batch-native reconciliation: batch fetch, render, delta computation, and grouped execution."
+        )
+        has_sensitive_variables = False
+
+    source_models = MultiChoiceVar(
+        choices=SUPPORTED_SOURCE_MODEL_CHOICES,
+        required=False,
+        description="Optional source model filter for bulk runs.",
+        widget=StaticSelect2Multiple(),
+    )
+    rules = MultiObjectVar(
+        model=DNSRule,
+        required=False,
+        description="Optional rule filter; defaults to all enabled rules.",
+    )
+    locations = MultiObjectVar(
+        model=Location,
+        required=False,
+        description="Optional source-object location filter.",
+    )
+    tenants = MultiObjectVar(
+        model=Tenant,
+        required=False,
+        description="Optional source-object tenant filter.",
+    )
+    limit = IntegerVar(
+        required=False,
+        min_value=1,
+        description="Optional maximum number of in-scope objects to process.",
+    )
+    batch_size = IntegerVar(
+        default=500,
+        min_value=1,
+        max_value=5000,
+        description="Pipeline batch size for fetch/render/delta/execute phases.",
+    )
+
+    def run(
+        self,
+        dryrun,
+        performance_mode="experimental",
+        source_models=None,
+        rules=None,
+        locations=None,
+        tenants=None,
+        limit=None,
+        batch_size=500,
+    ):  # pylint: disable=too-many-arguments,arguments-differ
+        """Execute experimental batch-native DNS reconciliation."""
+        del performance_mode
+        performance_mode = "experimental"
+        selected_engine = get_experimental_pipeline_engine()
+        selected_engine.reset_runtime_caches()
+
+        location_ids = {location.id for location in (locations or [])}
+        tenant_ids = {tenant.id for tenant in (tenants or [])}
+
+        selected_model_labels, invalid_model_labels = self._normalize_model_labels(source_models)
+        if invalid_model_labels:
+            self.fail(
+                "Unsupported source_models: "
+                f"{', '.join(sorted(invalid_model_labels))}. "
+                f"Supported values: {', '.join(sorted(SUPPORTED_SOURCE_MODEL_MAP.keys()))}"
+            )
+            return {
+                "dryrun": bool(dryrun),
+                "error": "invalid_source_models",
+                "invalid_source_models": sorted(invalid_model_labels),
+            }
+
+        target_labels = self._resolve_target_models(selected_rules=rules, selected_model_labels=selected_model_labels)
+        targets = self._iter_targets(target_labels=target_labels, batch_size=batch_size)
+        summary = ReconcileRunSummary()
+        summary.scanned_model_labels.update(target_labels)
+
+        buffered_targets = []
+        for model_label, obj in targets:
+            buffered_targets.append((model_label, obj))
+            if len(buffered_targets) >= batch_size:
+                self._process_pipeline_target_batch(
+                    buffered_targets,
+                    summary=summary,
+                    selected_engine=selected_engine,
+                    dryrun=dryrun,
+                    location_ids=location_ids,
+                    tenant_ids=tenant_ids,
+                    limit=limit,
+                )
+                buffered_targets = []
+            if limit and summary.targets_seen >= limit:
+                break
+
+        if buffered_targets and (not limit or summary.targets_seen < limit):
+            self._process_pipeline_target_batch(
+                buffered_targets,
+                summary=summary,
+                selected_engine=selected_engine,
+                dryrun=dryrun,
+                location_ids=location_ids,
+                tenant_ids=tenant_ids,
+                limit=limit,
+            )
+
+        result = self._build_result_payload(
+            summary,
+            dryrun=bool(dryrun),
+            performance_mode=performance_mode,
+            single_object=False,
+            include_children=False,
+            selected_model_labels=selected_model_labels,
+            rules=rules,
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+            limit=limit,
+            batch_size=batch_size,
+        )
+        self._log_result_summary(result)
+        return result
+
+    def _process_pipeline_target_batch(
+        self,
+        buffered_targets,
+        *,
+        summary: ReconcileRunSummary,
+        selected_engine,
+        dryrun,
+        location_ids,
+        tenant_ids,
+        limit,
+    ) -> None:
+        """Process one buffered target batch via experimental pipeline engine."""
+        in_scope_targets = []
+        for model_label, obj in buffered_targets:
+            if limit and summary.targets_seen >= limit:
+                break
+
+            if location_ids:
+                object_location = selected_engine._get_object_location(obj)  # pylint: disable=protected-access
+                if object_location is None or object_location.id not in location_ids:
+                    summary.mark_scope_skipped()
+                    continue
+
+            if tenant_ids:
+                object_tenant = selected_engine._get_object_tenant(obj)  # pylint: disable=protected-access
+                if object_tenant is None or object_tenant.id not in tenant_ids:
+                    summary.mark_scope_skipped()
+                    continue
+
+            summary.mark_target_seen()
+            in_scope_targets.append((model_label, obj))
+
+            if dryrun:
+                self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
+
+        if dryrun or not in_scope_targets:
+            return
+
+        targets_by_model_label = {}
+        for model_label, obj in in_scope_targets:
+            targets_by_model_label.setdefault(model_label, []).append(obj)
+
+        for model_label, model_objects in targets_by_model_label.items():
+            try:
+                batch_summaries = selected_engine.process_objects_pipeline(model_objects, created=False)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                for obj in model_objects:
+                    summary.mark_processed_failure()
+                    self.logger.error("reconcile failure target=%s:%s error=%s", model_label, obj.pk, exc, extra={"object": obj})
+                continue
+
+            for obj, processing_summary in zip(model_objects, batch_summaries):
+                if processing_summary.get("_batch_failed"):
+                    summary.mark_processed_failure()
+                    self.logger.error(
+                        "reconcile failure target=%s:%s error=%s",
+                        model_label,
+                        obj.pk,
+                        processing_summary.get("_batch_error"),
+                        extra={"object": obj},
+                    )
+                    continue
+                summary.mark_processed_success(processing_summary)
+
+
+jobs = (ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileDNSBulkPipelineExperimentalJob)
 register_jobs(*jobs)

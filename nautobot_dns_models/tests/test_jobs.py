@@ -38,10 +38,11 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         type(self).setUpTestData()
         BaseRuleEngineMixin.setUp(self)
 
-    @patch("nautobot_dns_models.jobs.rule_engine.process_object")
-    def test_single_object_mode_processes_requested_object(self, process_object):
+    @patch("nautobot_dns_models.jobs.get_rule_engine")
+    def test_single_object_mode_processes_requested_object(self, get_rule_engine):
         """Single-object mode should call process_object exactly once."""
-        process_object.return_value = {}
+        selected_engine = get_rule_engine.return_value
+        selected_engine.process_object.return_value = {}
         job = ReconcileDNSObjectJob()
 
         result = job.run(
@@ -50,7 +51,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             object_id=str(self.interface.id),
         )
 
-        process_object.assert_called_once_with(self.interface, created=False)
+        selected_engine.process_object.assert_called_once_with(self.interface, created=False)
         self.assertEqual(result["schema_version"], 1)
         self.assertEqual(result["execution"]["targets_seen"], 1)
         self.assertEqual(result["execution"]["processed_count"], 1)
@@ -60,10 +61,11 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["objects_changed"], 0)
         self.assertEqual(result["reconciliation"]["record_ops_total_count"], 0)
 
-    @patch("nautobot_dns_models.jobs.rule_engine.process_object")
-    def test_single_object_parent_mode_includes_supported_children(self, process_object):
+    @patch("nautobot_dns_models.jobs.get_rule_engine")
+    def test_single_object_parent_mode_includes_supported_children(self, get_rule_engine):
         """Single-object parent mode should reconcile both parent and child objects when requested."""
-        process_object.return_value = {}
+        selected_engine = get_rule_engine.return_value
+        selected_engine.process_object.return_value = {}
         DNSRule.objects.create(
             name="job-device-reconcile",
             content_type=ContentType.objects.get_for_model(Device),
@@ -81,14 +83,14 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             include_children=True,
         )
 
-        process_object.assert_has_calls(
+        selected_engine.process_object.assert_has_calls(
             [
                 call(self.device, created=False),
                 call(self.interface, created=False),
             ],
             any_order=False,
         )
-        self.assertEqual(process_object.call_count, 2)
+        self.assertEqual(selected_engine.process_object.call_count, 2)
         self.assertEqual(result["scope"]["scanned_models"], ["dcim.device", "dcim.interface"])
         self.assertEqual(result["execution"]["targets_seen"], 2)
         self.assertEqual(result["execution"]["processed_count"], 2)
@@ -98,10 +100,11 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["objects_changed"], 0)
         self.assertEqual(result["reconciliation"]["record_ops_total_count"], 0)
 
-    @patch("nautobot_dns_models.jobs.rule_engine.process_object")
-    def test_job_aggregates_engine_processing_summary(self, process_object):
+    @patch("nautobot_dns_models.jobs.get_rule_engine")
+    def test_job_aggregates_engine_processing_summary(self, get_rule_engine):
         """Job output should aggregate per-object processing summary counters from the rule engine."""
-        process_object.side_effect = [
+        selected_engine = get_rule_engine.return_value
+        selected_engine.process_object.side_effect = [
             {
                 "had_existing_rule_records": True,
                 "existing_rule_record_count": 2,
@@ -150,9 +153,10 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         jsonschema.validate(instance=result, schema=schema)
 
-    @patch("nautobot_dns_models.jobs.rule_engine.process_object")
-    def test_dryrun_mode_does_not_apply_updates(self, process_object):
+    @patch("nautobot_dns_models.jobs.get_rule_engine")
+    def test_dryrun_mode_does_not_apply_updates(self, get_rule_engine):
         """Dry-run should enumerate targets without calling process_object."""
+        selected_engine = get_rule_engine.return_value
         job = ReconcileDNSObjectJob()
 
         result = job.run(
@@ -161,7 +165,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             object_id=str(self.interface.id),
         )
 
-        process_object.assert_not_called()
+        selected_engine.process_object.assert_not_called()
         self.assertTrue(result["mode"]["dryrun"])
         self.assertEqual(result["execution"]["targets_seen"], 1)
         self.assertEqual(result["execution"]["processed_count"], 0)
@@ -179,9 +183,10 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         self.assertEqual(result["scope"]["scanned_models"], ["dcim.interface"])
 
-    @patch("nautobot_dns_models.jobs.rule_engine.process_object")
-    def test_invalid_source_model_marks_job_failed(self, process_object):
+    @patch("nautobot_dns_models.jobs.get_rule_engine")
+    def test_invalid_source_model_marks_job_failed(self, get_rule_engine):
         """Submitting an unsupported source model should fail and skip processing."""
+        selected_engine = get_rule_engine.return_value
         job_result = create_job_result_and_run_job(
             "nautobot_dns_models.jobs",
             "ReconcileDNSBulkJob",
@@ -190,7 +195,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         )
 
         # Invalid source model input should fail during validation before any object processing is attempted.
-        process_object.assert_not_called()
+        selected_engine.process_object.assert_not_called()
 
         self.assertJobResultStatus(job_result, JobResultStatusChoices.STATUS_FAILURE)
         self.assertIn("error", job_result.result)
