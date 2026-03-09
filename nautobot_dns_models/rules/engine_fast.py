@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 import re
-from typing import Any
 
 from django.db.models import Case, CharField, Value, When
 from jinja2 import Environment
@@ -33,16 +32,16 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
 
     def __init__(self):
         """Initialize fast-path lookup caches."""
-        self._default_view_cache: models.DNSView | None = None
-        self._zone_lookup_cache: dict[tuple[str, tuple[int, ...]], list[DNSZone]] = {}
-        self._applicable_rules_cache: dict[tuple[int, Any | None, Any | None], list[DNSRule]] = {}
-        self._prefetched_tracking_records_by_object_id: dict[str, list[DNSRuleRecord]] = {}
-        self._prefetched_tracking_content_type_id: int | None = None
-        self._prefetched_dns_records_by_content_type_and_id: dict[tuple[int, Any], Any] = {}
-        self._compiled_template_cache: dict[str, Any] = {}
+        self._default_view_cache = None
+        self._zone_lookup_cache = {}
+        self._applicable_rules_cache = {}
+        self._prefetched_tracking_records_by_object_id = {}
+        self._prefetched_tracking_content_type_id = None
+        self._prefetched_dns_records_by_content_type_and_id = {}
+        self._compiled_template_cache = {}
         self._jinja_env = Environment(autoescape=False)
 
-    def reset_runtime_caches(self) -> None:
+    def reset_runtime_caches(self):
         """Clear fast-path caches between job runs to avoid stale rule/template data."""
         self._default_view_cache = None
         self._zone_lookup_cache.clear()
@@ -51,7 +50,7 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
         self._prefetched_tracking_content_type_id = None
         self._prefetched_dns_records_by_content_type_and_id.clear()
 
-    def preload_tracking_records_for_objects(self, source_objects: list[Any]) -> None:
+    def preload_tracking_records_for_objects(self, source_objects):
         """Bulk-load DNSRuleRecord rows for upcoming batch objects."""
         self._prefetched_tracking_records_by_object_id.clear()
         self._prefetched_tracking_content_type_id = None
@@ -62,7 +61,7 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
         object_ids = [str(source_obj.pk) for source_obj in source_objects]
         all_tracking_records = list(DNSRuleRecord.objects.filter(content_type=content_type, object_id__in=object_ids))
 
-        grouped_by_object_id: dict[str, list[DNSRuleRecord]] = defaultdict(list)
+        grouped_by_object_id = defaultdict(list)
         for tracking_record in all_tracking_records:
             grouped_by_object_id[str(tracking_record.object_id)].append(tracking_record)
 
@@ -70,7 +69,7 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
         self._prefetched_tracking_content_type_id = content_type.pk
         self._prefetched_dns_records_by_content_type_and_id.clear()
 
-        record_ids_by_content_type: dict[int, list[Any]] = defaultdict(list)
+        record_ids_by_content_type = defaultdict(list)
         for tracking_record in all_tracking_records:
             record_ids_by_content_type[int(tracking_record.dns_record_content_type_id)].append(
                 tracking_record.dns_record_object_id
@@ -90,7 +89,7 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
             for record_id, dns_record in model_class.objects.in_bulk(record_ids).items():
                 self._prefetched_dns_records_by_content_type_and_id[(dns_record_content_type_id, record_id)] = dns_record
 
-    def process_object(self, source_obj: Any, created: bool = False) -> dict[str, int | bool]:
+    def process_object(self, source_obj, created=False):
         """Fast path object processing."""
         content_type = ContentType.objects.get_for_model(source_obj)
         summary = self._initialize_processing_summary()
@@ -118,15 +117,15 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
 
         return summary
 
-    def _use_lookup_cache(self) -> bool:
+    def _use_lookup_cache(self):
         """Fast mode enables lookup cache reuse within process lifetime."""
         return True
 
-    def _use_direct_update(self) -> bool:
+    def _use_direct_update(self):
         """Fast mode applies in-place rename updates via direct SQL update."""
         return True
 
-    def _render_template(self, template_str: str, context: dict[str, Any], field_name: str) -> str:
+    def _render_template(self, template_str, context, field_name):
         """Fast mode renders from a cached compiled Jinja template."""
         compiled_template = self._compiled_template_cache.get(template_str)
         if compiled_template is None:
@@ -142,12 +141,12 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
             raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
         return result
 
-    def _requires_ip_context(self, rule: DNSRule) -> bool:
+    def _requires_ip_context(self, rule):
         """Fast mode resolves ip context only when templates reference ip."""
         template_text = " ".join([rule.view_template or "", rule.zone_template or ""])
         return bool(re.search(r"\bip\b", template_text))
 
-    def _object_needs_dns_records_for_rule(self, source_obj: Any, rule: DNSRule) -> bool:
+    def _object_needs_dns_records_for_rule(self, source_obj, rule):
         """Fast path avoids extra preflight exists() queries for interface/service A/AAAA rules."""
         if rule.record_type in ("A", "AAAA"):
             source_type = source_obj.__class__.__name__
@@ -155,7 +154,7 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
                 return True
         return super()._object_needs_dns_records_for_rule(source_obj, rule)
 
-    def _get_applicable_rules(self, source_obj: Any) -> list[DNSRule]:
+    def _get_applicable_rules(self, source_obj):
         """Fast path applicable-rule resolution with scope-key cache."""
         content_type = ContentType.objects.get_for_model(source_obj)
         object_location = self._get_object_location(source_obj)
@@ -174,7 +173,7 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
         self._applicable_rules_cache[cache_key] = selected_rules
         return selected_rules
 
-    def _create_dns_records_for_object(self, source_obj: Any, applicable_rules: list[DNSRule]) -> dict[str, int | bool]:
+    def _create_dns_records_for_object(self, source_obj, applicable_rules):
         """Fast path create behavior."""
         changed_record_count = 0
         for rule in applicable_rules:
@@ -193,14 +192,14 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
             "record_ops_delete_count": 0,
         }
 
-    def _create_dns_record_from_rule(self, rule: DNSRule, source_obj: Any) -> list[Any]:
+    def _create_dns_record_from_rule(self, rule, source_obj):
         """Fast path create record from rule."""
         desired_record_data_list = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_CREATE)
         if not desired_record_data_list:
             return []
         return self._create_records_from_data(rule, source_obj, desired_record_data_list, phase=PHASE_CREATE)
 
-    def _update_dns_records_for_object(self, source_obj: Any, applicable_rules: list[DNSRule]) -> dict[str, int | bool]:
+    def _update_dns_records_for_object(self, source_obj, applicable_rules):
         """Fast path update behavior."""
         content_type = ContentType.objects.get_for_model(source_obj)
         all_tracking_records = None
@@ -241,25 +240,25 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
             "record_ops_delete_count": delete_count,
         }
 
-    def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> dict[str, int]:
+    def _reconcile_records_for_rule(self, rule, source_obj):
         """Fast path reconciliation for one rule/object."""
         tracking_records = self._get_existing_tracking_records(rule, source_obj)
         return self._reconcile_records_for_rule_prefetched(rule, source_obj, tracking_records)
 
     def _group_tracking_records_by_rule_id(
-        self, tracking_records: list[DNSRuleRecord]
-    ) -> dict[Any, list[DNSRuleRecord]]:
+        self, tracking_records
+    ):
         """Group pre-fetched tracking records by rule id."""
-        grouped_records: dict[Any, list[DNSRuleRecord]] = defaultdict(list)
+        grouped_records = defaultdict(list)
         for tracking_record in tracking_records:
             grouped_records[tracking_record.rule_id].append(tracking_record)
         return grouped_records
 
     def _cleanup_orphaned_records_prefetched(
         self,
-        tracking_records_by_rule_id: dict[Any, list[DNSRuleRecord]],
-        applicable_rule_ids: set[Any],
-    ) -> int:
+        tracking_records_by_rule_id,
+        applicable_rule_ids,
+    ):
         """Delete records from rules that are no longer applicable, using pre-fetched data."""
         deleted_count = 0
         for rule_id, tracking_records in tracking_records_by_rule_id.items():
@@ -272,9 +271,9 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
 
     def _cleanup_records_for_rule_prefetched(
         self,
-        tracking_records_by_rule_id: dict[Any, list[DNSRuleRecord]],
-        rule_id: Any,
-    ) -> int:
+        tracking_records_by_rule_id,
+        rule_id,
+    ):
         """Delete all tracking records for one applicable rule using pre-fetched data."""
         deleted_count = 0
         for tracking_record in tracking_records_by_rule_id.get(rule_id, []):
@@ -284,10 +283,10 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
 
     def _reconcile_records_for_rule_prefetched(
         self,
-        rule: DNSRule,
-        source_obj: Any,
-        tracking_records: list[DNSRuleRecord],
-    ) -> dict[str, int]:
+        rule,
+        source_obj,
+        tracking_records,
+    ):
         """Fast path reconciliation for one rule/object with pre-fetched tracking records."""
         dns_records_by_object_id = self._bulk_resolve_tracking_dns_records(rule, tracking_records)
         existing_records_by_content = {}
@@ -379,13 +378,13 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
 
     def _batch_update_tracking_record_dns_names(
         self,
-        rule: DNSRule,
-        source_obj: Any,
-        rename_candidates: list[tuple[DNSRuleRecord, str]],
-        desired_by_tracking: dict[str, dict[str, Any]],
-        phase: str,
-        chunk_size: int = 500,
-    ) -> tuple[int, int]:
+        rule,
+        source_obj,
+        rename_candidates,
+        desired_by_tracking,
+        phase,
+        chunk_size=500,
+    ):
         """Batch in-place DNS record renames using SQL CASE updates."""
         if not rename_candidates:
             return 0, 0
@@ -436,15 +435,15 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
 
     def _bulk_resolve_tracking_dns_records(
         self,
-        rule: DNSRule,
-        tracking_records: list[DNSRuleRecord],
-    ) -> dict[Any, Any]:
+        rule,
+        tracking_records,
+    ):
         """Resolve DNS records for tracking rows in one bulk query."""
         if not tracking_records:
             return {}
 
-        resolved_records: dict[Any, Any] = {}
-        missing_record_ids: list[Any] = []
+        resolved_records = {}
+        missing_record_ids = []
         for tracking_record in tracking_records:
             cache_key = (int(tracking_record.dns_record_content_type_id), tracking_record.dns_record_object_id)
             cached_dns_record = self._prefetched_dns_records_by_content_type_and_id.get(cache_key)
@@ -461,8 +460,8 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
         return resolved_records
 
     def _calculate_desired_record_data(
-        self, rule: DNSRule, source_obj: Any, phase: str = PHASE_UNKNOWN
-    ) -> list[dict[str, Any]]:
+        self, rule, source_obj, phase=PHASE_UNKNOWN
+    ):
         """Fast path desired-data calculation."""
         base_context = {"obj": wrap_for_template(source_obj)}
         requires_ip_context = self._requires_ip_context(rule)
@@ -488,8 +487,8 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
         return all_record_data
 
     def _get_zones_for_rule(
-        self, rule: DNSRule, context: dict[str, Any], selected_views: list[models.DNSView]
-    ) -> list[DNSZone]:
+        self, rule, context, selected_views
+    ):
         """Fast path zone resolution (cache-enabled)."""
         if rule.zone_template:
             zone_name = self._render_template(rule.zone_template, context, "zone_template")
@@ -514,7 +513,7 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
             return zones
         raise ValidationError({"zone_template": "DNS rule must define a zone_template."})
 
-    def _get_dns_views_for_rule(self, rule: DNSRule, context: dict[str, Any]) -> list[models.DNSView]:
+    def _get_dns_views_for_rule(self, rule, context):
         """Fast path view resolution (cache-enabled default view)."""
         if not rule.view_template:
             if self._default_view_cache is None:
@@ -544,12 +543,12 @@ class FastDNSRuleEngine(BaseDNSRuleEngine):
 
     def _update_tracking_record_dns_record(
         self,
-        rule: DNSRule,
-        source_obj: Any,
+        rule,
+        source_obj,
         tracking_record,
-        desired_record_data: dict[str, Any],
-        phase: str,
-    ) -> str:
+        desired_record_data,
+        phase,
+    ):
         """Fast path in-place update using direct SQL update."""
         dns_record = tracking_record.dns_record
         desired_name = desired_record_data["name"]

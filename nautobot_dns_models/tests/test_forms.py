@@ -60,7 +60,7 @@ class RecordNameFormNormalizationMixin:
     """
 
     @staticmethod
-    def _strip_expected(data: dict) -> tuple[str, dict]:
+    def _strip_expected(data):
         test_metadata = data.get("test_metadata")
         field_to_check = test_metadata.get("field_to_check")
         expected_value = test_metadata.get("expected_value")

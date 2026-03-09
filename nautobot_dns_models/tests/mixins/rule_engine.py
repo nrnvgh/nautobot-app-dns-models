@@ -129,12 +129,12 @@ class BaseRuleEngineMixin:
         """Set up test data."""
         self.engine = SafeDNSRuleEngine()
 
-    def _calc_desired_record_data(self, rule: DNSRule, obj) -> list[dict]:
+    def _calc_desired_record_data(self, rule, obj):
         """Helper for invoking the engine private API in tests."""
         # pylint: disable=protected-access
         return list(self.engine._calculate_desired_record_data(rule, obj))
 
-    def _render_template(self, template_str: str, context: dict, field_name: str):
+    def _render_template(self, template_str, context, field_name):
         """Wrapper around the engine's private _render_template helper."""
         # pylint: disable=protected-access
         return self.engine._render_template(template_str, context, field_name)

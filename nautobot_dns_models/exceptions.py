@@ -8,7 +8,7 @@ class DNSProcessingError(Exception):
 class DNSTemplateEmptyError(DNSProcessingError):
     """Template rendered empty result - data missing for DNS processing."""
 
-    def __init__(self, field_name: str, template_str: str, context_keys: list[str] = None):
+    def __init__(self, field_name, template_str, context_keys=None):
         """
         Initialize with template details for debugging.
 

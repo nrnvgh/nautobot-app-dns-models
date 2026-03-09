@@ -8,7 +8,7 @@ class DNSRuleContentTypeQuery:
     """Shared query helper for object types supported by DNS rules."""
 
     @staticmethod
-    def get_query() -> Q:
+    def get_query():
         """Return a Q object for supported DNS rule source models."""
         return (
             Q(app_label="dcim", model__in=["device", "interface"])

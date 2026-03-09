@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from time import perf_counter
-from typing import Any
 
 from nautobot_dns_models.models import DNSRule
 from nautobot_dns_models.rules.engine import (
@@ -64,7 +63,7 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
             },
         }
 
-    def set_pipeline_strategy(self, strategy: str | None) -> None:
+    def set_pipeline_strategy(self, strategy):
         """Set active pipeline strategy for subsequent batch processing."""
         requested_strategy = (strategy or "python_first").strip().lower()
         if requested_strategy not in self._pipeline_strategies:
@@ -72,11 +71,11 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         self._active_pipeline_strategy = requested_strategy
 
     @property
-    def pipeline_strategy(self) -> str:
+    def pipeline_strategy(self):
         """Return currently active pipeline strategy name."""
         return self._active_pipeline_strategy
 
-    def reset_pipeline_stage_metrics(self) -> None:
+    def reset_pipeline_stage_metrics(self):
         """Reset cumulative stage metrics used for profiling/benchmark diagnostics."""
         self._pipeline_stage_metrics = {
             "batches": 0,
@@ -93,7 +92,7 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
             },
         }
 
-    def get_pipeline_stage_metrics(self) -> dict[str, Any]:
+    def get_pipeline_stage_metrics(self):
         """Return cumulative and per-batch stage metrics for current run."""
         metrics = {
             "batches": self._pipeline_stage_metrics["batches"],
@@ -113,7 +112,7 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         }
         return metrics
 
-    def _record_pipeline_stage_metrics(self, batch_metrics: dict[str, Any]) -> None:
+    def _record_pipeline_stage_metrics(self, batch_metrics):
         """Accumulate one batch worth of stage metrics into engine totals."""
         self._pipeline_stage_metrics["batches"] += 1
         self._pipeline_stage_metrics["objects_total"] += batch_metrics["objects"]
@@ -123,14 +122,14 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         for stage_name, value in batch_metrics["stage_seconds"].items():
             self._pipeline_stage_metrics["stage_seconds"][stage_name] += value
 
-    def process_objects_pipeline(self, source_objects: list[Any], created: bool = False) -> list[dict[str, Any]]:
+    def process_objects_pipeline(self, source_objects, created=False):
         """Execute current pipeline strategy for one source-object batch."""
         strategy = self._pipeline_strategies[self._active_pipeline_strategy]
         return strategy.process_objects_pipeline(self, source_objects, created=created)
 
     def _process_objects_pipeline_python_first(
-        self, source_objects: list[Any], created: bool = False
-    ) -> list[dict[str, Any]]:
+        self, source_objects, created=False
+    ):
         """Run a four-phase pipeline for a same-model object batch."""
         if not source_objects:
             return []
@@ -149,19 +148,19 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         tracking_rows = list(DNSRuleRecord.objects.filter(content_type=content_type, object_id__in=object_ids))
         self._prefetch_tracking_dns_records(tracking_rows)
 
-        tracking_by_object_id: dict[Any, list[DNSRuleRecord]] = defaultdict(list)
+        tracking_by_object_id = defaultdict(list)
         for tracking_row in tracking_rows:
             tracking_by_object_id[tracking_row.object_id].append(tracking_row)
         fetch_seconds += perf_counter() - fetch_started_at
 
         planning_started_at = perf_counter()
         prepared_entries = []
-        pending_rule_calculations: list[dict[str, Any]] = []
-        batch_address_ids: set[Any] = set()
+        pending_rule_calculations = []
+        batch_address_ids = set()
         for source_obj in source_objects:
             rules = self._get_applicable_rules(source_obj)
-            desired_by_rule_id: dict[Any, list[dict[str, Any]]] = {}
-            failed_rule_ids: set[Any] = set()
+            desired_by_rule_id = {}
+            failed_rule_ids = set()
             for rule in rules:
                 if not self._object_needs_dns_records_for_rule(source_obj, rule):
                     continue
@@ -202,23 +201,23 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
                 }
             )
 
-        preloaded_ip_by_id: dict[Any, Any] = {}
+        preloaded_ip_by_id = {}
         if batch_address_ids:
             preloaded_ip_by_id = ipam_models.IPAddress.objects.in_bulk(batch_address_ids)
 
         for pending in pending_rule_calculations:
-            rule: DNSRule = pending["rule"]
+            rule = pending["rule"]
             source_obj = pending["source_obj"]
-            base_context: dict[str, Any] = pending["base_context"]
-            record_variations: list[dict[str, Any]] = pending["record_variations"]
-            requires_ip_context: bool = pending["requires_ip_context"]
-            desired_by_rule_id: dict[Any, list[dict[str, Any]]] = pending["desired_by_rule_id"]
-            failed_rule_ids: set[Any] = pending["failed_rule_ids"]
+            base_context = pending["base_context"]
+            record_variations = pending["record_variations"]
+            requires_ip_context = pending["requires_ip_context"]
+            desired_by_rule_id = pending["desired_by_rule_id"]
+            failed_rule_ids = pending["failed_rule_ids"]
 
             if rule.pk in failed_rule_ids:
                 continue
 
-            all_record_data: list[dict[str, Any]] = []
+            all_record_data = []
             for record_data in record_variations:
                 try:
                     if requires_ip_context:
@@ -238,9 +237,9 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
             desired_by_rule_id[rule.pk] = all_record_data
         planning_seconds += perf_counter() - planning_started_at
-        pending_rename_updates: dict[type, list[Any]] = defaultdict(list)
+        pending_rename_updates = defaultdict(list)
         apply_started_at = perf_counter()
-        summaries: list[dict[str, Any]] = []
+        summaries = []
         for entry in prepared_entries:
             summaries.append(self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates))
         apply_seconds += perf_counter() - apply_started_at
@@ -266,8 +265,8 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         return summaries
 
     def _process_objects_pipeline_hybrid(
-        self, source_objects: list[Any], created: bool = False
-    ) -> list[dict[str, Any]]:
+        self, source_objects, created=False
+    ):
         """Hybrid pipeline: precompute rule applicability and avoid repeated needs-check queries."""
         if not source_objects:
             return []
@@ -286,20 +285,20 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         tracking_rows = list(DNSRuleRecord.objects.filter(content_type=content_type, object_id__in=object_ids))
         self._prefetch_tracking_dns_records(tracking_rows)
 
-        tracking_by_object_id: dict[Any, list[DNSRuleRecord]] = defaultdict(list)
+        tracking_by_object_id = defaultdict(list)
         for tracking_row in tracking_rows:
             tracking_by_object_id[tracking_row.object_id].append(tracking_row)
         fetch_seconds += perf_counter() - fetch_started_at
 
         planning_started_at = perf_counter()
         prepared_entries = []
-        pending_rule_calculations: list[dict[str, Any]] = []
-        batch_address_ids: set[Any] = set()
+        pending_rule_calculations = []
+        batch_address_ids = set()
         for source_obj in source_objects:
             rules = self._get_applicable_rules(source_obj)
-            desired_by_rule_id: dict[Any, list[dict[str, Any]]] = {}
-            failed_rule_ids: set[Any] = set()
-            needed_rule_ids: set[Any] = set()
+            desired_by_rule_id = {}
+            failed_rule_ids = set()
+            needed_rule_ids = set()
 
             for rule in rules:
                 needs_records = self._object_needs_dns_records_for_rule_prefetched(source_obj, rule)
@@ -344,23 +343,23 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
                 }
             )
 
-        preloaded_ip_by_id: dict[Any, Any] = {}
+        preloaded_ip_by_id = {}
         if batch_address_ids:
             preloaded_ip_by_id = ipam_models.IPAddress.objects.in_bulk(batch_address_ids)
 
         for pending in pending_rule_calculations:
-            rule: DNSRule = pending["rule"]
+            rule = pending["rule"]
             source_obj = pending["source_obj"]
-            base_context: dict[str, Any] = pending["base_context"]
-            record_variations: list[dict[str, Any]] = pending["record_variations"]
-            requires_ip_context: bool = pending["requires_ip_context"]
-            desired_by_rule_id: dict[Any, list[dict[str, Any]]] = pending["desired_by_rule_id"]
-            failed_rule_ids: set[Any] = pending["failed_rule_ids"]
+            base_context = pending["base_context"]
+            record_variations = pending["record_variations"]
+            requires_ip_context = pending["requires_ip_context"]
+            desired_by_rule_id = pending["desired_by_rule_id"]
+            failed_rule_ids = pending["failed_rule_ids"]
 
             if rule.pk in failed_rule_ids:
                 continue
 
-            all_record_data: list[dict[str, Any]] = []
+            all_record_data = []
             for record_data in record_variations:
                 try:
                     if requires_ip_context:
@@ -380,9 +379,9 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
             desired_by_rule_id[rule.pk] = all_record_data
         planning_seconds += perf_counter() - planning_started_at
-        pending_rename_updates: dict[type, list[Any]] = defaultdict(list)
+        pending_rename_updates = defaultdict(list)
         apply_started_at = perf_counter()
-        summaries: list[dict[str, Any]] = []
+        summaries = []
         for entry in prepared_entries:
             summaries.append(self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates))
         apply_seconds += perf_counter() - apply_started_at
@@ -408,8 +407,8 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         return summaries
 
     def _process_objects_pipeline_rule_driven(
-        self, source_objects: list[Any], created: bool = False
-    ) -> list[dict[str, Any]]:
+        self, source_objects, created=False
+    ):
         """Prototype rule-driven pipeline: group planning work by rule across objects."""
         if not source_objects:
             return []
@@ -468,14 +467,14 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         )
         return apply_result["summaries"]
 
-    def _rule_driven_stage_fetch_tracking(self, source_objects: list[Any]) -> dict[str, Any]:
+    def _rule_driven_stage_fetch_tracking(self, source_objects):
         """Stage 1: fetch and prefetch tracking rows for the current object batch."""
         content_type = ContentType.objects.get_for_model(source_objects[0])
         object_ids = [source_obj.pk for source_obj in source_objects]
         tracking_rows = list(DNSRuleRecord.objects.filter(content_type=content_type, object_id__in=object_ids))
         self._prefetch_tracking_dns_records(tracking_rows)
 
-        tracking_by_object_id: dict[Any, list[DNSRuleRecord]] = defaultdict(list)
+        tracking_by_object_id = defaultdict(list)
         for tracking_row in tracking_rows:
             tracking_by_object_id[tracking_row.object_id].append(tracking_row)
 
@@ -486,20 +485,20 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
     def _rule_driven_stage_plan_work(
         self,
-        source_objects: list[Any],
-        tracking_by_object_id: dict[Any, list[DNSRuleRecord]],
-    ) -> dict[str, Any]:
+        source_objects,
+        tracking_by_object_id,
+    ):
         """Stage 2: build per-object prepared entries and per-rule work items."""
-        prepared_entries: list[dict[str, Any]] = []
-        prepared_entry_by_object_id: dict[Any, dict[str, Any]] = {}
-        rule_work_items: dict[Any, list[dict[str, Any]]] = defaultdict(list)
-        batch_address_ids: set[Any] = set()
+        prepared_entries = []
+        prepared_entry_by_object_id = {}
+        rule_work_items = defaultdict(list)
+        batch_address_ids = set()
 
         for source_obj in source_objects:
             rules = self._get_applicable_rules(source_obj)
-            desired_by_rule_id: dict[Any, list[dict[str, Any]]] = {}
-            failed_rule_ids: set[Any] = set()
-            needed_rule_ids: set[Any] = set()
+            desired_by_rule_id = {}
+            failed_rule_ids = set()
+            needed_rule_ids = set()
 
             for rule in rules:
                 needs_records = self._object_needs_dns_records_for_rule_prefetched(source_obj, rule)
@@ -553,12 +552,12 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
     def _rule_driven_stage_materialize_desired_data(
         self,
-        rule_work_items: dict[Any, list[dict[str, Any]]],
-        prepared_entry_by_object_id: dict[Any, dict[str, Any]],
-        batch_address_ids: set[Any],
-    ) -> None:
+        rule_work_items,
+        prepared_entry_by_object_id,
+        batch_address_ids,
+    ):
         """Stage 3: materialize desired record data into prepared entries."""
-        preloaded_ip_by_id: dict[Any, Any] = {}
+        preloaded_ip_by_id = {}
         if batch_address_ids:
             preloaded_ip_by_id = ipam_models.IPAddress.objects.in_bulk(batch_address_ids)
 
@@ -568,18 +567,18 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
                 if prepared_entry is None:
                     continue
 
-                rule: DNSRule = pending["rule"]
+                rule = pending["rule"]
                 source_obj = prepared_entry["source_obj"]
-                base_context: dict[str, Any] = pending["base_context"]
-                record_variations: list[dict[str, Any]] = pending["record_variations"]
-                requires_ip_context: bool = pending["requires_ip_context"]
-                desired_by_rule_id: dict[Any, list[dict[str, Any]]] = prepared_entry["desired_by_rule_id"]
-                failed_rule_ids: set[Any] = prepared_entry["failed_rule_ids"]
+                base_context = pending["base_context"]
+                record_variations = pending["record_variations"]
+                requires_ip_context = pending["requires_ip_context"]
+                desired_by_rule_id = prepared_entry["desired_by_rule_id"]
+                failed_rule_ids = prepared_entry["failed_rule_ids"]
 
                 if rule.pk in failed_rule_ids:
                     continue
 
-                all_record_data: list[dict[str, Any]] = []
+                all_record_data = []
                 for record_data in record_variations:
                     try:
                         if requires_ip_context:
@@ -599,10 +598,10 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
                 desired_by_rule_id[rule.pk] = all_record_data
 
-    def _rule_driven_stage_apply_changes(self, prepared_entries: list[dict[str, Any]]) -> dict[str, Any]:
+    def _rule_driven_stage_apply_changes(self, prepared_entries):
         """Stage 4: apply prepared reconcile entries and queue rename updates."""
-        pending_rename_updates: dict[type, list[Any]] = defaultdict(list)
-        summaries: list[dict[str, Any]] = []
+        pending_rename_updates = defaultdict(list)
+        summaries = []
         for entry in prepared_entries:
             summaries.append(self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates))
         return {
@@ -610,7 +609,7 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
             "pending_rename_updates": pending_rename_updates,
         }
 
-    def _object_needs_dns_records_for_rule_prefetched(self, source_obj: Any, rule: DNSRule) -> bool:
+    def _object_needs_dns_records_for_rule_prefetched(self, source_obj, rule):
         """Hybrid fast-path: avoid per-object SQL checks when prefetch cache is present."""
         if rule.record_type not in ("A", "AAAA"):
             return True
@@ -622,8 +621,8 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         return self._object_needs_dns_records_for_rule(source_obj, rule)
 
     def _build_record_context_with_preloaded_ips(
-        self, base_context: dict[str, Any], record_data: dict[str, Any], preloaded_ip_by_id: dict[Any, Any]
-    ) -> dict[str, Any]:
+        self, base_context, record_data, preloaded_ip_by_id
+    ):
         """Build context using preloaded batch IP map, with fallback lookup for misses."""
         context = dict(base_context)
         context["record"] = record_data.copy()
@@ -643,12 +642,12 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         context["ip"] = wrap_for_template(ip_obj)
         return context
 
-    def _prefetch_tracking_dns_records(self, tracking_rows: list[DNSRuleRecord]) -> None:
+    def _prefetch_tracking_dns_records(self, tracking_rows):
         """Batch-resolve GenericFK dns_record objects and attach them to tracking rows."""
         if not tracking_rows:
             return
 
-        rows_by_record_content_type: dict[Any, list[DNSRuleRecord]] = defaultdict(list)
+        rows_by_record_content_type = defaultdict(list)
         for tracking_row in tracking_rows:
             rows_by_record_content_type[tracking_row.dns_record_content_type_id].append(tracking_row)
 
@@ -669,16 +668,16 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
     def _apply_prepared_reconcile_entry(
         self,
-        entry: dict[str, Any],
-        bulk_update_collector: dict[type, list[Any]] | None = None,
-    ) -> dict[str, Any]:
+        entry,
+        bulk_update_collector=None,
+    ):
         """Apply prepared desired/tracking data for one source object."""
         source_obj = entry["source_obj"]
-        rules: list[DNSRule] = entry["rules"]
-        needed_rule_ids: set[Any] = entry.get("needed_rule_ids", set())
-        desired_by_rule_id: dict[Any, list[dict[str, Any]]] = entry["desired_by_rule_id"]
-        failed_rule_ids: set[Any] = entry["failed_rule_ids"]
-        tracking_rows: list[DNSRuleRecord] = entry["tracking_rows"]
+        rules = entry["rules"]
+        needed_rule_ids = entry.get("needed_rule_ids", set())
+        desired_by_rule_id = entry["desired_by_rule_id"]
+        failed_rule_ids = entry["failed_rule_ids"]
+        tracking_rows = entry["tracking_rows"]
 
         summary = self._initialize_processing_summary()
         existing_count = len(tracking_rows)
@@ -688,7 +687,7 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         if not rules:
             return summary
 
-        tracking_by_rule_id: dict[Any, list[DNSRuleRecord]] = defaultdict(list)
+        tracking_by_rule_id = defaultdict(list)
         for tracking_row in tracking_rows:
             tracking_by_rule_id[tracking_row.rule_id].append(tracking_row)
 
@@ -724,9 +723,9 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
     def _cleanup_orphaned_records_prefetched(
         self,
-        tracking_by_rule_id: dict[Any, list[DNSRuleRecord]],
-        applicable_rule_ids: set[Any],
-    ) -> int:
+        tracking_by_rule_id,
+        applicable_rule_ids,
+    ):
         """Delete tracking/DNS rows for rules no longer applicable."""
         deleted_count = 0
         for rule_id in list(tracking_by_rule_id.keys()):
@@ -737,9 +736,9 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
     def _cleanup_records_for_rule_prefetched(
         self,
-        tracking_by_rule_id: dict[Any, list[DNSRuleRecord]],
-        rule_id: Any,
-    ) -> int:
+        tracking_by_rule_id,
+        rule_id,
+    ):
         """Delete all tracking/DNS rows for one rule from prefetched group."""
         tracking_rows = tracking_by_rule_id.pop(rule_id, [])
         for tracking_row in tracking_rows:
@@ -748,12 +747,12 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
     def _reconcile_records_for_rule_with_desired(
         self,
-        rule: DNSRule,
-        source_obj: Any,
-        tracking_records: list[DNSRuleRecord],
-        desired_record_data: list[dict[str, Any]],
-        bulk_update_collector: dict[type, list[Any]] | None = None,
-    ) -> dict[str, int]:
+        rule,
+        source_obj,
+        tracking_records,
+        desired_record_data,
+        bulk_update_collector=None,
+    ):
         """Reconcile one rule using caller-provided tracking rows and desired rows."""
         existing_records_by_identity = {}
         for tracking_record in tracking_records:
@@ -843,8 +842,8 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
     def _flush_bulk_rename_updates(
         self,
-        bulk_update_collector: dict[type, list[Any]],
-    ) -> None:
+        bulk_update_collector,
+    ):
         """Execute queued rename updates in bulk."""
         for record_model, update_entries in bulk_update_collector.items():
             if not update_entries:

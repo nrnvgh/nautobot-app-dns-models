@@ -1,7 +1,5 @@
 """Jobs for DNS reconciliation workflows."""
 
-from __future__ import annotations
-
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -37,33 +35,33 @@ name = "DNS reconciliation jobs"
 class ReconcileRunSummary:
     """Mutable accumulator for reconciliation execution and outcome counters."""
 
-    scanned_model_labels: set[str] = field(default_factory=set)
-    targets_seen: int = 0
-    processed_count: int = 0
-    success_count: int = 0
-    failure_count: int = 0
-    skipped_scope_count: int = 0
-    objects_with_existing_rule_records: int = 0
-    existing_rule_record_count: int = 0
-    objects_changed: int = 0
-    changed_record_count: int = 0
-    record_ops_create_count: int = 0
-    record_ops_delete_count: int = 0
+    scanned_model_labels: ... = field(default_factory=set)
+    targets_seen: ... = 0
+    processed_count: ... = 0
+    success_count: ... = 0
+    failure_count: ... = 0
+    skipped_scope_count: ... = 0
+    objects_with_existing_rule_records: ... = 0
+    existing_rule_record_count: ... = 0
+    objects_changed: ... = 0
+    changed_record_count: ... = 0
+    record_ops_create_count: ... = 0
+    record_ops_delete_count: ... = 0
 
-    def mark_scope_skipped(self) -> None:
+    def mark_scope_skipped(self):
         """Increment count for targets skipped by location/tenant scope filters."""
         self.skipped_scope_count += 1
 
-    def mark_target_seen(self) -> None:
+    def mark_target_seen(self):
         """Increment count for in-scope targets encountered."""
         self.targets_seen += 1
 
-    def mark_processed_failure(self) -> None:
+    def mark_processed_failure(self):
         """Increment counters for a failed processing attempt."""
         self.processed_count += 1
         self.failure_count += 1
 
-    def mark_processed_success(self, processing_summary: dict) -> None:
+    def mark_processed_success(self, processing_summary):
         """Increment success counters and apply engine-provided reconciliation metrics."""
         self.processed_count += 1
         self.success_count += 1
@@ -80,7 +78,7 @@ class ReconcileRunSummary:
         self.record_ops_create_count += int(processing_summary.get("record_ops_create_count", 0))
         self.record_ops_delete_count += int(processing_summary.get("record_ops_delete_count", 0))
 
-    def as_execution_dict(self) -> dict[str, int]:
+    def as_execution_dict(self):
         """Serialize execution counters for job result output."""
         return {
             "targets_seen": self.targets_seen,
@@ -90,7 +88,7 @@ class ReconcileRunSummary:
             "skipped_scope_count": self.skipped_scope_count,
         }
 
-    def as_reconciliation_dict(self) -> dict[str, int]:
+    def as_reconciliation_dict(self):
         """Serialize reconciliation counters for job result output."""
         return {
             "objects_with_existing_rule_records": self.objects_with_existing_rule_records,
@@ -124,7 +122,7 @@ class _BaseReconcileDNSJob(Job):
     )
 
     @staticmethod
-    def _normalize_model_labels(source_models) -> tuple[set[str], set[str]]:
+    def _normalize_model_labels(source_models):
         """Return `(valid_labels, invalid_labels)` for selected source-model labels."""
         if not source_models:
             return set(), set()
@@ -135,14 +133,14 @@ class _BaseReconcileDNSJob(Job):
         return valid_labels, invalid_labels
 
     @staticmethod
-    def _normalize_performance_mode(performance_mode: str | None) -> str:
+    def _normalize_performance_mode(performance_mode):
         """Normalize performance mode input to supported values."""
         mode = (performance_mode or "safe").strip().lower()
         if mode not in {"safe", "fast", "experimental"}:
             return "safe"
         return mode
 
-    def _get_rule_queryset(self, selected_rules, selected_model_labels: set[str]):
+    def _get_rule_queryset(self, selected_rules, selected_model_labels):
         """Build enabled-rule queryset constrained by explicit rule/model filters."""
         queryset = DNSRule.objects.filter(enabled=True).select_related("content_type")
 
@@ -158,7 +156,7 @@ class _BaseReconcileDNSJob(Job):
 
         return queryset
 
-    def _resolve_target_models(self, selected_rules, selected_model_labels: set[str]) -> list[str]:
+    def _resolve_target_models(self, selected_rules, selected_model_labels):
         """Resolve which model labels should be scanned in bulk mode."""
         filtered_rules = self._get_rule_queryset(selected_rules, selected_model_labels)
         labels = {
@@ -170,9 +168,9 @@ class _BaseReconcileDNSJob(Job):
 
     def _iter_targets(
         self,
-        target_labels: list[str],
-        batch_size: int,
-        limit: int | None = None,
+        target_labels,
+        batch_size,
+        limit=None,
     ):
         """Yield `(model_label, object)` pairs for reconciliation."""
         remaining = limit
@@ -221,19 +219,19 @@ class _BaseReconcileDNSJob(Job):
 
     @staticmethod
     def _build_result_payload(
-        summary: ReconcileRunSummary,
+        summary,
         *,
-        dryrun: bool,
-        performance_mode: str,
-        single_object: bool,
-        include_children: bool,
-        selected_model_labels: set[str],
+        dryrun,
+        performance_mode,
+        single_object,
+        include_children,
+        selected_model_labels,
         rules=None,
         location_ids=None,
         tenant_ids=None,
         limit=None,
         batch_size=100,
-    ) -> dict:
+    ):
         """Build structured job result payload from run context and accumulated counters."""
         return {
             "schema_version": 1,
@@ -261,7 +259,7 @@ class _BaseReconcileDNSJob(Job):
 
     def _process_targets(
         self, targets, *, dryrun, performance_mode, location_ids, tenant_ids, limit, batch_size
-    ) -> ReconcileRunSummary:
+    ):
         """Process target iterator and return aggregated execution/reconciliation summary."""
         summary = ReconcileRunSummary()
         selected_engine = get_rule_engine(performance_mode)
@@ -303,14 +301,14 @@ class _BaseReconcileDNSJob(Job):
         self,
         object_batch,
         *,
-        summary: ReconcileRunSummary,
+        summary,
         selected_engine,
         dryrun,
         performance_mode,
         location_ids,
         tenant_ids,
         limit,
-    ) -> None:
+    ):
         """Process one buffered target batch."""
         if performance_mode == "fast":
             interface_objects = [obj for model_label, obj in object_batch if model_label == "dcim.interface"]
@@ -371,7 +369,7 @@ class _BaseReconcileDNSJob(Job):
                 summary.mark_processed_failure()
                 self.logger.error("reconcile failure target=%s:%s error=%s", model_label, obj.pk, exc, extra={"object": obj})
 
-    def _log_result_summary(self, result) -> None:
+    def _log_result_summary(self, result):
         """Emit standard reconciliation summary log line."""
         execution = result["execution"]
         reconciliation = result["reconciliation"]
@@ -771,13 +769,13 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
         self,
         object_batch,
         *,
-        summary: ReconcileRunSummary,
+        summary,
         selected_engine,
         dryrun,
         location_ids,
         tenant_ids,
         limit,
-    ) -> None:
+    ):
         """Process batch of objects via the experimental pipeline engine."""
         targets_in_scope = self._build_pipeline_in_scope_targets(
             object_batch,

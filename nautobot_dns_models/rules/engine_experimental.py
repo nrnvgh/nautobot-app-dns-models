@@ -1,8 +1,5 @@
 """Experimental reconciliation engine entry point."""
 
-from __future__ import annotations
-
-from typing import Any
 import re
 
 from django.template import engines as django_template_engines
@@ -24,32 +21,32 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
 
     def __init__(self):
         """Initialize experimental runtime caches."""
-        self._default_view_cache: Any | None = None
-        self._view_lookup_cache: dict[tuple[str, ...], list[Any]] = {}
-        self._zone_lookup_cache: dict[tuple[str, tuple[int, ...]], list[DNSZone]] = {}
-        self._applicable_rules_cache: dict[tuple[int, Any | None, Any | None], list[DNSRule]] = {}
-        self._compiled_template_cache: dict[str, Any] = {}
+        self._default_view_cache = None
+        self._view_lookup_cache = {}
+        self._zone_lookup_cache = {}
+        self._applicable_rules_cache = {}
+        self._compiled_template_cache = {}
         self._jinja_env = django_template_engines["jinja"].env
 
-    def reset_runtime_caches(self) -> None:
+    def reset_runtime_caches(self):
         """Clear per-run scope cache to avoid stale rule objects across jobs."""
         self._default_view_cache = None
         self._view_lookup_cache.clear()
         self._zone_lookup_cache.clear()
         self._applicable_rules_cache.clear()
 
-    def _use_direct_update(self) -> bool:
+    def _use_direct_update(self):
         """Experimental tuning: enable direct SQL rename updates."""
         return True
 
-    def _requires_ip_context(self, rule: DNSRule) -> bool:
+    def _requires_ip_context(self, rule):
         """Experimental tuning: only resolve ip context when templates reference ip."""
         template_text = " ".join([rule.view_template or "", rule.zone_template or ""])
         return bool(re.search(r"\bip\b", template_text))
 
-    def process_objects_batch(self, source_objects: list[Any], created: bool = False) -> list[dict[str, Any]]:
+    def process_objects_batch(self, source_objects, created=False):
         """Experimental chunk-level processing entrypoint for batch tests."""
-        summaries: list[dict[str, Any]] = []
+        summaries = []
         for source_obj in source_objects:
             try:
                 summaries.append(self.process_object(source_obj, created=created))
@@ -57,7 +54,7 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
                 summaries.append({"_batch_failed": True, "_batch_error": str(exc)})
         return summaries
 
-    def _render_template(self, template_str: str, context: dict[str, Any], field_name: str) -> str:
+    def _render_template(self, template_str, context, field_name):
         """Experimental tuning: render from cached compiled Jinja templates."""
         compiled_template = self._compiled_template_cache.get(template_str)
         if compiled_template is None:
@@ -73,7 +70,7 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
             raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
         return result
 
-    def _get_applicable_rules(self, source_obj: Any) -> list[DNSRule]:
+    def _get_applicable_rules(self, source_obj):
         """Experimental tuning: scope-key cache for applicable-rule resolution."""
         content_type = ContentType.objects.get_for_model(source_obj)
         object_location = self._get_object_location(source_obj)
@@ -92,7 +89,7 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
         self._applicable_rules_cache[cache_key] = selected_rules
         return selected_rules
 
-    def _get_dns_views_for_rule(self, rule: DNSRule, context: dict[str, Any]) -> list[Any]:
+    def _get_dns_views_for_rule(self, rule, context):
         """Experimental tuning: cache DNS view resolution for repeated templates."""
         if not rule.view_template:
             if self._default_view_cache is None:
@@ -125,7 +122,7 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
         self._view_lookup_cache[cache_key] = ordered_views
         return ordered_views
 
-    def _get_zones_for_rule(self, rule: DNSRule, context: dict[str, Any], selected_views: list[Any]) -> list[DNSZone]:
+    def _get_zones_for_rule(self, rule, context, selected_views):
         """Experimental tuning: cache zone lookups by zone-name and view-id tuple."""
         if rule.zone_template:
             zone_name = self._render_template(rule.zone_template, context, "zone_template")
@@ -150,27 +147,25 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
             return zones
         raise ValidationError({"zone_template": "DNS rule must define a zone_template."})
 
-    def _calculate_desired_record_data(
-        self, rule: DNSRule, source_obj: Any, phase: str = PHASE_UNKNOWN
-    ) -> list[dict[str, Any]]:
+    def _calculate_desired_record_data(self, rule, source_obj, phase=PHASE_UNKNOWN):
         """IP prefetch shortcut disabled; use base safe-style behavior."""
         # Previously this method set `_current_source_obj` so `_build_record_context`
         # could resolve `ip` from prefetched relation data.
         return super()._calculate_desired_record_data(rule, source_obj, phase=phase)
 
-    def _build_record_context(self, base_context: dict[str, Any], record_data: dict[str, Any]) -> dict[str, Any]:
+    def _build_record_context(self, base_context, record_data):
         """IP prefetch shortcut disabled; use base safe-style behavior."""
         # Previously this method attempted a fast path against `source_obj.ip_addresses`.
         return super()._build_record_context(base_context, record_data)
 
     def _update_tracking_record_dns_record(
         self,
-        rule: DNSRule,
-        source_obj: Any,
+        rule,
+        source_obj,
         tracking_record,
-        desired_record_data: dict[str, Any],
-        phase: str,
-    ) -> str:
+        desired_record_data,
+        phase,
+    ):
         """Experimental tuning: in-place rename via direct SQL update."""
         dns_record = tracking_record.dns_record
         desired_name = desired_record_data["name"]

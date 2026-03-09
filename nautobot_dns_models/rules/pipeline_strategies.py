@@ -1,9 +1,6 @@
 """Pluggable strategies for experimental bulk pipeline reconciliation."""
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
-from typing import Any
 
 
 class ExperimentalPipelineStrategy(ABC):
@@ -12,7 +9,7 @@ class ExperimentalPipelineStrategy(ABC):
     name = "base"
 
     @abstractmethod
-    def process_objects_pipeline(self, engine, source_objects: list[Any], created: bool = False) -> list[dict[str, Any]]:
+    def process_objects_pipeline(self, engine, source_objects, created=False):
         """Run reconcile pipeline for one same-model object batch."""
 
 
@@ -21,7 +18,7 @@ class PythonFirstPipelineStrategy(ExperimentalPipelineStrategy):
 
     name = "python_first"
 
-    def process_objects_pipeline(self, engine, source_objects: list[Any], created: bool = False) -> list[dict[str, Any]]:
+    def process_objects_pipeline(self, engine, source_objects, created=False):
         """Delegate to baseline engine implementation."""
         return engine._process_objects_pipeline_python_first(source_objects=source_objects, created=created)
 
@@ -31,7 +28,7 @@ class HybridPipelineStrategy(ExperimentalPipelineStrategy):
 
     name = "hybrid"
 
-    def process_objects_pipeline(self, engine, source_objects: list[Any], created: bool = False) -> list[dict[str, Any]]:
+    def process_objects_pipeline(self, engine, source_objects, created=False):
         """Delegate to hybrid implementation."""
         return engine._process_objects_pipeline_hybrid(source_objects=source_objects, created=created)
 
@@ -41,7 +38,7 @@ class SQLHeavyPipelineStrategy(ExperimentalPipelineStrategy):
 
     name = "sql_heavy"
 
-    def process_objects_pipeline(self, engine, source_objects: list[Any], created: bool = False) -> list[dict[str, Any]]:
+    def process_objects_pipeline(self, engine, source_objects, created=False):
         """Delegate to baseline implementation until SQL-heavy path is added."""
         return engine._process_objects_pipeline_python_first(source_objects=source_objects, created=created)
 
@@ -51,6 +48,6 @@ class RuleDrivenPipelineStrategy(ExperimentalPipelineStrategy):
 
     name = "rule_driven"
 
-    def process_objects_pipeline(self, engine, source_objects: list[Any], created: bool = False) -> list[dict[str, Any]]:
+    def process_objects_pipeline(self, engine, source_objects, created=False):
         """Delegate to rule-grouped implementation."""
         return engine._process_objects_pipeline_rule_driven(source_objects=source_objects, created=created)

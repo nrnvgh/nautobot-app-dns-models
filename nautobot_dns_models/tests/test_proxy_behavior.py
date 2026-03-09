@@ -14,7 +14,7 @@ class Mixins:
     class PrimaryIPProxyMixin(BaseRuleEngineMixin):
         """Common assertions for primary IP proxy behavior on devices and VMs."""
 
-        proxy_target_attr: str = ""
+        proxy_target_attr = ""
 
         @classmethod
         def setUpTestData(cls):
@@ -23,7 +23,7 @@ class Mixins:
             if not cls.proxy_target_attr:
                 raise ValueError("proxy_target_attr must be defined on subclasses")
 
-            cls.proxy_target: Device | VirtualMachine = getattr(cls, cls.proxy_target_attr)
+            cls.proxy_target = getattr(cls, cls.proxy_target_attr)
             cls.ip_address = cls.ip_addresses[0]
             cls.ip_address2 = cls.ip_addresses[1]
             cls.ipv6_address = cls.ipv6_addresses[0]
@@ -93,7 +93,7 @@ class Mixins:
     class IPAddressManagerMixin(BaseRuleEngineMixin):
         """Common assertions for ip_addresses manager proxies."""
 
-        manager_source_attr: str = ""
+        manager_source_attr = ""
 
         @classmethod
         def setUpTestData(cls):

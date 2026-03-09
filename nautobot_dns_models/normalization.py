@@ -3,8 +3,6 @@
 Implements per-label normalization with trim/collapse and underscore-led label handling.
 """
 
-from __future__ import annotations
-
 import re
 
 _TRANSLATE_TO_HYPHEN = str.maketrans(
@@ -16,7 +14,7 @@ _TRANSLATE_TO_HYPHEN = str.maketrans(
 )
 
 
-def normalize_dns_name(value: str) -> str:
+def normalize_dns_name(value):
     """Normalize a DNS name or domain-like value.
 
     Policy:
@@ -36,7 +34,7 @@ def normalize_dns_name(value: str) -> str:
     return ".".join(normalized_labels)
 
 
-def _normalize_label(label: str) -> str:
+def _normalize_label(label):
     """Normalize a single DNS label according to plugin policy.
 
     - Lowercase
@@ -65,11 +63,11 @@ def _normalize_label(label: str) -> str:
     return normalized
 
 
-def _collapse_hyphens(value: str) -> str:
+def _collapse_hyphens(value):
     """Collapse consecutive hyphens to a single hyphen."""
     return re.sub(r"-+", "-", value)
 
 
-def _trim_hyphens(value: str) -> str:
+def _trim_hyphens(value):
     """Trim leading and trailing hyphens from a label."""
     return value.strip("-")

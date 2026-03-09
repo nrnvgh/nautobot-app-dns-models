@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from nautobot_dns_models.models import DNSRule
 from nautobot_dns_models.rules.engine import (
@@ -28,7 +27,7 @@ from nautobot_dns_models.rules.engine import (
 class SafeDNSRuleEngine(BaseDNSRuleEngine):
     """Default engine preserving normal model-save semantics."""
 
-    def process_object(self, source_obj: Any, created: bool = False) -> dict[str, int | bool]:
+    def process_object(self, source_obj, created=False):
         """Safe path object processing."""
         summary = self._initialize_processing_summary()
         content_type = ContentType.objects.get_for_model(source_obj)
@@ -62,20 +61,20 @@ class SafeDNSRuleEngine(BaseDNSRuleEngine):
 
         return summary
 
-    def _use_lookup_cache(self) -> bool:
+    def _use_lookup_cache(self):
         """Safe mode disables lookup caches for strict behavior parity."""
         return False
 
-    def _use_direct_update(self) -> bool:
+    def _use_direct_update(self):
         """Safe mode updates records via validated_save()."""
         return False
 
-    def _requires_ip_context(self, rule: DNSRule) -> bool:
+    def _requires_ip_context(self, rule):
         """Safe mode always resolves ip context for template rendering."""
         del rule
         return True
 
-    def _create_dns_records_for_object(self, source_obj: Any, applicable_rules: list[DNSRule]) -> dict[str, int | bool]:
+    def _create_dns_records_for_object(self, source_obj, applicable_rules):
         """Safe path create behavior."""
         changed_record_count = 0
         for rule in applicable_rules:
@@ -94,14 +93,14 @@ class SafeDNSRuleEngine(BaseDNSRuleEngine):
             "record_ops_delete_count": 0,
         }
 
-    def _create_dns_record_from_rule(self, rule: DNSRule, source_obj: Any) -> list[Any]:
+    def _create_dns_record_from_rule(self, rule, source_obj):
         """Safe path create record from rule."""
         desired_record_data_list = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_CREATE)
         if not desired_record_data_list:
             return []
         return self._create_records_from_data(rule, source_obj, desired_record_data_list, phase=PHASE_CREATE)
 
-    def _update_dns_records_for_object(self, source_obj: Any, applicable_rules: list[DNSRule]) -> dict[str, int | bool]:
+    def _update_dns_records_for_object(self, source_obj, applicable_rules):
         """Safe path update behavior."""
         delete_count = self._cleanup_orphaned_records(source_obj, applicable_rules)
         create_count = 0
@@ -128,7 +127,7 @@ class SafeDNSRuleEngine(BaseDNSRuleEngine):
             "record_ops_delete_count": delete_count,
         }
 
-    def _reconcile_records_for_rule(self, rule: DNSRule, source_obj: Any) -> dict[str, int]:
+    def _reconcile_records_for_rule(self, rule, source_obj):
         """Safe path reconciliation for one rule/object."""
         tracking_records = self._get_existing_tracking_records(rule, source_obj)
         existing_records_by_content = {}
@@ -214,8 +213,8 @@ class SafeDNSRuleEngine(BaseDNSRuleEngine):
         }
 
     def _calculate_desired_record_data(
-        self, rule: DNSRule, source_obj: Any, phase: str = PHASE_UNKNOWN
-    ) -> list[dict[str, Any]]:
+        self, rule, source_obj, phase=PHASE_UNKNOWN
+    ):
         """Safe path desired-data calculation."""
         base_context = {"obj": wrap_for_template(source_obj)}
         requires_ip_context = self._requires_ip_context(rule)
@@ -242,8 +241,8 @@ class SafeDNSRuleEngine(BaseDNSRuleEngine):
         return all_record_data
 
     def _get_zones_for_rule(
-        self, rule: DNSRule, context: dict[str, Any], selected_views: list[models.DNSView]
-    ) -> list[DNSZone]:
+        self, rule, context, selected_views
+    ):
         """Safe path zone resolution (no cache)."""
         if rule.zone_template:
             zone_name = self._render_template(rule.zone_template, context, "zone_template")
@@ -264,7 +263,7 @@ class SafeDNSRuleEngine(BaseDNSRuleEngine):
             return zones
         raise ValidationError({"zone_template": "DNS rule must define a zone_template."})
 
-    def _get_dns_views_for_rule(self, rule: DNSRule, context: dict[str, Any]) -> list[models.DNSView]:
+    def _get_dns_views_for_rule(self, rule, context):
         """Safe path view resolution (no cache)."""
         if not rule.view_template:
             return [models.DNSView.objects.get(pk=models.get_default_view_pk())]
@@ -292,12 +291,12 @@ class SafeDNSRuleEngine(BaseDNSRuleEngine):
 
     def _update_tracking_record_dns_record(
         self,
-        rule: DNSRule,
-        source_obj: Any,
+        rule,
+        source_obj,
         tracking_record,
-        desired_record_data: dict[str, Any],
-        phase: str,
-    ) -> str:
+        desired_record_data,
+        phase,
+    ):
         """Safe path in-place update using validated_save()."""
         dns_record = tracking_record.dns_record
         desired_name = desired_record_data["name"]

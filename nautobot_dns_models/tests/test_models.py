@@ -68,7 +68,7 @@ class RecordNameNormalizationMixin:
     model = None
 
     @classmethod
-    def _strip_expected(cls, normalization_data: dict) -> tuple[str, dict]:
+    def _strip_expected(cls, normalization_data):
         expected_name = normalization_data["expected_name"]
         payload = {k: v for k, v in normalization_data.items() if k != "expected_name"}
         return expected_name, payload

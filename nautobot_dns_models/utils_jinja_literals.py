@@ -3,8 +3,6 @@
 These helpers work at the AST level and do not evaluate templates.
 """
 
-from __future__ import annotations
-
 import re
 from collections.abc import Iterable
 
@@ -13,7 +11,7 @@ from jinja2 import nodes
 from jinja2.visitor import NodeVisitor
 
 # Default substring patterns to flag in literal fragments
-DEFAULT_LITERAL_PATTERNS: tuple[tuple[str, str], ...] = (
+DEFAULT_LITERAL_PATTERNS = (
     ("..", "Consecutive dots '..' are not allowed"),
     (".-", "Dot followed by hyphen '.-' is not allowed"),
     ("-.", "Hyphen followed by dot '-.' is not allowed"),
@@ -32,11 +30,11 @@ class LiteralCollector(NodeVisitor):
     Collected literals are appended to ``self.literals`` in source order.
     """
 
-    def __init__(self) -> None:
+    def __init__(self):
         """Initialize the collector with an empty literals list."""
-        self.literals: list[str] = []
+        self.literals = []
 
-    def visit_TemplateData(self, node: nodes.TemplateData) -> None:  # pylint: disable=invalid-name
+    def visit_TemplateData(self, node):  # pylint: disable=invalid-name
         """Handle TemplateData nodes.
 
         This handles literal text segments such as the '.' between the expressions in:
@@ -52,7 +50,7 @@ class LiteralCollector(NodeVisitor):
         if getattr(node, "data", None):
             self.literals.append(node.data)
 
-    def visit_Const(self, node: nodes.Const) -> None:  # pylint: disable=invalid-name
+    def visit_Const(self, node):  # pylint: disable=invalid-name
         """Handle Const nodes that contain string literal values.
 
         This handles literal string values within expressions, such as:
@@ -68,7 +66,7 @@ class LiteralCollector(NodeVisitor):
         if isinstance(getattr(node, "value", None), str) and node.value:
             self.literals.append(node.value)
 
-    def generic_visit(self, node: nodes.Const, *args, **kwargs) -> None:
+    def generic_visit(self, node, *args, **kwargs):
         """Fallback visitor to traverse child nodes.
 
         Args:
@@ -83,7 +81,7 @@ class LiteralCollector(NodeVisitor):
             self.visit(child)
 
 
-def collect_literal_strings(template_str: str) -> list[str]:
+def collect_literal_strings(template_str):
     """Parse a Jinja template string and return literal fragments.
 
     The function uses Django's configured Jinja engine to parse the template and
@@ -104,11 +102,11 @@ def collect_literal_strings(template_str: str) -> list[str]:
 
 
 def collect_literal_validation_errors(
-    template_fields: Iterable[tuple[str, str]],
+    template_fields,
     *,
-    check_whitespace_in_value_template: bool = True,
-    patterns: tuple[tuple[str, str], ...] = DEFAULT_LITERAL_PATTERNS,
-) -> dict[str, list[str]]:
+    check_whitespace_in_value_template=True,
+    patterns=DEFAULT_LITERAL_PATTERNS,
+):
     """Return mapping of field_name -> list of literal validation errors.
 
     This validation is performed on literal-only fragments (no evaluation). It can
@@ -125,7 +123,7 @@ def collect_literal_validation_errors(
         Dict mapping field_name to a de-duplicated list of error messages. Fields
         without violations are omitted from the result.
     """
-    results: dict[str, list[str]] = {}
+    results = {}
 
     for field_name, template_content in template_fields:
         if not template_content:
@@ -135,7 +133,7 @@ def collect_literal_validation_errors(
         if not literal_fragments:
             continue
 
-        field_errors: list[str] = []
+        field_errors = []
 
         # Check whitespace: only for value_template if enabled; always for other fields
         should_check_whitespace = (field_name != "value_template") or check_whitespace_in_value_template
@@ -148,8 +146,8 @@ def collect_literal_validation_errors(
                 field_errors.append(message)
 
         if field_errors:
-            seen: set[str] = set()
-            unique_errors: list[str] = []
+            seen = set()
+            unique_errors = []
             for msg in field_errors:
                 if msg not in seen:
                     seen.add(msg)
@@ -159,6 +157,6 @@ def collect_literal_validation_errors(
     return results
 
 
-def _string_contains_space(value: str) -> bool:
+def _string_contains_space(value):
     """Check if a string contains any space characters using regex."""
     return WHITESPACE_REGEX.search(value) is not None
