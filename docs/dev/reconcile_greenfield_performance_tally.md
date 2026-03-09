@@ -647,3 +647,159 @@ Outcome:
 - `250` is best of tested engine-level `bulk_update` batch sizes on this dataset.
 - Average throughput delta vs `500`: `+~4.60%`.
 - Average throughput delta vs `1000`: `+~4.21%`.
+
+---
+
+## Phase 2 trial (fingerprints on `DNSRuleRecord`) - attempted, measured, backed out
+
+Goal:
+- Evaluate additive schema + reconcile-path fingerprints to short-circuit unchanged updates.
+- Keep benchmark shape fixed and use the `--change-ratio` matrix (`0/10/50/100`) for signal quality.
+
+Implementation attempted:
+- Schema:
+  - Added `DNSRuleRecord.identity_fingerprint` (`BinaryField`, nullable).
+  - Added `DNSRuleRecord.desired_fingerprint` (`BinaryField`, nullable).
+  - Generated migration `0010_dnsrulerecord_desired_fingerprint_and_more.py`.
+- Runtime:
+  - Computed fingerprints with `blake2s` (16-byte digest) from identity/content keys.
+  - Wrote both fingerprints during create path.
+  - In pipeline reconcile, matched by identity fingerprint and skipped rename updates when desired fingerprint matched.
+  - Batched tracking-row fingerprint writes via `bulk_update`.
+  - Added `memoryview -> bytes` normalization for `BinaryField` comparisons after first validation runs exposed false mismatches.
+
+Archive of this trial:
+- Full patch snapshot saved at:
+  - `docs/dev/archive/phase2_fingerprint_attempt_2026-03-08.patch`
+
+Benchmark method (same as baseline matrix):
+- Job: `ReconcileDNSBulkPipelineExperimentalJob`
+- Mode/strategy: `experimental` + `hybrid`
+- Scope: `limit=67000`, `batch_size=1000`
+- Runs: `5` per ratio
+- Ratio selector: deterministic `obj.id.int % 100 < N`
+
+Pre-trial baseline medians (`.local/benchmarks/change-ratio-baseline/*-modulo`):
+- `0%`: `22.5246s`
+- `10%`: `23.4949s` (`~287.38 changed/sec`)
+- `50%`: `25.7842s` (`~1302.81 changed/sec`)
+- `100%`: `26.7954s` (`~2500.43 changed/sec`)
+
+Fingerprint trial medians (`.local/benchmarks/change-ratio-fingerprints/*-fixed`):
+- `0%`: `22.0568s`
+- `10%`: `24.1374s` (`~279.73 changed/sec`)
+- `50%`: `28.9134s` (`~1161.81 changed/sec`)
+- `100%`: `34.9521s` (`~1916.91 changed/sec`)
+
+Delta vs baseline (median):
+- `0%`: `-0.4678s` (`-2.08%`, slight improvement).
+- `10%`: `+0.6426s` (`+2.73%`, regression).
+- `50%`: `+3.1292s` (`+12.14%`, regression).
+- `100%`: `+8.1567s` (`+30.44%`, major regression).
+
+Interpretation:
+- Desired-fingerprint logic reduced little/no-op cost slightly, but added substantial overhead on changed paths.
+- Tracking fingerprint persistence (`DNSRuleRecord` writes) dominates at higher change ratios and outweighs any reconcile short-circuit benefit.
+- Current implementation does not meet the gate for keeping the change.
+
+Decision:
+- Backed out the fingerprint implementation from runtime and model.
+- Deleted migration `0010_dnsrulerecord_desired_fingerprint_and_more.py`.
+- Restored `DNSRuleRecord` filter behavior to pre-trial `fields="__all__"`.
+
+Follow-up direction:
+- If revisiting fingerprints, move skip boundary earlier (pre-planning/object+rule cache) rather than reconcile-only optimization.
+- Keep this trial archived for reference and avoid re-running the same reconcile-stage-only approach without design changes.
+
+---
+
+## Rule-driven pipeline prototype (investigation track)
+
+Goal:
+- Prototype `rule -> objects` orchestration and compare with existing `object -> rules` pipeline.
+
+Implementation:
+- Added `rule_driven` strategy selector and implementation in:
+  - `nautobot_dns_models/rules/pipeline_strategies.py`
+  - `nautobot_dns_models/rules/engine_experimental_pipeline.py`
+  - `nautobot_dns_models/jobs.py`
+  - `.local/benchmark_reconcile_job_runs.py`
+- Prototype safety hardening:
+  - Removed mutable per-object state references from `rule_work_items`; switched to object-key lookup back into object-owned entry state.
+
+Instrumentation/logging cleanup before final suite:
+- Removed post-`ltm-2.4` pipeline stage timing/metrics accumulation from experimental pipeline job/engine.
+- Reduced high-volume per-rule reconcile summary from INFO to DEBUG in `engine.py`.
+- Disabled Postgres SQL statement logging (`log_statement=none`) on the benchmark DB instance.
+
+Full benchmark suite (`rule_driven`, fixed shape):
+- Scope: `limit=67000`, `batch_size=1000`, `runs=5`
+- Ratios: `0/10/50/100`
+- Artifacts: `.local/benchmarks/rule-driven-prototype/full-suite/*`
+
+Results (median):
+- `0%`: `19.7435s` (`0 changed/sec`)
+- `10%`: `20.9382s` (`~322.47 changed/sec`)
+- `50%`: `22.4785s` (`~1494.41 changed/sec`)
+- `100%`: `24.5261s` (`~2731.79 changed/sec`)
+
+Comparison vs earlier `rule_driven` runs with profiling-stage metrics/log-heavy behavior still enabled:
+- Comparable slices available: `10%` and `100%`.
+- `10%` median:
+  - before: `23.0274s` (`~293.22 changed/sec`)
+  - after:  `20.9382s` (`~322.47 changed/sec`)
+  - delta: `-2.0892s` (`~+9.98%` changed/sec)
+- `100%` median:
+  - before: `26.8531s` (`~2495.06 changed/sec`)
+  - after:  `24.5261s` (`~2731.79 changed/sec`)
+  - delta: `-2.3271s` (`~+9.49%` changed/sec)
+
+Notes on interpretation:
+- The improvement combines multiple changes (less runtime logging, removed pipeline stage-metrics/timing overhead, and DB `log_statement=none`), not rule-driven orchestration alone.
+- Prior hybrid baselines were gathered under different logging conditions; re-running hybrid under the same low-logging setup is required for an apples-to-apples strategy decision.
+
+---
+
+## Strategy test #11 (rule_driven, PostgreSQL `UPDATE ... FROM (VALUES ...)` A/B, 67k scope)
+
+Goal:
+- Measure isolated impact of PostgreSQL rename flush fast path against ORM-only `bulk_update` at fixed large scope.
+- Keep architecture, strategy, and benchmark shape identical; vary only rename flush implementation.
+
+Implementation under test:
+- Fast-path variant (`A`): Postgres-only `UPDATE ... FROM (VALUES ...)` in `_flush_bulk_rename_updates()`.
+- Control variant (`B`): forced ORM `bulk_update(..., ["name"])` only (fast path disabled temporarily).
+- After measurement, runtime code was restored to ORM-only path (backed out) per decision.
+
+Benchmark method:
+- Nautobot: `http://localhost:19080`
+- Job: `ReconcileDNSBulkPipelineExperimentalJob`
+- Mode/strategy: `experimental` + `rule_driven`
+- Scope: `limit=67000`, `batch_size=1000`
+- Runs: `5` per ratio
+- Ratios tested: `10%` and `100%`
+- Rule: `32ebf50a-9b15-430d-93d9-7d137204d868`
+
+SQL confirmation for fast-path variant:
+- With DB SQL logging enabled, run window logs showed:
+  - `UPDATE "nautobot_dns_models_arecord" AS target SET "name" = vals.desired_name FROM (VALUES ...) ...`
+- No fallback warning observed in worker logs during that confirmed run window.
+
+Results (median, clean sets):
+- `A_r10` (fast path): `24.8865s`, `~271.31 changed/sec` (`6752` changed)
+- `B_r10` (ORM-only): `24.8147s`, `~272.10 changed/sec` (`6752` changed)
+- Delta (`A` vs `B`, `10%`): `-0.29%` changed/sec (effectively neutral/slightly worse)
+
+- `A_r100` (fast path): `25.8685s`, `~2590.02 changed/sec` (`67000` changed)
+- `B_r100` (ORM-only): `29.6772s`, `~2257.62 changed/sec` (`67000` changed)
+- Delta (`A` vs `B`, `100%`): `+14.72%` changed/sec (`-3.8087s` median elapsed)
+
+Interpretation:
+- Under high-change workloads, set-based SQL rename flush materially improves update throughput.
+- Under low-change workloads (`10%`), rename flush is not dominant; signal is neutral.
+- Benefit profile is therefore workload-dependent and strongest when rename volume is large.
+
+Decision:
+- Documented improvement is real for heavy-change runs, but PostgreSQL-specific SQL path was backed out.
+- Active runtime path remains backend-agnostic ORM `bulk_update` for portability and maintenance simplicity.
+- This section remains as archived evidence for potential future opt-in/PostgreSQL-only fast path work.

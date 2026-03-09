@@ -44,3 +44,13 @@ class SQLHeavyPipelineStrategy(ExperimentalPipelineStrategy):
     def process_objects_pipeline(self, engine, source_objects: list[Any], created: bool = False) -> list[dict[str, Any]]:
         """Delegate to baseline implementation until SQL-heavy path is added."""
         return engine._process_objects_pipeline_python_first(source_objects=source_objects, created=created)
+
+
+class RuleDrivenPipelineStrategy(ExperimentalPipelineStrategy):
+    """Rule-driven strategy prototype: group planning by rule across objects."""
+
+    name = "rule_driven"
+
+    def process_objects_pipeline(self, engine, source_objects: list[Any], created: bool = False) -> list[dict[str, Any]]:
+        """Delegate to rule-grouped implementation."""
+        return engine._process_objects_pipeline_rule_driven(source_objects=source_objects, created=created)

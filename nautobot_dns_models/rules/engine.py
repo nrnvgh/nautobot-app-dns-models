@@ -922,7 +922,7 @@ class BaseDNSRuleEngine(ABC):
                 continue
 
             try:
-                uuid.UUID(address_id)
+                parsed_address_id = uuid.UUID(address_id)
             except ValueError:
                 logger.warning(
                     "dnsrule_candidate_skipped reason=%s rule=%s invalid_address_id=%s",
@@ -942,7 +942,7 @@ class BaseDNSRuleEngine(ABC):
                 continue
 
             record_data = base_record_data.copy()
-            record_data["address_id"] = address_id
+            record_data["address_id"] = parsed_address_id
             record_variations.append(record_data)
 
         return record_variations

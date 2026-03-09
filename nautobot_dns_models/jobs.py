@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from django.forms import widgets
@@ -178,6 +179,7 @@ class _BaseReconcileDNSJob(Job):
         for model_label in target_labels:
             if remaining is not None and remaining <= 0:
                 break
+
             model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
             queryset = model_class.objects.order_by("pk")
             if model_label == "dcim.interface":
@@ -186,8 +188,10 @@ class _BaseReconcileDNSJob(Job):
                 queryset = queryset.select_related("device", "device__tenant", "device__location").prefetch_related(
                     "ip_addresses"
                 )
+
             if remaining is not None:
                 queryset = queryset[:remaining]
+
             for obj in queryset.iterator(chunk_size=batch_size):
                 yield model_label, obj
                 if remaining is not None:
@@ -263,12 +267,12 @@ class _BaseReconcileDNSJob(Job):
         selected_engine = get_rule_engine(performance_mode)
         selected_engine.reset_runtime_caches()
 
-        buffered_targets = []
+        object_batch = []
         for model_label, obj in targets:
-            buffered_targets.append((model_label, obj))
-            if len(buffered_targets) >= batch_size:
+            object_batch.append((model_label, obj))
+            if len(object_batch) >= batch_size:
                 self._process_target_batch(
-                    buffered_targets,
+                    object_batch,
                     summary=summary,
                     selected_engine=selected_engine,
                     dryrun=dryrun,
@@ -277,13 +281,13 @@ class _BaseReconcileDNSJob(Job):
                     tenant_ids=tenant_ids,
                     limit=limit,
                 )
-                buffered_targets = []
+                object_batch = []
             if limit and summary.targets_seen >= limit:
                 break
 
-        if buffered_targets and (not limit or summary.targets_seen < limit):
+        if object_batch and (not limit or summary.targets_seen < limit):
             self._process_target_batch(
-                buffered_targets,
+                object_batch,
                 summary=summary,
                 selected_engine=selected_engine,
                 dryrun=dryrun,
@@ -297,7 +301,7 @@ class _BaseReconcileDNSJob(Job):
 
     def _process_target_batch(
         self,
-        buffered_targets,
+        object_batch,
         *,
         summary: ReconcileRunSummary,
         selected_engine,
@@ -309,12 +313,12 @@ class _BaseReconcileDNSJob(Job):
     ) -> None:
         """Process one buffered target batch."""
         if performance_mode == "fast":
-            interface_objects = [obj for model_label, obj in buffered_targets if model_label == "dcim.interface"]
+            interface_objects = [obj for model_label, obj in object_batch if model_label == "dcim.interface"]
             if interface_objects:
                 selected_engine.preload_tracking_records_for_objects(interface_objects)
 
-        in_scope_targets = []
-        for model_label, obj in buffered_targets:
+        targets_in_scope = []
+        for model_label, obj in object_batch:
             if limit and summary.targets_seen >= limit:
                 break
 
@@ -331,17 +335,17 @@ class _BaseReconcileDNSJob(Job):
                     continue
 
             summary.mark_target_seen()
-            in_scope_targets.append((model_label, obj))
+            targets_in_scope.append((model_label, obj))
 
             if dryrun:
                 self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
-        if dryrun or not in_scope_targets:
+        if dryrun or not targets_in_scope:
             return
 
         if performance_mode == "experimental" and hasattr(selected_engine, "process_objects_batch"):
-            targets_by_model_label = {}
-            for model_label, obj in in_scope_targets:
-                targets_by_model_label.setdefault(model_label, []).append(obj)
+            targets_by_model_label = defaultdict(list)
+            for model_label, obj in targets_in_scope:
+                targets_by_model_label[model_label].append(obj)
 
             for model_label, model_objects in targets_by_model_label.items():
                 batch_summaries = selected_engine.process_objects_batch(model_objects, created=False)
@@ -359,7 +363,7 @@ class _BaseReconcileDNSJob(Job):
                     summary.mark_processed_success(processing_summary)
             return
 
-        for model_label, obj in in_scope_targets:
+        for model_label, obj in targets_in_scope:
             try:
                 processing_summary = selected_engine.process_object(obj, created=False)
                 summary.mark_processed_success(processing_summary)
@@ -631,6 +635,7 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
         choices=(
             ("python_first", "Python-first"),
             ("hybrid", "Hybrid"),
+            ("rule_driven", "Rule-driven"),
             ("sql_heavy", "SQL-heavy"),
         ),
         default="python_first",
@@ -679,12 +684,12 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
         summary = ReconcileRunSummary()
         summary.scanned_model_labels.update(target_labels)
 
-        buffered_targets = []
+        object_batch = []
         for model_label, obj in targets:
-            buffered_targets.append((model_label, obj))
-            if len(buffered_targets) >= batch_size:
+            object_batch.append((model_label, obj))
+            if len(object_batch) >= batch_size:
                 self._process_pipeline_target_batch(
-                    buffered_targets,
+                    object_batch,
                     summary=summary,
                     selected_engine=selected_engine,
                     dryrun=dryrun,
@@ -692,13 +697,14 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
                     tenant_ids=tenant_ids,
                     limit=limit,
                 )
-                buffered_targets = []
+                object_batch = []
+
             if limit and summary.targets_seen >= limit:
                 break
 
-        if buffered_targets and (not limit or summary.targets_seen < limit):
+        if object_batch and (not limit or summary.targets_seen < limit):
             self._process_pipeline_target_batch(
-                buffered_targets,
+                object_batch,
                 summary=summary,
                 selected_engine=selected_engine,
                 dryrun=dryrun,
@@ -725,9 +731,9 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
         self._log_result_summary(result)
         return result
 
-    def _process_pipeline_target_batch(
+    def _build_pipeline_in_scope_targets(
         self,
-        buffered_targets,
+        object_batch,
         *,
         summary: ReconcileRunSummary,
         selected_engine,
@@ -735,10 +741,10 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
         location_ids,
         tenant_ids,
         limit,
-    ) -> None:
-        """Process one buffered target batch via experimental pipeline engine."""
-        in_scope_targets = []
-        for model_label, obj in buffered_targets:
+    ):
+        """Apply scope filters and return in-scope pipeline targets."""
+        targets_in_scope = []
+        for model_label, obj in object_batch:
             if limit and summary.targets_seen >= limit:
                 break
 
@@ -755,17 +761,40 @@ class ReconcileDNSBulkPipelineExperimentalJob(_BaseReconcileDNSJob):
                     continue
 
             summary.mark_target_seen()
-            in_scope_targets.append((model_label, obj))
+            targets_in_scope.append((model_label, obj))
 
             if dryrun:
                 self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
+        return targets_in_scope
 
-        if dryrun or not in_scope_targets:
+    def _process_pipeline_target_batch(
+        self,
+        object_batch,
+        *,
+        summary: ReconcileRunSummary,
+        selected_engine,
+        dryrun,
+        location_ids,
+        tenant_ids,
+        limit,
+    ) -> None:
+        """Process batch of objects via the experimental pipeline engine."""
+        targets_in_scope = self._build_pipeline_in_scope_targets(
+            object_batch,
+            summary=summary,
+            selected_engine=selected_engine,
+            dryrun=dryrun,
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+            limit=limit,
+        )
+
+        if dryrun or not targets_in_scope:
             return
 
-        targets_by_model_label = {}
-        for model_label, obj in in_scope_targets:
-            targets_by_model_label.setdefault(model_label, []).append(obj)
+        targets_by_model_label = defaultdict(list)
+        for model_label, obj in targets_in_scope:
+            targets_by_model_label[model_label].append(obj)
 
         for model_label, model_objects in targets_by_model_label.items():
             try:
