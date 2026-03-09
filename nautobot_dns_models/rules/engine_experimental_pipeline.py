@@ -504,6 +504,7 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
                 needs_records = self._object_needs_dns_records_for_rule_prefetched(source_obj, rule)
                 if not needs_records:
                     continue
+
                 needed_rule_ids.add(rule.pk)
                 try:
                     base_context = {"obj": wrap_for_template(source_obj)}
@@ -516,6 +517,7 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
                             address_id = record_data.get("address_id")
                             if address_id:
                                 batch_address_ids.add(address_id)
+
                     rule_work_items[rule.pk].append(
                         {
                             "object_id": source_obj.pk,
@@ -588,10 +590,12 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
                         else:
                             record_context = dict(base_context)
                             record_context["record"] = record_data.copy()
+
                         selected_views = self._get_dns_views_for_rule(rule, record_context)
                         zones = self._get_zones_for_rule(rule, record_context, selected_views)
                         for zone in zones:
                             all_record_data.append({**record_data, "zone": zone})
+
                     except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
                         self._log_candidate_skip(rule, source_obj, record_data, exc, phase=PHASE_UPDATE_RECONCILE)
                         continue
@@ -700,9 +704,11 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
             if needed_rule_ids and rule.pk not in needed_rule_ids:
                 delete_count += self._cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule.pk)
                 continue
+
             if rule.pk in failed_rule_ids:
                 delete_count += self._cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule.pk)
                 continue
+
             reconcile_summary = self._reconcile_records_for_rule_with_desired(
                 rule=rule,
                 source_obj=source_obj,
@@ -719,6 +725,7 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
         summary["changed"] = changed_record_count > 0
         summary["record_ops_create_count"] = create_count
         summary["record_ops_delete_count"] = delete_count
+
         return summary
 
     def _cleanup_orphaned_records_prefetched(
@@ -728,10 +735,12 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
     ):
         """Delete tracking/DNS rows for rules no longer applicable."""
         deleted_count = 0
+
         for rule_id in list(tracking_by_rule_id.keys()):
             if rule_id in applicable_rule_ids:
                 continue
             deleted_count += self._cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule_id)
+
         return deleted_count
 
     def _cleanup_records_for_rule_prefetched(

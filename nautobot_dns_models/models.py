@@ -734,6 +734,7 @@ class DNSRule(PrimaryModel):
         hostname_related_fields, non_hostname_related_fields = self._build_template_fields()
         all_template_fields = [*hostname_related_fields, *non_hostname_related_fields]
         template_syntax_errors = self._validate_template_syntax(all_template_fields)
+        template_expression_errors = self._validate_template_expression_required(all_template_fields)
 
         # _validate_template_literals() -> collect_literal_validation_errors() parses templates; if
         # syntax is invalid it can raise TemplateSyntaxError directly. Skip literal checks for fields
@@ -752,6 +753,11 @@ class DNSRule(PrimaryModel):
 
         for field_name, messages in template_syntax_errors.items():
             merged_errors[field_name].extend(messages)
+
+        for field_name, messages in template_expression_errors.items():
+            for msg in messages:
+                if msg not in merged_errors[field_name]:
+                    merged_errors[field_name].append(msg)
 
         for field_name, messages in template_literal_errors.items():
             for msg in messages:
@@ -803,6 +809,27 @@ class DNSRule(PrimaryModel):
                     # Other Jinja2 template errors, just in case
                     errors[field_name].append(f"Template error: {exc} ({type(exc).__name__})")
 
+        return errors
+
+    def _validate_template_expression_required(self, template_fields):
+        """
+        Reject templates that use Jinja control/comment tags ({% or {#) but no expression ({{).
+
+        Such templates are ambiguous (e.g. {# comment #}Default renders to Default but would
+        be treated as literal without a {{). Require either a plain literal (no Jinja) or
+        at least one {{ expression.
+        """
+        errors = defaultdict(list)
+        for field_name, template_content in template_fields:
+            if not template_content or not template_content.strip():
+                continue
+            has_expression = "{{" in template_content
+            has_control_or_comment = "{%" in template_content or "{#" in template_content
+            if has_control_or_comment and not has_expression:
+                errors[field_name].append(
+                    "Template uses Jinja control or comment tags but has no {{ expression. "
+                    "Use a plain literal or add at least one {{ ... }} expression."
+                )
         return errors
 
     def _validate_template_literals(self, template_fields):

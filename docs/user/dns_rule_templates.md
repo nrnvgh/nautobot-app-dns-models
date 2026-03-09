@@ -51,6 +51,17 @@ Every DNS rule must define these core templates:
 - **Name Template**: The record name within the zone  
 - **Value Template**: The primary record value
 
+## Valid Template Forms
+
+Each template field can be either:
+
+- **Plain literal**: no Jinja delimiters (`{{`, `{%`, `{#`), for example `Default` or `example.com`.
+- **Template with expressions**: one or more `{{ ... }}` expressions.
+
+If a template uses Jinja control tags (`{% ... %}`) or comments (`{# ... #}`), it must also include at least one `{{ ... }}` expression. Templates containing only control/comment tags (and no `{{ ... }}`) are rejected during DNS rule validation.
+
+For `name_template` and `value_template`, expression-based templates are nearly always preferred so names and values vary per source object.
+
 ## Template Filters
 
 ### IP Address Filter
@@ -241,8 +252,8 @@ Example `IPAddress` computed field template (pattern):
 Templates are validated when rules are saved:
 
 - **Syntax errors** are caught during rule creation
-- **Runtime errors** are tested with sample objects
-- **Missing filters** for A/AAAA records are detected
+- **Control/comment-only templates** (no `{{ ... }}` expression) are rejected
+- **Literal fragments** are checked for DNS safety constraints
 
 ### Testing Templates
 

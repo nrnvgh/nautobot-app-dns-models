@@ -56,6 +56,14 @@ class ExperimentalDNSRuleEngine(SafeDNSRuleEngine):
 
     def _render_template(self, template_str, context, field_name):
         """Experimental tuning: render from cached compiled Jinja templates."""
+        # Only short-circuit when there is no Jinja2 syntax ({{, {%, {#).
+        if "{{" not in template_str and "{%" not in template_str and "{#" not in template_str:
+            result = template_str.strip()
+            if not result:
+                raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
+
+            return result
+
         compiled_template = self._compiled_template_cache.get(template_str)
         if compiled_template is None:
             if len(self._compiled_template_cache) >= 1024:

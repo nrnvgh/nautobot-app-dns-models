@@ -61,6 +61,17 @@ A single rule can create multiple DNS records:
 
 Templates use Jinja2 syntax, and all template fields have access to `obj` (the source object). Rule processing has two phases: object-level rendering and per-candidate rendering. For full template syntax, object context, per-candidate context, filters, patterns, and troubleshooting, see `dns_rule_templates.md`.
 
+#### Valid template forms
+
+Each template field must be either a **plain literal** (no Jinja2 delimiters) or a template that includes at least one **expression** (`{{ ... }}`).
+
+- **Plain literal**: A string with no `{{`, `{%`, or `{#` is used as-is (for example, `Default`, `example.com`). This is the most efficient form for static values.
+- **Template with expression**: If the field contains Jinja2 control tags (`{% ... %}`) or comments (`{# ... #}`), it must also contain at least one `{{ ... }}` expression. Saving a rule whose template has only `{%` and/or `{#` (and no `{{`) will raise a validation error: *"Template uses Jinja control or comment tags but has no {{ expression. Use a plain literal or add at least one {{ ... }} expression."*
+
+This rule avoids ambiguous cases where a template would be interpreted differently by the engine (for example, `{# comment #}Default` renders to `Default` in Jinja2 but would otherwise be treated as a literal string).
+
+For **name_template** and **value_template**, using Jinja expressions (for example `{{ obj.name }}`, `{{ obj.primary_ip4 }}`) is nearly always the right approach, so that record names and values vary per source object. Plain literals are valid for all fields but, if used at all, are generally only recommended for view/zone (e.g. `Default`, `example.com`); static name or value is only for special cases.
+
 #### Evaluation Order
 
 Rule processing follows this order:
@@ -313,6 +324,7 @@ Each candidate is processed independently for template rendering and zone/view r
 
 **Common Issues**:
 
+- **Template uses Jinja control or comment tags but has no {{ expression**: You used `{%` and/or `{#` in a template field without any `{{ ... }}` expression. Use a plain literal (e.g. `Default`, `example.com`) for static values, or add at least one expression (e.g. `{{ obj.name }}`) when using control flow or comments.
 - Missing IP addresses: `{{ obj.primary_ip4  }}` when device has no primary IP
 - Invalid object references: `{{ obj.nonexistent_field }}`
 

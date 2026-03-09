@@ -803,3 +803,46 @@ Decision:
 - Documented improvement is real for heavy-change runs, but PostgreSQL-specific SQL path was backed out.
 - Active runtime path remains backend-agnostic ORM `bulk_update` for portability and maintenance simplicity.
 - This section remains as archived evidence for potential future opt-in/PostgreSQL-only fast path work.
+
+---
+
+## Strategy test #12 (rule_driven phase-3 attempt: invariant view/zone precompute) - attempted, measured, backed out
+
+Goal:
+- Reduce repeated per-record view/zone work in `rule_driven` by precomputing invariant rule scope once per batch.
+
+Implementation attempted:
+- In `engine_experimental_pipeline.py` (`rule_driven` path only), Stage 2 planning attempted to:
+  - detect object-invariant `view_template`/`zone_template` per rule,
+  - precompute and cache zones for invariant rules,
+  - attach precomputed scope to work items.
+- Stage 3 materialization then reused precomputed zones instead of per-record view/zone resolution for those rules.
+- `python_first` and `hybrid` paths were intentionally unchanged.
+
+Benchmark (67k, `rule_driven`, `change_ratio=100`, `runs=5`, `batch_size=1000`):
+- Run times: `27.1169`, `26.1378`, `26.7659`, `26.8562`, `26.8706`
+- Average: `26.7495s`
+- Median: `26.8562s`
+
+Comparison:
+- Prior baseline (`baseline-r100`): avg `26.7812s`, median `26.7242s`
+  - Net: avg slightly better (`-0.0317s`), median slightly worse (`+0.1320s`) -> effectively neutral-to-negative.
+- Prior phase-1-only run (`phase1-literal-r100`): avg `26.5738s`, median `26.2416s`
+  - Net: slower on both avg and median.
+
+40k pstats follow-up:
+- With phase-3 attempt: total `27.550s`
+- Phase-1-only: total `26.942s`
+- Delta: `+0.608s` (phase-3 slower)
+
+Key pstats observations (phase-3 vs phase-1-only):
+- View/zone resolution was reduced as intended:
+  - `_get_dns_views_for_rule`: `40000` calls -> `40`
+  - `_get_zones_for_rule`: `40000` calls -> `40`
+  - `_rule_driven_stage_materialize_desired_data`: improved (`0.299s` -> `0.099s` cumtime)
+- But planning overhead increased enough to negate gains:
+  - `_rule_driven_stage_plan_work`: regressed (`6.712s` -> `7.101s` cumtime)
+
+Decision:
+- Backed out the phase-3 invariant precompute attempt from `rule_driven`.
+- Keep phase-1 literal-template short-circuit as the active improvement.
