@@ -18,7 +18,7 @@ from nautobot_dns_models.models import (
     DNSZone,
     PTRRecord,
 )
-from nautobot_dns_models.rules.engine_selector import rule_engine_safe as rule_engine
+from nautobot_dns_models.rules.engine_selector import rule_engine_default as rule_engine
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,

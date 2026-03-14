@@ -1,35 +1,34 @@
-"""Experimental batch-native reconciliation engine."""
+"""Primary DNS reconciliation engine."""
 
 from __future__ import annotations
 
 from collections import defaultdict
+import logging
+import re
 from time import perf_counter
 
-from nautobot_dns_models.models import DNSRule
+from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError
+from django.template import engines as django_template_engines
+from jinja2 import TemplateError
+from nautobot.ipam import models as ipam_models
+from nautobot_dns_models import models as dns_models
+from nautobot_dns_models.exceptions import DNSTemplateEmptyError
+from nautobot_dns_models.models import DNSRule, DNSRuleRecord, DNSZone
+from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.engine import (
-    ContentType,
-    DNSRuleRecord,
-    DNSTemplateEmptyError,
-    DNSZone,
+    BaseDNSRuleEngine,
+    PHASE_CREATE,
     PHASE_UPDATE_RECONCILE,
-    TemplateError,
-    ValidationError,
-    ipam_models,
-    logger,
-    normalize_dns_name,
-    wrap_for_template,
 )
-from nautobot_dns_models.rules.engine_experimental import ExperimentalDNSRuleEngine
-from nautobot_dns_models.rules.pipeline_strategies import (
-    HybridPipelineStrategy,
-    PythonFirstPipelineStrategy,
-    RuleDrivenPipelineStrategy,
-    SQLHeavyPipelineStrategy,
-)
+from nautobot_dns_models.rules.template_proxies import wrap_for_template
+
+logger = logging.getLogger(__name__)
 
 
-class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
-    """Experimental engine that reconciles in explicit batch phases."""
+class DNSRuleEngine(BaseDNSRuleEngine):
+    """Primary engine that reconciles in explicit batch phases."""
 
     # Tuned against ~65k update benchmarks:
     # - 250: ~2572 changed/sec (avg, best)
@@ -39,15 +38,17 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
     BULK_RENAME_UPDATE_BATCH_SIZE = 250
 
     def __init__(self):
-        """Initialize experimental pipeline engine and strategy registry."""
-        super().__init__()
-        self._pipeline_strategies = {
-            "python_first": PythonFirstPipelineStrategy(),
-            "hybrid": HybridPipelineStrategy(),
-            "rule_driven": RuleDrivenPipelineStrategy(),
-            "sql_heavy": SQLHeavyPipelineStrategy(),
+        """Initialize DNS rule engine and pipeline dispatch registry."""
+        self._default_view_cache = None
+        self._view_lookup_cache = {}
+        self._zone_lookup_cache = {}
+        self._applicable_rules_cache = {}
+        self._compiled_template_cache = {}
+        self._jinja_env = django_template_engines["jinja"].env
+        self._pipeline_dispatch = {
+            "rule_driven": self._process_objects_pipeline_rule_driven,
         }
-        self._active_pipeline_strategy = "python_first"
+        self._active_pipeline_strategy = "rule_driven"
         self._pipeline_stage_metrics = {
             "batches": 0,
             "objects_total": 0,
@@ -63,11 +64,335 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
             },
         }
 
+    def reset_runtime_caches(self):
+        """Clear per-run scope cache to avoid stale rule objects across jobs."""
+        self._default_view_cache = None
+        self._view_lookup_cache.clear()
+        self._zone_lookup_cache.clear()
+        self._applicable_rules_cache.clear()
+
+    def process_object(self, source_obj, created=False):
+        """Process one source object against applicable rules."""
+        summary = self._initialize_processing_summary()
+        content_type = ContentType.objects.get_for_model(source_obj)
+        rules = self._get_applicable_rules(source_obj)
+        rules_count = len(rules)
+
+        if rules_count == 0:
+            logger.debug(f"No DNS rules found for {content_type} - skipping DNS record processing for {source_obj}")
+            return summary
+
+        existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=str(source_obj.pk))
+        existing_count = existing_records.count()
+        summary["existing_rule_record_count"] = existing_count
+        summary["had_existing_rule_records"] = existing_count > 0
+
+        if created or existing_count == 0:
+            create_summary = self._create_dns_records_for_object(source_obj, rules)
+            summary["changed_record_count"] = create_summary["changed_record_count"]
+            summary["changed"] = create_summary["changed"]
+            summary["record_ops_create_count"] = create_summary["record_ops_create_count"]
+            summary["record_ops_delete_count"] = create_summary["record_ops_delete_count"]
+        else:
+            update_summary = self._update_dns_records_for_object(source_obj, rules)
+            summary["changed_record_count"] = update_summary["changed_record_count"]
+            summary["changed"] = update_summary["changed"]
+            summary["record_ops_create_count"] = update_summary["record_ops_create_count"]
+            summary["record_ops_delete_count"] = update_summary["record_ops_delete_count"]
+
+        return summary
+
+    def _use_lookup_cache(self):
+        """Enable lookup cache behavior in the production engine."""
+        return True
+
+    def _use_direct_update(self):
+        """Production tuning: enable direct SQL rename updates."""
+        return True
+
+    def _requires_ip_context(self, rule):
+        """Production tuning: only resolve ip context when templates reference ip."""
+        template_text = " ".join([rule.view_template or "", rule.zone_template or ""])
+        return bool(re.search(r"\bip\b", template_text))
+
+    def _render_template(self, template_str, context, field_name):
+        """Render from cached compiled Jinja templates."""
+        if "{{" not in template_str and "{%" not in template_str and "{#" not in template_str:
+            result = template_str.strip()
+            if not result:
+                raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
+            return result
+
+        compiled_template = self._compiled_template_cache.get(template_str)
+        if compiled_template is None:
+            if len(self._compiled_template_cache) >= 1024:
+                self._compiled_template_cache.clear()
+            compiled_template = self._jinja_env.from_string(template_str)
+            self._compiled_template_cache[template_str] = compiled_template
+
+        result = compiled_template.render(context)
+        if not result:
+            raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
+
+        if "{{ no such element:" in result:
+            raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
+
+        return result
+
+    def _get_applicable_rules(self, source_obj):
+        """Scope-key cache for applicable-rule resolution."""
+        content_type = ContentType.objects.get_for_model(source_obj)
+        object_location = self._get_object_location(source_obj)
+        object_tenant = self._get_object_tenant(source_obj)
+
+        cache_key = (
+            content_type.pk,
+            getattr(object_location, "pk", None),
+            getattr(object_tenant, "pk", None),
+        )
+        cached_rules = self._applicable_rules_cache.get(cache_key)
+        if cached_rules is not None:
+            return cached_rules
+
+        selected_rules = self._resolve_applicable_rules_for_scope(content_type, object_location, object_tenant)
+        self._applicable_rules_cache[cache_key] = selected_rules
+        return selected_rules
+
+    def _get_dns_views_for_rule(self, rule, context):
+        """Cache DNS view resolution for repeated templates."""
+        if not rule.view_template:
+            if self._default_view_cache is None:
+                self._default_view_cache = dns_models.DNSView.objects.get(pk=dns_models.get_default_view_pk())
+            return [self._default_view_cache]
+
+        rendered = self._render_template(rule.view_template, context, "view_template")
+        raw_names = [token.strip() for token in re.split(r"[\s,]+", rendered) if token.strip()]
+        if not raw_names:
+            raise ValidationError({"view_template": "view_template rendered no DNS view names."})
+
+        requested_names = list(dict.fromkeys(raw_names))
+        cache_key = tuple(requested_names)
+        cached_views = self._view_lookup_cache.get(cache_key)
+        if cached_views is not None:
+            return cached_views
+
+        matched_views = list(dns_models.DNSView.objects.filter(name__in=requested_names))
+        matched_by_name = {view.name: view for view in matched_views}
+        missing_names = [name for name in raw_names if name not in matched_by_name]
+        if missing_names:
+            raise ValidationError(
+                {"view_template": "DNS view(s) not found from view_template: " f"{', '.join(sorted(set(missing_names)))}"}
+            )
+
+        ordered_views = []
+        seen_ids = set()
+        for name in raw_names:
+            view = matched_by_name[name]
+            if view.id in seen_ids:
+                continue
+            ordered_views.append(view)
+            seen_ids.add(view.id)
+
+        self._view_lookup_cache[cache_key] = ordered_views
+
+        return ordered_views
+
+    def _get_zones_for_rule(self, rule, context, selected_views):
+        """Cache zone lookups by zone-name and view-id tuple."""
+        if rule.zone_template:
+            zone_name = self._render_template(rule.zone_template, context, "zone_template")
+            view_ids = [view.id for view in selected_views]
+            zone_cache_key = (zone_name, tuple(sorted(view_ids)))
+            zones = self._zone_lookup_cache.get(zone_cache_key)
+            if zones is None:
+                zones = list(DNSZone.objects.filter(name=zone_name, dns_view_id__in=view_ids))
+                self._zone_lookup_cache[zone_cache_key] = zones
+            found_view_ids = {zone.dns_view_id for zone in zones}
+            missing_view_ids = set(view_ids) - found_view_ids
+            if missing_view_ids:
+                missing_view_names = list(
+                    dns_models.DNSView.objects.filter(id__in=missing_view_ids).values_list("name", flat=True)
+                )
+                raise ValidationError(
+                    {
+                        "zone_template": (
+                            f"Zone '{zone_name}' does not exist in selected DNS view(s): "
+                            f"{', '.join(sorted(missing_view_names))}"
+                        )
+                    }
+                )
+            return zones
+        raise ValidationError({"zone_template": "DNS rule must define a zone_template."})
+
+    def _update_tracking_record_dns_record(
+        self,
+        rule,
+        source_obj,
+        tracking_record,
+        desired_record_data,
+        phase,
+    ):
+        """In-place rename via direct SQL update."""
+        dns_record = tracking_record.dns_record
+        desired_name = desired_record_data["name"]
+        if dns_record.name == desired_name:
+            return "unchanged"
+        try:
+            updated = type(dns_record).objects.filter(pk=dns_record.pk).update(name=desired_name)
+            if updated != 1:
+                raise ValueError(f"Failed to update DNS record '{dns_record.pk}'")
+            dns_record.name = desired_name
+        except (ValidationError, IntegrityError, ValueError) as exc:
+            self._log_record_update_failure(rule, source_obj, desired_record_data, exc, phase=phase)
+            return "failed"
+        return "updated"
+
+    def _create_dns_records_for_object(self, source_obj, applicable_rules):
+        """Create records for one source object."""
+        changed_record_count = 0
+        for rule in applicable_rules:
+            if not self._object_needs_dns_records_for_rule(source_obj, rule):
+                continue
+            try:
+                created_records = self._create_dns_record_from_rule(rule, source_obj)
+                changed_record_count += len(created_records)
+            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
+                self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_CREATE, cleanup=False)
+                continue
+        return {
+            "changed": changed_record_count > 0,
+            "changed_record_count": changed_record_count,
+            "record_ops_create_count": changed_record_count,
+            "record_ops_delete_count": 0,
+        }
+
+    def _update_dns_records_for_object(self, source_obj, applicable_rules):
+        """Update/reconcile records for one source object."""
+        delete_count = self._cleanup_orphaned_records(source_obj, applicable_rules)
+        create_count = 0
+        update_count = 0
+
+        for rule in applicable_rules:
+            if not self._object_needs_dns_records_for_rule(source_obj, rule):
+                delete_count += self._cleanup_records_for_rule(rule, source_obj)
+                continue
+            try:
+                reconcile_summary = self._reconcile_records_for_rule(rule, source_obj)
+                create_count += reconcile_summary["create"]
+                delete_count += reconcile_summary["delete"]
+                update_count += reconcile_summary.get("update", 0)
+            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
+                self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True)
+                delete_count += self._cleanup_records_for_rule(rule, source_obj)
+
+        changed_record_count = create_count + delete_count + update_count
+        return {
+            "changed": changed_record_count > 0,
+            "changed_record_count": changed_record_count,
+            "record_ops_create_count": create_count,
+            "record_ops_delete_count": delete_count,
+        }
+
+    def _reconcile_records_for_rule(self, rule, source_obj):
+        """Reconcile records for one rule/object pair."""
+        tracking_records = self._get_existing_tracking_records(rule, source_obj)
+        existing_records_by_content = {}
+        existing_records_by_identity = {}
+        for tracking_record in tracking_records:
+            dns_record = tracking_record.dns_record
+            content_key = self._get_record_content_key(dns_record)
+            identity_key = self._get_record_identity_key(dns_record)
+            existing_records_by_content[content_key] = tracking_record
+            existing_records_by_identity[identity_key] = tracking_record
+
+        desired_record_data = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_UPDATE_RECONCILE)
+        desired_records_by_content = {}
+        desired_records_by_identity = {}
+        for record_data in desired_record_data:
+            content_key = self._get_record_content_key_from_data(record_data, rule.record_type)
+            identity_key = self._get_record_identity_key_from_data(record_data, rule.record_type)
+            desired_records_by_content[content_key] = record_data
+            desired_records_by_identity[identity_key] = record_data
+
+        existing_keys = set(existing_records_by_content.keys())
+        desired_keys = set(desired_records_by_content.keys())
+        existing_identity_keys = set(existing_records_by_identity.keys())
+        desired_identity_keys = set(desired_records_by_identity.keys())
+
+        records_to_delete_by_identity = existing_identity_keys - desired_identity_keys
+        records_to_create_by_identity = desired_identity_keys - existing_identity_keys
+        records_to_check_for_update = existing_identity_keys & desired_identity_keys
+
+        for identity_key in records_to_delete_by_identity:
+            self._delete_tracking_and_dns_record(existing_records_by_identity[identity_key])
+
+        updated_count = 0
+        keep_count = 0
+        skipped_update = 0
+        for identity_key in records_to_check_for_update:
+            tracking_record = existing_records_by_identity[identity_key]
+            desired_record = desired_records_by_identity[identity_key]
+            update_result = self._update_tracking_record_dns_record(
+                rule=rule,
+                source_obj=source_obj,
+                tracking_record=tracking_record,
+                desired_record_data=desired_record,
+                phase=PHASE_UPDATE_RECONCILE,
+            )
+            if update_result == "updated":
+                updated_count += 1
+            elif update_result == "unchanged":
+                keep_count += 1
+            else:
+                skipped_update += 1
+
+        created_records = []
+        if records_to_create_by_identity:
+            records_to_create_data = [desired_records_by_identity[key] for key in records_to_create_by_identity]
+            created_records = self._create_records_from_data(
+                rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
+            )
+
+        skipped_create = len(records_to_create_by_identity) - len(created_records)
+        skipped_total = skipped_create + skipped_update
+        self._log_reconcile_summary(
+            rule=rule,
+            source_obj=source_obj,
+            counts={
+                "existing": len(existing_keys),
+                "desired": len(desired_keys),
+                "keep": keep_count,
+                "create": len(created_records),
+                "delete": len(records_to_delete_by_identity),
+                "skipped": skipped_total,
+            },
+        )
+        return {
+            "existing": len(existing_keys),
+            "desired": len(desired_keys),
+            "keep": keep_count,
+            "create": len(created_records),
+            "delete": len(records_to_delete_by_identity),
+            "update": updated_count,
+            "skipped": skipped_total,
+            "changed_record_count": len(created_records) + len(records_to_delete_by_identity) + updated_count,
+        }
+
+    def register_pipeline_strategy(self, name, handler):
+        """Register a custom pipeline strategy key to callable handler."""
+        normalized = (name or "").strip().lower()
+        if not normalized:
+            return
+        if not callable(handler):
+            return
+        self._pipeline_dispatch[normalized] = handler
+
     def set_pipeline_strategy(self, strategy):
         """Set active pipeline strategy for subsequent batch processing."""
-        requested_strategy = (strategy or "python_first").strip().lower()
-        if requested_strategy not in self._pipeline_strategies:
-            requested_strategy = "python_first"
+        requested_strategy = (strategy or "rule_driven").strip().lower()
+        if requested_strategy not in self._pipeline_dispatch:
+            requested_strategy = "rule_driven"
+
         self._active_pipeline_strategy = requested_strategy
 
     @property
@@ -94,21 +419,31 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
 
     def get_pipeline_stage_metrics(self):
         """Return cumulative and per-batch stage metrics for current run."""
+        def _round_metric(value):
+            return round(value, 3) if isinstance(value, float) else value
+
+        stage_seconds = {
+            stage_name: _round_metric(value)
+            for stage_name, value in self._pipeline_stage_metrics["stage_seconds"].items()
+        }
         metrics = {
             "batches": self._pipeline_stage_metrics["batches"],
             "objects_total": self._pipeline_stage_metrics["objects_total"],
             "tracking_rows_total": self._pipeline_stage_metrics["tracking_rows_total"],
             "pending_rule_calculations_total": self._pipeline_stage_metrics["pending_rule_calculations_total"],
             "pending_bulk_updates_total": self._pipeline_stage_metrics["pending_bulk_updates_total"],
-            "stage_seconds": dict(self._pipeline_stage_metrics["stage_seconds"]),
+            "stage_seconds": stage_seconds,
         }
         batches = metrics["batches"] or 1
         metrics["avg_per_batch"] = {
-            "objects": metrics["objects_total"] / batches,
-            "tracking_rows": metrics["tracking_rows_total"] / batches,
-            "pending_rule_calculations": metrics["pending_rule_calculations_total"] / batches,
-            "pending_bulk_updates": metrics["pending_bulk_updates_total"] / batches,
-            "stage_seconds": {k: v / batches for k, v in metrics["stage_seconds"].items()},
+            "objects": _round_metric(metrics["objects_total"] / batches),
+            "tracking_rows": _round_metric(metrics["tracking_rows_total"] / batches),
+            "pending_rule_calculations": _round_metric(metrics["pending_rule_calculations_total"] / batches),
+            "pending_bulk_updates": _round_metric(metrics["pending_bulk_updates_total"] / batches),
+            "stage_seconds": {
+                k: _round_metric(v / batches)
+                for k, v in metrics["stage_seconds"].items()
+            },
         }
         return metrics
 
@@ -123,288 +458,9 @@ class ExperimentalPipelineDNSRuleEngine(ExperimentalDNSRuleEngine):
             self._pipeline_stage_metrics["stage_seconds"][stage_name] += value
 
     def process_objects_pipeline(self, source_objects, created=False):
-        """Execute current pipeline strategy for one source-object batch."""
-        strategy = self._pipeline_strategies[self._active_pipeline_strategy]
-        return strategy.process_objects_pipeline(self, source_objects, created=created)
-
-    def _process_objects_pipeline_python_first(
-        self, source_objects, created=False
-    ):
-        """Run a four-phase pipeline for a same-model object batch."""
-        if not source_objects:
-            return []
-        if created:
-            return [self.process_object(source_obj, created=True) for source_obj in source_objects]
-
-        total_started_at = perf_counter()
-        fetch_seconds = 0.0
-        planning_seconds = 0.0
-        apply_seconds = 0.0
-        bulk_flush_seconds = 0.0
-
-        fetch_started_at = perf_counter()
-        content_type = ContentType.objects.get_for_model(source_objects[0])
-        object_ids = [source_obj.pk for source_obj in source_objects]
-        tracking_rows = list(DNSRuleRecord.objects.filter(content_type=content_type, object_id__in=object_ids))
-        self._prefetch_tracking_dns_records(tracking_rows)
-
-        tracking_by_object_id = defaultdict(list)
-        for tracking_row in tracking_rows:
-            tracking_by_object_id[tracking_row.object_id].append(tracking_row)
-        fetch_seconds += perf_counter() - fetch_started_at
-
-        planning_started_at = perf_counter()
-        prepared_entries = []
-        pending_rule_calculations = []
-        batch_address_ids = set()
-        for source_obj in source_objects:
-            rules = self._get_applicable_rules(source_obj)
-            desired_by_rule_id = {}
-            failed_rule_ids = set()
-            for rule in rules:
-                if not self._object_needs_dns_records_for_rule(source_obj, rule):
-                    continue
-                try:
-                    base_context = {"obj": wrap_for_template(source_obj)}
-                    rendered_name = self._render_template(rule.name_template, base_context, "name_template")
-                    shared_record_data = {"name": normalize_dns_name(rendered_name)}
-                    record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
-                    requires_ip_context = self._requires_ip_context(rule)
-                    if requires_ip_context:
-                        for record_data in record_variations:
-                            address_id = record_data.get("address_id")
-                            if address_id:
-                                batch_address_ids.add(address_id)
-                    pending_rule_calculations.append(
-                        {
-                            "source_obj": source_obj,
-                            "rule": rule,
-                            "base_context": base_context,
-                            "record_variations": record_variations,
-                            "requires_ip_context": requires_ip_context,
-                            "desired_by_rule_id": desired_by_rule_id,
-                            "failed_rule_ids": failed_rule_ids,
-                        }
-                    )
-                except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                    self._log_rule_processing_error(
-                        rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
-                    )
-                    failed_rule_ids.add(rule.pk)
-            prepared_entries.append(
-                {
-                    "source_obj": source_obj,
-                    "rules": rules,
-                    "desired_by_rule_id": desired_by_rule_id,
-                    "failed_rule_ids": failed_rule_ids,
-                    "tracking_rows": tracking_by_object_id.get(source_obj.pk, []),
-                }
-            )
-
-        preloaded_ip_by_id = {}
-        if batch_address_ids:
-            preloaded_ip_by_id = ipam_models.IPAddress.objects.in_bulk(batch_address_ids)
-
-        for pending in pending_rule_calculations:
-            rule = pending["rule"]
-            source_obj = pending["source_obj"]
-            base_context = pending["base_context"]
-            record_variations = pending["record_variations"]
-            requires_ip_context = pending["requires_ip_context"]
-            desired_by_rule_id = pending["desired_by_rule_id"]
-            failed_rule_ids = pending["failed_rule_ids"]
-
-            if rule.pk in failed_rule_ids:
-                continue
-
-            all_record_data = []
-            for record_data in record_variations:
-                try:
-                    if requires_ip_context:
-                        record_context = self._build_record_context_with_preloaded_ips(
-                            base_context, record_data, preloaded_ip_by_id
-                        )
-                    else:
-                        record_context = dict(base_context)
-                        record_context["record"] = record_data.copy()
-                    selected_views = self._get_dns_views_for_rule(rule, record_context)
-                    zones = self._get_zones_for_rule(rule, record_context, selected_views)
-                    for zone in zones:
-                        all_record_data.append({**record_data, "zone": zone})
-                except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
-                    self._log_candidate_skip(rule, source_obj, record_data, exc, phase=PHASE_UPDATE_RECONCILE)
-                    continue
-
-            desired_by_rule_id[rule.pk] = all_record_data
-        planning_seconds += perf_counter() - planning_started_at
-        pending_rename_updates = defaultdict(list)
-        apply_started_at = perf_counter()
-        summaries = []
-        for entry in prepared_entries:
-            summaries.append(self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates))
-        apply_seconds += perf_counter() - apply_started_at
-
-        bulk_flush_started_at = perf_counter()
-        self._flush_bulk_rename_updates(pending_rename_updates)
-        bulk_flush_seconds += perf_counter() - bulk_flush_started_at
-        self._record_pipeline_stage_metrics(
-            {
-                "objects": len(source_objects),
-                "tracking_rows": len(tracking_rows),
-                "pending_rule_calculations": len(pending_rule_calculations),
-                "pending_bulk_updates": sum(len(entries) for entries in pending_rename_updates.values()),
-                "stage_seconds": {
-                    "fetch": fetch_seconds,
-                    "planning": planning_seconds,
-                    "apply": apply_seconds,
-                    "bulk_flush": bulk_flush_seconds,
-                    "total": perf_counter() - total_started_at,
-                },
-            }
-        )
-        return summaries
-
-    def _process_objects_pipeline_hybrid(
-        self, source_objects, created=False
-    ):
-        """Hybrid pipeline: precompute rule applicability and avoid repeated needs-check queries."""
-        if not source_objects:
-            return []
-        if created:
-            return [self.process_object(source_obj, created=True) for source_obj in source_objects]
-
-        total_started_at = perf_counter()
-        fetch_seconds = 0.0
-        planning_seconds = 0.0
-        apply_seconds = 0.0
-        bulk_flush_seconds = 0.0
-
-        fetch_started_at = perf_counter()
-        content_type = ContentType.objects.get_for_model(source_objects[0])
-        object_ids = [source_obj.pk for source_obj in source_objects]
-        tracking_rows = list(DNSRuleRecord.objects.filter(content_type=content_type, object_id__in=object_ids))
-        self._prefetch_tracking_dns_records(tracking_rows)
-
-        tracking_by_object_id = defaultdict(list)
-        for tracking_row in tracking_rows:
-            tracking_by_object_id[tracking_row.object_id].append(tracking_row)
-        fetch_seconds += perf_counter() - fetch_started_at
-
-        planning_started_at = perf_counter()
-        prepared_entries = []
-        pending_rule_calculations = []
-        batch_address_ids = set()
-        for source_obj in source_objects:
-            rules = self._get_applicable_rules(source_obj)
-            desired_by_rule_id = {}
-            failed_rule_ids = set()
-            needed_rule_ids = set()
-
-            for rule in rules:
-                needs_records = self._object_needs_dns_records_for_rule_prefetched(source_obj, rule)
-                if not needs_records:
-                    continue
-                needed_rule_ids.add(rule.pk)
-                try:
-                    base_context = {"obj": wrap_for_template(source_obj)}
-                    rendered_name = self._render_template(rule.name_template, base_context, "name_template")
-                    shared_record_data = {"name": normalize_dns_name(rendered_name)}
-                    record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
-                    requires_ip_context = self._requires_ip_context(rule)
-                    if requires_ip_context:
-                        for record_data in record_variations:
-                            address_id = record_data.get("address_id")
-                            if address_id:
-                                batch_address_ids.add(address_id)
-                    pending_rule_calculations.append(
-                        {
-                            "source_obj": source_obj,
-                            "rule": rule,
-                            "base_context": base_context,
-                            "record_variations": record_variations,
-                            "requires_ip_context": requires_ip_context,
-                            "desired_by_rule_id": desired_by_rule_id,
-                            "failed_rule_ids": failed_rule_ids,
-                        }
-                    )
-                except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                    self._log_rule_processing_error(
-                        rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
-                    )
-                    failed_rule_ids.add(rule.pk)
-            prepared_entries.append(
-                {
-                    "source_obj": source_obj,
-                    "rules": rules,
-                    "needed_rule_ids": needed_rule_ids,
-                    "desired_by_rule_id": desired_by_rule_id,
-                    "failed_rule_ids": failed_rule_ids,
-                    "tracking_rows": tracking_by_object_id.get(source_obj.pk, []),
-                }
-            )
-
-        preloaded_ip_by_id = {}
-        if batch_address_ids:
-            preloaded_ip_by_id = ipam_models.IPAddress.objects.in_bulk(batch_address_ids)
-
-        for pending in pending_rule_calculations:
-            rule = pending["rule"]
-            source_obj = pending["source_obj"]
-            base_context = pending["base_context"]
-            record_variations = pending["record_variations"]
-            requires_ip_context = pending["requires_ip_context"]
-            desired_by_rule_id = pending["desired_by_rule_id"]
-            failed_rule_ids = pending["failed_rule_ids"]
-
-            if rule.pk in failed_rule_ids:
-                continue
-
-            all_record_data = []
-            for record_data in record_variations:
-                try:
-                    if requires_ip_context:
-                        record_context = self._build_record_context_with_preloaded_ips(
-                            base_context, record_data, preloaded_ip_by_id
-                        )
-                    else:
-                        record_context = dict(base_context)
-                        record_context["record"] = record_data.copy()
-                    selected_views = self._get_dns_views_for_rule(rule, record_context)
-                    zones = self._get_zones_for_rule(rule, record_context, selected_views)
-                    for zone in zones:
-                        all_record_data.append({**record_data, "zone": zone})
-                except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
-                    self._log_candidate_skip(rule, source_obj, record_data, exc, phase=PHASE_UPDATE_RECONCILE)
-                    continue
-
-            desired_by_rule_id[rule.pk] = all_record_data
-        planning_seconds += perf_counter() - planning_started_at
-        pending_rename_updates = defaultdict(list)
-        apply_started_at = perf_counter()
-        summaries = []
-        for entry in prepared_entries:
-            summaries.append(self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates))
-        apply_seconds += perf_counter() - apply_started_at
-
-        bulk_flush_started_at = perf_counter()
-        self._flush_bulk_rename_updates(pending_rename_updates)
-        bulk_flush_seconds += perf_counter() - bulk_flush_started_at
-        self._record_pipeline_stage_metrics(
-            {
-                "objects": len(source_objects),
-                "tracking_rows": len(tracking_rows),
-                "pending_rule_calculations": len(pending_rule_calculations),
-                "pending_bulk_updates": sum(len(entries) for entries in pending_rename_updates.values()),
-                "stage_seconds": {
-                    "fetch": fetch_seconds,
-                    "planning": planning_seconds,
-                    "apply": apply_seconds,
-                    "bulk_flush": bulk_flush_seconds,
-                    "total": perf_counter() - total_started_at,
-                },
-            }
-        )
-        return summaries
+        """Execute active pipeline handler for one source-object batch."""
+        handler = self._pipeline_dispatch[self._active_pipeline_strategy]
+        return handler(source_objects=source_objects, created=created)
 
     def _process_objects_pipeline_rule_driven(
         self, source_objects, created=False

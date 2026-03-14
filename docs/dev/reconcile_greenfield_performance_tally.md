@@ -846,3 +846,57 @@ Key pstats observations (phase-3 vs phase-1-only):
 Decision:
 - Backed out the phase-3 invariant precompute attempt from `rule_driven`.
 - Keep phase-1 literal-template short-circuit as the active improvement.
+
+---
+
+## Post-cleanup regression suite (current codebase, rule_driven, 67k scope)
+
+Goal:
+- Re-run the full `0/10/50/100` change-ratio suite after engine/job cleanup to confirm behavior and throughput remain in-family.
+
+Command shape used (updated job path):
+- Job class: `ReconcileDNSBulkJob`
+- Strategy: `rule_driven`
+- Scope: `limit=67000`, `batch_size=1000`, `runs=5` per ratio
+- Rule: `32ebf50a-9b15-430d-93d9-7d137204d868`
+
+Artifacts:
+- `.local/bench-results/post-cleanup-r0`
+- `.local/bench-results/post-cleanup-r10`
+- `.local/bench-results/post-cleanup-r50`
+- `.local/bench-results/post-cleanup-r100`
+
+Results:
+
+`r0` (0% change ratio):
+- Run times: `25.214`, `21.901`, `22.637`, `21.520`, `21.979`
+- Average: `22.650s`
+- Median: `21.979s`
+- Notes:
+  - Run 1 reported `objects_changed=47000` / `changed_record_count=47000` (warm-up/drift cleanup).
+  - Runs 2-5 were no-op (`objects_changed=0`, `changed_record_count=0`).
+
+`r10` (10% change ratio):
+- Run times: `23.210`, `23.571`, `22.624`, `21.303`, `22.674`
+- Average: `22.676s`
+- Median: `22.674s`
+- Changed count per run: `6752`
+- Throughput (changed-record, median): `~297.8 changed records/sec` (`6752 / 22.674`)
+
+`r50` (50% change ratio):
+- Run times: `24.271`, `23.494`, `23.491`, `24.169`, `22.879`
+- Average: `23.661s`
+- Median: `23.494s`
+- Changed count per run: `33592`
+- Throughput (changed-record, median): `~1429.8 changed records/sec` (`33592 / 23.494`)
+
+`r100` (100% change ratio):
+- Run times: `25.216`, `25.776`, `28.118`, `25.665`, `26.110`
+- Average: `26.177s`
+- Median: `25.776s`
+- Changed count per run: `67000`
+- Throughput (changed-record, median): `~2599.3 changed records/sec` (`67000 / 25.776`)
+
+Outcome:
+- Full suite completed successfully with expected ratio behavior after the code cleanup.
+- Keep using this post-cleanup set as the new reference point for subsequent optimization experiments.

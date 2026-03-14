@@ -7,7 +7,7 @@ from nautobot.tenancy.models import Tenant, TenantGroup
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine
 
 from nautobot_dns_models.models import DNSRule, DNSZone
-from nautobot_dns_models.rules.engine_safe import SafeDNSRuleEngine
+from nautobot_dns_models.rules.engine_dns import DNSRuleEngine
 
 
 #
@@ -127,7 +127,7 @@ class BaseRuleEngineMixin:
 
     def setUp(self):  # pylint: disable=invalid-name
         """Set up test data."""
-        self.engine = SafeDNSRuleEngine()
+        self.engine = DNSRuleEngine()
 
     def _calc_desired_record_data(self, rule, obj):
         """Helper for invoking the engine private API in tests."""

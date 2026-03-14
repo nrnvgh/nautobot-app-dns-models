@@ -21,7 +21,6 @@ from nautobot_dns_models.models import (
     DNSRecord,
     DNSRule,
     DNSRuleRecord,
-    DNSZone,
 )
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
@@ -78,11 +77,32 @@ class BaseDNSRuleEngine(ABC):
     def _reconcile_records_for_rule(self, rule, source_obj):
         """Reconcile existing and desired records for one rule/object pair."""
 
-    @abstractmethod
     def _calculate_desired_record_data(
         self, rule, source_obj, phase=PHASE_UNKNOWN
     ):
-        """Calculate desired record data for one rule/object pair."""
+        """Calculate desired DNS record data for one rule/object pair."""
+        base_context = {"obj": wrap_for_template(source_obj)}
+        requires_ip_context = self._requires_ip_context(rule)
+        rendered_name = self._render_template(rule.name_template, base_context, "name_template")
+        shared_record_data = {"name": normalize_dns_name(rendered_name)}
+
+        all_record_data = []
+        record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
+        for record_data in record_variations:
+            try:
+                if requires_ip_context:
+                    record_context = self._build_record_context(base_context, record_data)
+                else:
+                    record_context = dict(base_context)
+                    record_context["record"] = record_data.copy()
+                selected_views = self._get_dns_views_for_rule(rule, record_context)
+                zones = self._get_zones_for_rule(rule, record_context, selected_views)
+                for zone in zones:
+                    all_record_data.append({**record_data, "zone": zone})
+            except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
+                self._log_candidate_skip(rule, source_obj, record_data, exc, phase=phase)
+                continue
+        return all_record_data
 
     @abstractmethod
     def _get_zones_for_rule(
