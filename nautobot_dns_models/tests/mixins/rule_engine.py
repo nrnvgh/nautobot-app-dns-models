@@ -6,7 +6,7 @@ from nautobot.ipam.models import IPAddress, Namespace, Prefix, Service
 from nautobot.tenancy.models import Tenant, TenantGroup
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine
 
-from nautobot_dns_models.models import DNSRule, DNSZone
+from nautobot_dns_models.models import DNSZone
 from nautobot_dns_models.rules.engine_dns import DNSRuleEngine
 
 

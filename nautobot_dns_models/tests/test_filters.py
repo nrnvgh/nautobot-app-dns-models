@@ -1,7 +1,7 @@
 """Test DNSZone Filter."""
 
-from django.test import TestCase
 from django.contrib.contenttypes.models import ContentType
+from django.test import TestCase
 from nautobot.dcim.models import Interface
 from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
@@ -24,10 +24,10 @@ from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
     CNAMERecord,
+    DNSRule,
     DNSView,
     DNSViewPrefixAssignment,
     DNSZone,
-    DNSRule,
     MXRecord,
     NSRecord,
     PTRRecord,

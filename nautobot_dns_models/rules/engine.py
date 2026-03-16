@@ -70,15 +70,11 @@ class BaseDNSRuleEngine(ABC):
         """Reconcile existing and desired records for one rule/object pair."""
 
     @abstractmethod
-    def _get_zones_for_rule(
-        self, rule, context, selected_views, use_cache=False
-    ):
+    def _get_zones_for_rule(self, rule, context, selected_views, use_cache=False):
         """Resolve DNS zones for one rule/context pair."""
 
     @abstractmethod
-    def _get_dns_views_for_rule(
-        self, rule, context, use_cache=False
-    ):
+    def _get_dns_views_for_rule(self, rule, context, use_cache=False):
         """Resolve DNS views for one rule/context pair."""
 
     @abstractmethod
@@ -121,9 +117,7 @@ class BaseDNSRuleEngine(ABC):
         for rule_record in rule_records:
             self._delete_tracking_and_dns_record(rule_record)
 
-    def _calculate_desired_record_data(
-        self, rule, source_obj, phase=PHASE_UNKNOWN
-    ):
+    def _calculate_desired_record_data(self, rule, source_obj, phase=PHASE_UNKNOWN):
         """Calculate desired DNS record data for one rule/object pair."""
         base_context = {"obj": wrap_for_template(source_obj)}
         requires_ip_context = self._requires_ip_context(rule)
@@ -221,9 +215,7 @@ class BaseDNSRuleEngine(ABC):
 
         return default_reason
 
-    def _log_rule_processing_error(
-        self, rule, source_obj, exc, phase, cleanup=False
-    ):
+    def _log_rule_processing_error(self, rule, source_obj, exc, phase, cleanup=False):
         """Emit hybrid warning for top-level rule processing failures."""
         reason_code = self._infer_reason_code(exc, REASON_RULE_PROCESSING_ERROR)
         logger.warning(
@@ -244,9 +236,7 @@ class BaseDNSRuleEngine(ABC):
             ),
         )
 
-    def _log_candidate_skip(
-        self, rule, source_obj, record_data, exc, phase
-    ):
+    def _log_candidate_skip(self, rule, source_obj, record_data, exc, phase):
         """Emit hybrid warning for per-candidate skip decisions."""
         reason_code = self._infer_reason_code(exc, REASON_CANDIDATE_ERROR)
         logger.warning(
@@ -267,9 +257,7 @@ class BaseDNSRuleEngine(ABC):
             ),
         )
 
-    def _log_record_create_failure(
-        self, rule, source_obj, record_data, exc, phase
-    ):
+    def _log_record_create_failure(self, rule, source_obj, record_data, exc, phase):
         """Emit hybrid warning for record creation failures."""
         reason_code = (
             REASON_RECORD_INTEGRITY_ERROR if isinstance(exc, IntegrityError) else REASON_RECORD_VALIDATION_ERROR
@@ -292,9 +280,7 @@ class BaseDNSRuleEngine(ABC):
             ),
         )
 
-    def _log_record_update_failure(
-        self, rule, source_obj, record_data, exc, phase
-    ):
+    def _log_record_update_failure(self, rule, source_obj, record_data, exc, phase):
         """Emit hybrid warning for record update failures."""
         reason_code = (
             REASON_RECORD_INTEGRITY_ERROR if isinstance(exc, IntegrityError) else REASON_RECORD_VALIDATION_ERROR
@@ -589,12 +575,13 @@ class BaseDNSRuleEngine(ABC):
         object_tenant,
     ):
         """Resolve rules for a specific content-type/location/tenant scope."""
-
         # Early return for objects with no location or tenant - only global rules can apply
         if object_location is None and object_tenant is None:
             # logger.debug(f"Using global rules for {source_obj} (no location, no tenant)")
             return list(
-                DNSRule.objects.filter(content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True)
+                DNSRule.objects.filter(
+                    content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
+                )
             )
 
         # Build query for all potentially applicable rules
@@ -728,9 +715,7 @@ class BaseDNSRuleEngine(ABC):
 
         return deleted_count
 
-    def _create_records_from_data(
-        self, rule, source_obj, record_data_list, phase=PHASE_UNKNOWN
-    ):
+    def _create_records_from_data(self, rule, source_obj, record_data_list, phase=PHASE_UNKNOWN):
         """Create DNS records and tracking records from prepared data, returning the created DNS records."""
         record_class = self._get_record_class(rule.record_type)
 
@@ -867,9 +852,7 @@ class BaseDNSRuleEngine(ABC):
             )
             raise
 
-    def _get_record_data_variations_for_rule(
-        self, rule, context, base_record_data
-    ):
+    def _get_record_data_variations_for_rule(self, rule, context, base_record_data):
         """
         Build list of record data dictionaries (1 for single, N for multiple records).
 
@@ -906,9 +889,7 @@ class BaseDNSRuleEngine(ABC):
         self._add_record_type_fields_single(rule, context, record_data)
         return [record_data]
 
-    def _build_record_variations(
-        self, rule, base_record_data, address_ids
-    ):
+    def _build_record_variations(self, rule, base_record_data, address_ids):
         """
         Build list of record data dictionaries for a given list of address IDs.
 
@@ -952,9 +933,7 @@ class BaseDNSRuleEngine(ABC):
 
         return record_variations
 
-    def _add_record_type_fields_single(
-        self, rule, context, record_data
-    ):
+    def _add_record_type_fields_single(self, rule, context, record_data):
         """
         Add record-type specific fields to the record data.
 
@@ -976,5 +955,3 @@ class BaseDNSRuleEngine(ABC):
 
         if record_type_method := getattr(self, f"_add_record_type_fields_{rule.record_type}", None):
             record_type_method(rule, context, record_data)  # pylint: disable=not-callable
-
-

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from functools import cached_property
 
-from django.db.models.manager import BaseManager
 from django.db.models.query import QuerySet
 from nautobot.dcim.models import Device, Interface
 from nautobot.ipam.models import IPAddress, Service

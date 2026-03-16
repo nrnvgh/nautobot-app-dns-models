@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import call, patch
 
-from django.contrib.contenttypes.models import ContentType
 import jsonschema
+from django.contrib.contenttypes.models import ContentType
 from nautobot.apps.testing import TransactionTestCase, create_job_result_and_run_job
 from nautobot.dcim.models import Device, Interface
 from nautobot.extras.choices import JobResultStatusChoices

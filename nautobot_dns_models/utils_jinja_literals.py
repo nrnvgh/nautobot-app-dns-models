@@ -4,10 +4,8 @@ These helpers work at the AST level and do not evaluate templates.
 """
 
 import re
-from collections.abc import Iterable
 
 from django.template import engines
-from jinja2 import nodes
 from jinja2.visitor import NodeVisitor
 
 # Default substring patterns to flag in literal fragments

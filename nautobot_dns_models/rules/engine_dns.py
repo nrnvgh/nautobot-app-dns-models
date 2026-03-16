@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 import logging
 import re
+from collections import defaultdict
 from time import perf_counter
 
 from django.contrib.contenttypes.models import ContentType
@@ -13,14 +13,15 @@ from django.db import IntegrityError
 from django.template import engines as django_template_engines
 from jinja2 import TemplateError
 from nautobot.ipam import models as ipam_models
+
 from nautobot_dns_models import models as dns_models
 from nautobot_dns_models.exceptions import DNSTemplateEmptyError
-from nautobot_dns_models.models import DNSRule, DNSRuleRecord, DNSZone
+from nautobot_dns_models.models import DNSRuleRecord, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.engine import (
-    BaseDNSRuleEngine,
     PHASE_CREATE,
     PHASE_UPDATE_RECONCILE,
+    BaseDNSRuleEngine,
 )
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
@@ -141,6 +142,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
 
     def get_pipeline_stage_metrics(self):
         """Return cumulative and per-batch stage metrics for current run."""
+
         def _round_metric(value):
             return round(value, 3) if isinstance(value, float) else value
 
@@ -162,10 +164,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             "tracking_rows": _round_metric(metrics["tracking_rows_total"] / batches),
             "pending_rule_calculations": _round_metric(metrics["pending_rule_calculations_total"] / batches),
             "pending_bulk_updates": _round_metric(metrics["pending_bulk_updates_total"] / batches),
-            "stage_seconds": {
-                k: _round_metric(v / batches)
-                for k, v in metrics["stage_seconds"].items()
-            },
+            "stage_seconds": {k: _round_metric(v / batches) for k, v in metrics["stage_seconds"].items()},
         }
         return metrics
 
@@ -216,7 +215,9 @@ class DNSRuleEngine(BaseDNSRuleEngine):
                 "objects": len(source_objects),
                 "tracking_rows": len(fetch_result["tracking_rows"]),
                 "pending_rule_calculations": plan_result["pending_rule_calculations"],
-                "pending_bulk_updates": sum(len(entries) for entries in apply_result["pending_rename_updates"].values()),
+                "pending_bulk_updates": sum(
+                    len(entries) for entries in apply_result["pending_rename_updates"].values()
+                ),
                 "stage_seconds": {
                     "fetch": fetch_seconds,
                     "planning": planning_seconds,
@@ -271,7 +272,9 @@ class DNSRuleEngine(BaseDNSRuleEngine):
                     base_context = {"obj": wrap_for_template(source_obj)}
                     rendered_name = self._render_template(rule.name_template, base_context, "name_template")
                     shared_record_data = {"name": normalize_dns_name(rendered_name)}
-                    record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
+                    record_variations = self._get_record_data_variations_for_rule(
+                        rule, base_context, shared_record_data
+                    )
                     requires_ip_context = self._requires_ip_context(rule)
                     if requires_ip_context:
                         for record_data in record_variations:
@@ -289,9 +292,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
                         }
                     )
                 except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                    self._log_rule_processing_error(
-                        rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
-                    )
+                    self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True)
                     failed_rule_ids.add(rule.pk)
 
             prepared_entry = {
@@ -445,7 +446,10 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         missing_names = [name for name in raw_names if name not in matched_by_name]
         if missing_names:
             raise ValidationError(
-                {"view_template": "DNS view(s) not found from view_template: " f"{', '.join(sorted(set(missing_names)))}"}
+                {
+                    "view_template": "DNS view(s) not found from view_template: "
+                    f"{', '.join(sorted(set(missing_names)))}"
+                }
             )
 
         ordered_views = []
@@ -664,9 +668,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
 
         return super()._object_needs_dns_records_for_rule(source_obj, rule)
 
-    def _build_record_context_with_preloaded_ips(
-        self, base_context, record_data, preloaded_ip_by_id
-    ):
+    def _build_record_context_with_preloaded_ips(self, base_context, record_data, preloaded_ip_by_id):
         """Build context using preloaded batch IP map, with fallback lookup for misses."""
         context = dict(base_context)
         context["record"] = record_data.copy()
@@ -866,7 +868,9 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         created_records = []
         if records_to_create_by_identity:
             records_to_create_data = [desired_records_by_identity[key] for key in records_to_create_by_identity]
-            created_records = self._create_records_from_data(rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE)
+            created_records = self._create_records_from_data(
+                rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
+            )
 
         skipped_create = len(records_to_create_by_identity) - len(created_records)
         skipped_total = skipped_create + skipped_update

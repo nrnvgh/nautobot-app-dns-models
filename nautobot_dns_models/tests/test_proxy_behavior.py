@@ -1,8 +1,6 @@
 """Unit tests for Jinja template proxy objects."""
 
 from django.test import TestCase
-from nautobot.dcim.models import Device
-from nautobot.virtualization.models import VirtualMachine
 
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
 from nautobot_dns_models.tests.test_rule_engine import BaseRuleEngineMixin

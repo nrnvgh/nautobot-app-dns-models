@@ -4,9 +4,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from time import perf_counter
 
-from django.forms import widgets
-from nautobot.apps.forms import add_blank_choice, StaticSelect2, StaticSelect2Multiple
 from django.db.models import Q
+from django.forms import widgets
+from nautobot.apps.forms import StaticSelect2, StaticSelect2Multiple, add_blank_choice
 from nautobot.apps.jobs import (
     BooleanVar,
     ChoiceVar,
@@ -235,9 +235,7 @@ class _BaseReconcileDNSJob(Job):
             "errors": [],
         }
 
-    def _process_targets(
-        self, targets, *, dryrun, location_ids, tenant_ids, limit, batch_size
-    ):
+    def _process_targets(self, targets, *, dryrun, location_ids, tenant_ids, limit, batch_size):
         """Process target iterator and return aggregated execution/reconciliation summary."""
         summary = ReconcileRunSummary()
         selected_engine = get_rule_engine()
@@ -315,7 +313,9 @@ class _BaseReconcileDNSJob(Job):
                 summary.mark_processed_success(processing_summary)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 summary.mark_processed_failure()
-                self.logger.error("reconcile failure target=%s:%s error=%s", model_label, obj.pk, exc, extra={"object": obj})
+                self.logger.error(
+                    "reconcile failure target=%s:%s error=%s", model_label, obj.pk, exc, extra={"object": obj}
+                )
 
     def _build_pipeline_in_scope_targets(
         self,
@@ -388,7 +388,9 @@ class _BaseReconcileDNSJob(Job):
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 for obj in model_objects:
                     summary.mark_processed_failure()
-                    self.logger.error("reconcile failure target=%s:%s error=%s", model_label, obj.pk, exc, extra={"object": obj})
+                    self.logger.error(
+                        "reconcile failure target=%s:%s error=%s", model_label, obj.pk, exc, extra={"object": obj}
+                    )
                 continue
 
             for obj, processing_summary in zip(model_objects, batch_summaries):
@@ -441,7 +443,9 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
         """Metadata for job definition."""
 
         name = "Reconcile DNS Records (Bulk)"
-        description = "Reconcile rule-driven DNS records for all objects or a filtered subset of supported source models."
+        description = (
+            "Reconcile rule-driven DNS records for all objects or a filtered subset of supported source models."
+        )
         has_sensitive_variables = False
 
     source_models = MultiChoiceVar(
