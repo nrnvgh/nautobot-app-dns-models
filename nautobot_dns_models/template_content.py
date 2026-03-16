@@ -18,7 +18,7 @@ from nautobot_dns_models.models import (
     DNSZone,
     PTRRecord,
 )
-from nautobot_dns_models.rules.engine_selector import rule_engine_default as rule_engine
+from nautobot_dns_models.rules.engine_selector import get_rule_engine
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
@@ -65,6 +65,7 @@ class ReconcileDNSObjectButton(Button):
             return False
 
         obj = get_obj_from_context(context)
+        rule_engine = get_rule_engine()
         if obj._meta.label_lower not in SUPPORTED_SOURCE_MODEL_MAP:
             return False
 

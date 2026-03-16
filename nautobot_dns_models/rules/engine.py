@@ -54,14 +54,6 @@ class BaseDNSRuleEngine(ABC):
         """Process a source object against all applicable rules."""
 
     @abstractmethod
-    def _use_lookup_cache(self):
-        """Return whether cached view/zone lookups should be enabled."""
-
-    @abstractmethod
-    def _use_direct_update(self):
-        """Return whether in-place updates should use direct SQL update path."""
-
-    @abstractmethod
     def _requires_ip_context(self, rule):
         """Return whether desired-data rendering should resolve per-candidate ip context."""
 
@@ -76,6 +68,58 @@ class BaseDNSRuleEngine(ABC):
     @abstractmethod
     def _reconcile_records_for_rule(self, rule, source_obj):
         """Reconcile existing and desired records for one rule/object pair."""
+
+    @abstractmethod
+    def _get_zones_for_rule(
+        self, rule, context, selected_views, use_cache=False
+    ):
+        """Resolve DNS zones for one rule/context pair."""
+
+    @abstractmethod
+    def _get_dns_views_for_rule(
+        self, rule, context, use_cache=False
+    ):
+        """Resolve DNS views for one rule/context pair."""
+
+    @abstractmethod
+    def _update_tracking_record_dns_record(
+        self,
+        rule,
+        source_obj,
+        tracking_record,
+        desired_record_data,
+        phase,
+    ):
+        """Apply in-place update for an existing tracking record."""
+
+    @staticmethod
+    def _initialize_processing_summary():
+        """Default object-level processing summary."""
+        return {
+            "had_existing_rule_records": False,
+            "existing_rule_record_count": 0,
+            "changed": False,
+            "changed_record_count": 0,
+            "record_ops_create_count": 0,
+            "record_ops_delete_count": 0,
+        }
+
+    #
+    # Internal methods
+    #
+
+    def delete_dns_records_for_object(self, source_obj):
+        """
+        Delete all DNS records created from a source object.
+
+        Args:
+            source_obj: The source object whose DNS records should be deleted
+        """
+        content_type = ContentType.objects.get_for_model(source_obj)
+        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
+
+        for rule_record in rule_records:
+            self._delete_tracking_and_dns_record(rule_record)
 
     def _calculate_desired_record_data(
         self, rule, source_obj, phase=PHASE_UNKNOWN
@@ -103,67 +147,6 @@ class BaseDNSRuleEngine(ABC):
                 self._log_candidate_skip(rule, source_obj, record_data, exc, phase=phase)
                 continue
         return all_record_data
-
-    @abstractmethod
-    def _get_zones_for_rule(
-        self, rule, context, selected_views, use_cache=False
-    ):
-        """Resolve DNS zones for one rule/context pair."""
-
-    @abstractmethod
-    def _get_dns_views_for_rule(
-        self, rule, context, use_cache=False
-    ):
-        """Resolve DNS views for one rule/context pair."""
-
-    @abstractmethod
-    def _update_tracking_record_dns_record(
-        self,
-        rule,
-        source_obj,
-        tracking_record,
-        desired_record_data,
-        phase,
-    ):
-        """Apply in-place update for an existing tracking record."""
-
-    def delete_dns_records_for_object(self, source_obj):
-        """
-        Delete all DNS records created from a source object.
-
-        Args:
-            source_obj: The source object whose DNS records should be deleted
-        """
-        content_type = ContentType.objects.get_for_model(source_obj)
-        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
-
-        for rule_record in rule_records:
-            self._delete_tracking_and_dns_record(rule_record)
-
-    def preload_tracking_records_for_objects(self, source_objects):
-        """Optionally preload tracking records for a batch of source objects."""
-        del source_objects
-        return None
-
-    def reset_runtime_caches(self):
-        """Clear per-engine runtime caches before a new reconciliation run."""
-        return None
-
-    @staticmethod
-    def _initialize_processing_summary():
-        """Default object-level processing summary."""
-        return {
-            "had_existing_rule_records": False,
-            "existing_rule_record_count": 0,
-            "changed": False,
-            "changed_record_count": 0,
-            "record_ops_create_count": 0,
-            "record_ops_delete_count": 0,
-        }
-
-    #
-    # Internal methods
-    #
 
     @staticmethod
     def _safe_model_label(obj):
@@ -216,6 +199,7 @@ class BaseDNSRuleEngine(ABC):
             message = str(exc)
             if "view_template" in message:
                 return REASON_VIEW_TEMPLATE_EMPTY
+
             return REASON_CANDIDATE_TEMPLATE_ERROR
 
         if isinstance(exc, TemplateError):
@@ -224,8 +208,10 @@ class BaseDNSRuleEngine(ABC):
         if isinstance(exc, ValidationError):
             message_dict = getattr(exc, "message_dict", {})
             view_errors = " ".join(message_dict.get("view_template", []))
+
             if "rendered no DNS view names" in view_errors:
                 return REASON_VIEW_TEMPLATE_EMPTY
+
             if "not found from view_template" in view_errors:
                 return REASON_VIEW_NOT_FOUND
 

@@ -11,7 +11,7 @@ from nautobot.ipam.models import IPAddressToInterface, Service
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
 from nautobot_dns_models.models import DNSRecord
-from nautobot_dns_models.rules.engine_selector import rule_engine_default as rule_engine
+from nautobot_dns_models.rules.engine_selector import get_rule_engine
 
 # logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -237,6 +237,7 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
             # Process all interfaces belonging to this parent
             interfaces = instance.interfaces.all()
             if interfaces:
+                rule_engine = get_rule_engine()
                 # Get interface type name from first interface for logging; all interfaces will
                 # have the same type (e.g. Interface, VMInterface, etc.)
                 interface_type_name = interfaces[0]._meta.model_name
@@ -276,7 +277,7 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
     if should_process:
         logger.debug(f"[SIGNAL] [{context}] Processing DNS rules for {instance}")
         try:
-            rule_engine.process_object(instance, created=created)
+            get_rule_engine().process_object(instance, created=created)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # Log the error but don't let it break the original object save
             logger.error("[SIGNAL] [%s] Failed to process DNS rules for %s: %s", context, instance, exc)
@@ -307,7 +308,7 @@ def handle_object_delete(sender, instance, **kwargs):
     logger.debug("[SIGNAL] [handle_object_delete] %s / %s", sender, instance)
 
     try:
-        rule_engine.delete_dns_records_for_object(instance)
+        get_rule_engine().delete_dns_records_for_object(instance)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Log the error but don't let it break the original object deletion
         logger.error("Failed to clean up DNS records for %s: %s", instance, exc)
@@ -321,14 +322,14 @@ def handle_ipaddresstointerface_save(sender, instance, **kwargs):  # pylint: dis
     #
     # We pass created=False because while the IPAddressToInterface is a new object, the interface is not.
     # We want to process the interface, not the IPAddressToInterface.
-    rule_engine.process_object(instance.interface, created=False)
+    get_rule_engine().process_object(instance.interface, created=False)
 
 
 @receiver(post_delete, sender=IPAddressToInterface)
 def handle_ipaddresstointerface_delete(sender, instance, **kwargs):  # pylint: disable=unused-argument
     """Handle IPAddressToInterface delete events to clean up associated DNS records."""
     logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_delete] {sender} / {instance} ({kwargs})")
-    rule_engine.process_object(instance.interface, created=False)
+    get_rule_engine().process_object(instance.interface, created=False)
 
 
 @receiver(m2m_changed, sender=Service.ip_addresses.through)
@@ -364,7 +365,7 @@ def handle_m2m_changed(sender, instance, action, **kwargs):  # pylint: disable=u
     try:
         # Process the instance that had its relationships changed
         logger.debug(f"[SIGNAL] [handle_m2m_changed] Processing M2M change on {instance}")
-        rule_engine.process_object(instance, created=False)
+        get_rule_engine().process_object(instance, created=False)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Log the error but don't let it break the original operation
         logger.error(

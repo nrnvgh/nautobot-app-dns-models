@@ -36,18 +36,18 @@ name = "DNS reconciliation jobs"
 class ReconcileRunSummary:
     """Mutable accumulator for reconciliation execution and outcome counters."""
 
-    scanned_model_labels: ... = field(default_factory=set)
-    targets_seen: ... = 0
-    processed_count: ... = 0
-    success_count: ... = 0
-    failure_count: ... = 0
-    skipped_scope_count: ... = 0
-    objects_with_existing_rule_records: ... = 0
-    existing_rule_record_count: ... = 0
-    objects_changed: ... = 0
-    changed_record_count: ... = 0
-    record_ops_create_count: ... = 0
-    record_ops_delete_count: ... = 0
+    scanned_model_labels: set[str] = field(default_factory=set)
+    targets_seen: int = 0
+    processed_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    skipped_scope_count: int = 0
+    objects_with_existing_rule_records: int = 0
+    existing_rule_record_count: int = 0
+    objects_changed: int = 0
+    changed_record_count: int = 0
+    record_ops_create_count: int = 0
+    record_ops_delete_count: int = 0
 
     def mark_scope_skipped(self):
         """Increment count for targets skipped by location/tenant scope filters."""
@@ -241,7 +241,6 @@ class _BaseReconcileDNSJob(Job):
         """Process target iterator and return aggregated execution/reconciliation summary."""
         summary = ReconcileRunSummary()
         selected_engine = get_rule_engine()
-        selected_engine.reset_runtime_caches()
 
         object_batch = []
         for model_label, obj in targets:
@@ -322,7 +321,7 @@ class _BaseReconcileDNSJob(Job):
         self,
         object_batch,
         *,
-        summary: ReconcileRunSummary,
+        summary,
         selected_engine,
         dryrun,
         location_ids,
@@ -496,8 +495,8 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
     ):  # pylint: disable=too-many-arguments,arguments-differ
         """Execute bulk DNS reconciliation."""
         started_at = perf_counter()
+
         selected_engine = get_rule_engine()
-        selected_engine.reset_runtime_caches()
         if hasattr(selected_engine, "reset_pipeline_stage_metrics"):
             selected_engine.reset_pipeline_stage_metrics()
         if hasattr(selected_engine, "set_pipeline_strategy"):
@@ -524,34 +523,16 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
         summary = ReconcileRunSummary()
         summary.scanned_model_labels.update(target_labels)
 
-        object_batch = []
-        for model_label, obj in targets:
-            object_batch.append((model_label, obj))
-            if len(object_batch) >= batch_size:
-                self._process_pipeline_target_batch(
-                    object_batch,
-                    summary=summary,
-                    selected_engine=selected_engine,
-                    dryrun=dryrun,
-                    location_ids=location_ids,
-                    tenant_ids=tenant_ids,
-                    limit=limit,
-                )
-                object_batch = []
-
-            if limit and summary.targets_seen >= limit:
-                break
-
-        if object_batch and (not limit or summary.targets_seen < limit):
-            self._process_pipeline_target_batch(
-                object_batch,
-                summary=summary,
-                selected_engine=selected_engine,
-                dryrun=dryrun,
-                location_ids=location_ids,
-                tenant_ids=tenant_ids,
-                limit=limit,
-            )
+        self._process_pipeline_targets_in_batches(
+            targets,
+            summary=summary,
+            selected_engine=selected_engine,
+            dryrun=dryrun,
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+            limit=limit,
+            batch_size=batch_size,
+        )
 
         result = self._build_result_payload(
             summary,
@@ -577,6 +558,49 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
         self._log_result_summary(result)
 
         return result
+
+    def _process_pipeline_targets_in_batches(
+        self,
+        targets,
+        *,
+        summary,
+        selected_engine,
+        dryrun,
+        location_ids,
+        tenant_ids,
+        limit,
+        batch_size,
+    ):
+        """Process iterator of targets as full batches plus one trailing flush."""
+        object_batch = []
+        for model_label, obj in targets:
+            object_batch.append((model_label, obj))
+            if len(object_batch) >= batch_size:
+                self._process_pipeline_target_batch(
+                    object_batch,
+                    summary=summary,
+                    selected_engine=selected_engine,
+                    dryrun=dryrun,
+                    location_ids=location_ids,
+                    tenant_ids=tenant_ids,
+                    limit=limit,
+                )
+                object_batch = []
+
+            if limit and summary.targets_seen >= limit:
+                break
+
+        # Process the last batch if it exists and is within the limit.
+        if object_batch and (not limit or summary.targets_seen < limit):
+            self._process_pipeline_target_batch(
+                object_batch,
+                summary=summary,
+                selected_engine=selected_engine,
+                dryrun=dryrun,
+                location_ids=location_ids,
+                tenant_ids=tenant_ids,
+                limit=limit,
+            )
 
 
 class ReconcileDNSObjectJob(_BaseReconcileDNSJob):
