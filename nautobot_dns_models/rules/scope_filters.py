@@ -10,6 +10,7 @@ class BulkScopeFilterBuilder:
     _MODEL_SCOPE_METHODS = {
         "dcim.device": "_apply_device",
         "dcim.interface": "_apply_interface",
+        "virtualization.virtualmachine": "_apply_virtualmachine",
     }
 
     def apply(self, model_label, queryset, *, location_ids, tenant_ids):
@@ -57,6 +58,22 @@ class BulkScopeFilterBuilder:
 
         queryset = queryset.filter(scope_filter)
         return queryset, True
+
+    @staticmethod
+    def _apply_virtualmachine(queryset, *, location_ids, tenant_ids):
+        """Apply virtual machine location/tenant filtering in SQL."""
+        used_scope_filter = False
+
+        if location_ids:
+            queryset = queryset.filter(cluster__location_id__in=location_ids)
+            used_scope_filter = True
+
+        if tenant_ids:
+            # Engine parity: VM tenant overrides cluster tenant when set.
+            queryset = queryset.filter(Q(tenant_id__in=tenant_ids) | Q(tenant_id__isnull=True, cluster__tenant_id__in=tenant_ids))
+            used_scope_filter = True
+
+        return queryset, used_scope_filter
 
     @staticmethod
     def _build_interface_parent_device_filter(field_name, values):

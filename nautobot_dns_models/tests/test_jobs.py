@@ -11,6 +11,8 @@ from nautobot.dcim.models import Device, DeviceBay, Interface, Location, Module,
 from nautobot.extras.choices import JobResultStatusChoices
 from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Prefix
+from nautobot.tenancy.models import Tenant
+from nautobot.virtualization.models import Cluster, VirtualMachine
 
 from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileRunSummary
 from nautobot_dns_models.models import DNSRule
@@ -382,6 +384,21 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
             status=self.device_status,
         )
 
+    def _create_virtual_machine_only(self, *, name_prefix, cluster_location, cluster_tenant=None, vm_tenant=None):
+        """Create one virtual machine for scope-selection assertions."""
+        cluster = Cluster.objects.create(
+            name=f"{name_prefix}-cluster",
+            cluster_type=self.cluster_type,
+            location=cluster_location,
+            tenant=cluster_tenant,
+        )
+        return VirtualMachine.objects.create(
+            cluster=cluster,
+            name=f"{name_prefix}-vm",
+            status=self.vm_status,
+            tenant=vm_tenant,
+        )
+
     def test_device_scope_matches_engine_semantics(self):
         """Scoped device selection should match engine semantics for location filtering."""
         scoped_location = Location.objects.create(
@@ -411,6 +428,84 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         actual_ids = self._scope_actual_ids(target_label="dcim.device", location_ids=location_ids) & {
             obj.id for obj in created_devices
         }
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_virtualmachine_scope_location_matches_engine_semantics(self):
+        """Scoped VM selection should match engine semantics for location filtering."""
+        scoped_location = Location.objects.create(
+            name="Scope VM Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        extra_location = Location.objects.create(
+            name="Scope VM Extra Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        vms_in_scope = [
+            self._create_virtual_machine_only(name_prefix="vm-in-1", cluster_location=scoped_location),
+            self._create_virtual_machine_only(name_prefix="vm-in-2", cluster_location=scoped_location),
+        ]
+        vms_out_scope = [
+            self._create_virtual_machine_only(name_prefix="vm-out-1", cluster_location=self.location),
+            self._create_virtual_machine_only(name_prefix="vm-out-2", cluster_location=extra_location),
+        ]
+        created_vms = vms_in_scope + vms_out_scope
+        location_ids = {scoped_location.id}
+
+        expected_ids = {obj.id for obj in vms_in_scope}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vms, location_ids)
+        actual_ids = self._scope_actual_ids(target_label="virtualization.virtualmachine", location_ids=location_ids) & {
+            obj.id for obj in created_vms
+        }
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_virtualmachine_scope_tenant_fallback_matches_engine_semantics(self):
+        """Scoped VM selection should match engine semantics for VM-tenant fallback behavior."""
+        other_tenant = Tenant.objects.create(name="Scope VM Other Tenant", tenant_group=self.tenant_group)
+
+        vm_fallback_in_scope = self._create_virtual_machine_only(
+            name_prefix="vm-tenant-fallback-in",
+            cluster_location=self.location,
+            cluster_tenant=self.tenant,
+            vm_tenant=None,
+        )
+        vm_direct_in_scope = self._create_virtual_machine_only(
+            name_prefix="vm-tenant-direct-in",
+            cluster_location=self.location,
+            cluster_tenant=other_tenant,
+            vm_tenant=self.tenant,
+        )
+        vm_fallback_out_scope = self._create_virtual_machine_only(
+            name_prefix="vm-tenant-fallback-out",
+            cluster_location=self.location,
+            cluster_tenant=other_tenant,
+            vm_tenant=None,
+        )
+        vm_direct_out_scope = self._create_virtual_machine_only(
+            name_prefix="vm-tenant-direct-out",
+            cluster_location=self.location,
+            cluster_tenant=self.tenant,
+            vm_tenant=other_tenant,
+        )
+        created_vms = [
+            vm_fallback_in_scope,
+            vm_direct_in_scope,
+            vm_fallback_out_scope,
+            vm_direct_out_scope,
+        ]
+        location_ids = set()
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {vm_fallback_in_scope.id, vm_direct_in_scope.id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vms, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="virtualization.virtualmachine",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {obj.id for obj in created_vms}
         self.assertSetEqual(actual_ids, expected_ids)
         self.assertSetEqual(actual_ids, expected_ids_from_engine)
 
