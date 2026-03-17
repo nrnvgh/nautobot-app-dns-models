@@ -900,3 +900,174 @@ Results:
 Outcome:
 - Full suite completed successfully with expected ratio behavior after the code cleanup.
 - Keep using this post-cleanup set as the new reference point for subsequent optimization experiments.
+
+---
+
+## Prefetch-aware gating A/B (isolated)
+
+Goal:
+- Quantify impact of interface `ip_addresses` prefetch-aware A/AAAA gating in `DNSRuleEngine`.
+
+Method:
+- Fixed benchmark shape for both variants:
+  - Job: `ReconcileDNSBulkJob`
+  - Strategy: `rule_driven`
+  - Scope: `limit=67000`, `batch_size=1000`, `runs=5`
+  - Ratios: `0/10/50/100`
+  - Rule: `32ebf50a-9b15-430d-93d9-7d137204d868`
+- `ON` variant:
+  - `_iter_targets()` includes `.prefetch_related("ip_addresses")` for `dcim.interface`.
+  - Engine uses `getattr(source_obj, "_prefetched_objects_cache", {}).get("ip_addresses")`.
+- `OFF` variant:
+  - disabled only `.prefetch_related("ip_addresses")` in `_iter_targets()`.
+  - kept engine cache-key logic unchanged.
+
+Artifacts:
+- ON:
+  - `.local/bench-results/prefetch-on-r0`
+  - `.local/bench-results/prefetch-on-r10`
+  - `.local/bench-results/prefetch-on-r50`
+  - `.local/bench-results/prefetch-on-r100`
+- OFF:
+  - `.local/bench-results/prefetch-off-r0`
+  - `.local/bench-results/prefetch-off-r10`
+  - `.local/bench-results/prefetch-off-r50`
+  - `.local/bench-results/prefetch-off-r100`
+
+Results (summary.json averages):
+- `r0`:
+  - ON: `22.285s`
+  - OFF: `77.352s`
+  - Delta: `-55.067s` (`~71.2%` lower), `~3.47x` faster
+- `r10`:
+  - ON: `22.520s`
+  - OFF: `76.310s`
+  - Delta: `-53.790s` (`~70.5%` lower), `~3.39x` faster
+- `r50`:
+  - ON: `24.736s`
+  - OFF: `77.082s`
+  - Delta: `-52.346s` (`~67.9%` lower), `~3.12x` faster
+- `r100`:
+  - ON: `27.331s`
+  - OFF: `79.082s`
+  - Delta: `-51.751s` (`~65.4%` lower), `~2.89x` faster
+
+Interpretation:
+- Prefetch-aware A/AAAA gating is a dominant optimization for this workload.
+- The performance gap is consistent across all change ratios and remains large even at `100%` change.
+- Keep this optimization in the active runtime path.
+
+---
+
+## Interfaces-first queryset scope filtering A/B (20k on `:19080`)
+
+Goal:
+- Compare current Python scope filtering vs interfaces-first SQL scope filtering in `ReconcileDNSBulkJob`.
+
+Benchmark shape (both variants):
+- Nautobot: `http://localhost:19080`
+- Job: `ReconcileDNSBulkJob`
+- Strategy: `rule_driven`
+- Scope: `source_model=dcim.interface`, `limit=20000`, `batch_size=1000`, `runs=5`
+- Rule: `32ebf50a-9b15-430d-93d9-7d137204d868`
+
+Command:
+
+```bash
+.venv/bin/python .local/benchmark_reconcile_job_runs.py \
+  --base-url "http://localhost:19080" \
+  --rule-id "32ebf50a-9b15-430d-93d9-7d137204d868" \
+  --rule-api-path "/api/plugins/dns/dns-rules/" \
+  --source-model "dcim.interface" \
+  --limit 20000 \
+  --batch-size 1000 \
+  --runs 5 \
+  --output-dir "<variant output dir>"
+```
+
+Code delta tested (interfaces-first variant):
+- File: `nautobot_dns_models/jobs.py`
+- Added `_BULK_QS_SCOPE_FILTERS` mapping for `dcim.interface` only:
+  - `location -> device__location_id`
+  - `tenant -> device__tenant_id`
+- Updated `_iter_targets()` to:
+  - accept `location_ids`/`tenant_ids`
+  - apply `_apply_bulk_queryset_scope_filters()` before iteration
+  - yield `used_sql_scope_filtering` metadata
+- Updated pipeline batching/scope stage to carry `used_sql_scope_filtering` and skip Python `_get_object_location()` / `_get_object_tenant()` checks when SQL scope filtering was applied.
+- Left non-interface models on existing Python scope filtering path.
+
+Artifacts:
+- Baseline (pre-refactor):
+  - `.local/bench-results/limit-20k-batch-1k-19080`
+- Interfaces-first queryset variant:
+  - `.local/bench-results/limit-20k-batch-1k-19080-interfaces-sql-filter`
+
+Results:
+- Baseline:
+  - Average: `9.073s`
+  - Median: `8.997s`
+  - Min/Max: `8.896s` / `9.493s`
+- Interfaces-first queryset variant:
+  - Average: `9.233s`
+  - Median: `9.233s`
+  - Min/Max: `8.865s` / `9.664s`
+
+Comparison (variant vs baseline):
+- Median: `+0.236s` (`+2.62%`, slower)
+- Average: `+0.160s` (`+1.76%`, slower)
+- Min: `-0.031s` (slightly faster best-case)
+- Max: `+0.171s` (worse tail)
+
+Interpretation:
+- This interfaces-first queryset scope filtering variant did not improve this benchmark shape and trended slightly slower overall.
+- Keep the previous Python scope filtering behavior for now.
+
+---
+
+## Recursive interface scope filtering A/B (location-scoped, `:19080`)
+
+Goal:
+- Measure the impact of recursive, module-aware SQL scope filtering for sparse location-scoped `dcim.interface` runs.
+
+Scope shape:
+- Nautobot: `http://localhost:19080`
+- Job: `ReconcileDNSBulkJob`
+- Source model: `dcim.interface`
+- Rule: `32ebf50a-9b15-430d-93d9-7d137204d868`
+- Filters: `location_ids=[<single location>]`, `tenant_ids=[]`, `limit=20000`, `batch_size=1000`
+- In-scope population for this location:
+  - Devices: `1`
+  - Interfaces on that device: `128`
+- Limit semantics for this code path:
+  - `limit` applies to in-scope `targets_seen`, not to raw candidates iterated.
+- Baseline run candidate scan (Python scope filtering):
+  - In-scope processed: `128`
+  - Out-of-scope skipped: `99,872`
+  - Total candidates iterated to job completion: `100,000`
+
+Code delta tested (vs Python scope filtering):
+- File: `nautobot_dns_models/jobs.py`
+- `_apply_bulk_queryset_scope_filters()` now builds recursive `Q` filters for `dcim.interface` using:
+  - `_build_interface_parent_device_filter("location_id", location_ids)`
+  - `_build_interface_parent_device_filter("tenant_id", tenant_ids)`
+  - `module__tenant_id` OR-path for module-tenant precedence parity
+- `_build_interface_parent_device_filter()` walks module nesting up to `MODULE_RECURSION_DEPTH_LIMIT`.
+- Pipeline keeps Python scope checks only when SQL scope pushdown was not used (`used_sql_scope_filtering=False`).
+
+Observed results (session A/B):
+- Python-filtered scoped path (baseline): wall median about `12.5s`
+- Recursive SQL-scoped path (variant): wall median about `0.652s`
+- In-scope interface targets processed: `128` (both paths; same scoped workload)
+- Out-of-scope handling:
+  - Python-filtered path: `skipped_scope_count=99,872` (observed in run output)
+  - Recursive SQL path: `skipped_scope_count=0` at pipeline stage because out-of-scope interfaces are pruned in SQL.
+  - Recursive SQL path candidate scan: effectively bounded to the scoped subset (`128`) by SQL filtering.
+
+Comparison (variant vs baseline):
+- Median delta: about `-11.85s`
+- Relative improvement: about `94.8%` lower wall time (`~19.2x` faster)
+
+Interpretation:
+- For sparse location-scoped interface reconciliations, recursive SQL scope pushdown is a major win.
+- This does not contradict the earlier unscoped A/B result (`limit=20k`, no location filter), where SQL scope logic had no useful work to do.
