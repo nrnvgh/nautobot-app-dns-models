@@ -145,15 +145,6 @@ class TemplateIPAddressQuerySetProxy:
             return self._wrap_callable(attr)
         return attr
 
-    def _wrap_callable(self, func):
-        """Wrap queryset methods so their return values stay proxied."""
-
-        def wrapper(*args, **kwargs):
-            result = func(*args, **kwargs)
-            return self._wrap_result(result)
-
-        return wrapper
-
     @staticmethod
     def _wrap_result(result):
         """Wrap queryset or model results as template proxies."""
@@ -162,6 +153,15 @@ class TemplateIPAddressQuerySetProxy:
         if isinstance(result, IPAddress):
             return TemplateIPAddressProxy(result)
         return result
+
+    def _wrap_callable(self, func):
+        """Wrap queryset methods so their return values stay proxied."""
+
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            return self._wrap_result(result)
+
+        return wrapper
 
 
 class TemplateIPAddressManagerProxy:
@@ -209,15 +209,6 @@ class TemplateIPAddressManagerProxy:
             return self._wrap_callable(attr)
         return attr
 
-    def _wrap_callable(self, func):
-        """Ensure callable results remain proxied."""
-
-        def wrapper(*args, **kwargs):
-            result = func(*args, **kwargs)
-            return self._wrap_result(result)
-
-        return wrapper
-
     @staticmethod
     def _wrap_result(result):
         """Wrap manager results into template proxies."""
@@ -226,6 +217,15 @@ class TemplateIPAddressManagerProxy:
         if isinstance(result, IPAddress):
             return TemplateIPAddressProxy(result)
         return result
+
+    def _wrap_callable(self, func):
+        """Ensure callable results remain proxied."""
+
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            return self._wrap_result(result)
+
+        return wrapper
 
 
 class DeviceTemplateProxy(TemplateProxyBase):

@@ -16,7 +16,7 @@ from nautobot.ipam import models as ipam_models
 from nautobot.virtualization import models as virtualization_models
 
 from nautobot_dns_models import models
-from nautobot_dns_models.exceptions import DNSTemplateEmptyError
+from nautobot_dns_models.exceptions import DNSTemplateEmptyError, DNSRuleRenderedValueLookupError
 from nautobot_dns_models.models import (
     DNSRecord,
     DNSRule,
@@ -70,11 +70,15 @@ class BaseDNSRuleEngine(ABC):
         """Reconcile existing and desired records for one rule/object pair."""
 
     @abstractmethod
-    def _get_zones_for_rule(self, rule, context, selected_views, use_cache=False):
+    def _get_zones_for_rule(self, rule, context, selected_views):
         """Resolve DNS zones for one rule/context pair."""
 
     @abstractmethod
-    def _get_dns_views_for_rule(self, rule, context, use_cache=False):
+    def _render_template(self, template_str, context, field_name):
+        """Render a Jinja2 template with the given context."""
+
+    @abstractmethod
+    def _get_dns_views_for_rule(self, rule, context):
         """Resolve DNS views for one rule/context pair."""
 
     @abstractmethod
@@ -88,20 +92,8 @@ class BaseDNSRuleEngine(ABC):
     ):
         """Apply in-place update for an existing tracking record."""
 
-    @staticmethod
-    def _initialize_processing_summary():
-        """Default object-level processing summary."""
-        return {
-            "had_existing_rule_records": False,
-            "existing_rule_record_count": 0,
-            "changed": False,
-            "changed_record_count": 0,
-            "record_ops_create_count": 0,
-            "record_ops_delete_count": 0,
-        }
-
     #
-    # Internal methods
+    # Public methods
     #
 
     def delete_dns_records_for_object(self, source_obj):
@@ -117,12 +109,67 @@ class BaseDNSRuleEngine(ABC):
         for rule_record in rule_records:
             self._delete_tracking_and_dns_record(rule_record)
 
+    #
+    # Internal methods
+    #
+    @staticmethod
+    def _initialize_processing_summary():
+        """Default object-level processing summary."""
+        return {
+            "had_existing_rule_records": False,
+            "existing_rule_record_count": 0,
+            "changed": False,
+            "changed_record_count": 0,
+            "record_ops_create_count": 0,
+            "record_ops_delete_count": 0,
+        }
+
+    @staticmethod
+    def _safe_model_label(obj):
+        """Return model label if available, else object type name."""
+        meta = getattr(obj, "_meta", None)
+        return getattr(meta, "label_lower", obj.__class__.__name__)
+
+    @staticmethod
+    def _infer_reason_code(exc, default_reason):
+        """Infer stable reason code from known exception shapes."""
+        if isinstance(exc, DNSRuleRenderedValueLookupError):
+            if exc.reason_code:
+                return exc.reason_code
+            return default_reason
+
+        if isinstance(exc, DNSTemplateEmptyError):
+            message = str(exc)
+            if "view_template" in message:
+                return REASON_VIEW_TEMPLATE_EMPTY
+
+            return REASON_CANDIDATE_TEMPLATE_ERROR
+
+        if isinstance(exc, TemplateError):
+            return REASON_CANDIDATE_TEMPLATE_ERROR
+
+        if isinstance(exc, ValidationError):
+            message_dict = getattr(exc, "message_dict", {})
+            view_errors = " ".join(message_dict.get("view_template", []))
+
+            if "rendered no DNS view names" in view_errors:
+                return REASON_VIEW_TEMPLATE_EMPTY
+
+            if "not found from view_template" in view_errors:
+                return REASON_VIEW_NOT_FOUND
+
+            zone_errors = " ".join(message_dict.get("zone_template", []))
+            if "does not exist in selected DNS view" in zone_errors:
+                return REASON_ZONE_NOT_FOUND
+
+        return default_reason
+
     def _calculate_desired_record_data(self, rule, source_obj, phase=PHASE_UNKNOWN):
         """Calculate desired DNS record data for one rule/object pair."""
         base_context = {"obj": wrap_for_template(source_obj)}
-        requires_ip_context = self._requires_ip_context(rule)
         rendered_name = self._render_template(rule.name_template, base_context, "name_template")
         shared_record_data = {"name": normalize_dns_name(rendered_name)}
+        requires_ip_context = self._requires_ip_context(rule)
 
         all_record_data = []
         record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
@@ -137,16 +184,11 @@ class BaseDNSRuleEngine(ABC):
                 zones = self._get_zones_for_rule(rule, record_context, selected_views)
                 for zone in zones:
                     all_record_data.append({**record_data, "zone": zone})
-            except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
+            except (DNSTemplateEmptyError, DNSRuleRenderedValueLookupError, TemplateError, ValueError) as exc:
                 self._log_candidate_skip(rule, source_obj, record_data, exc, phase=phase)
                 continue
-        return all_record_data
 
-    @staticmethod
-    def _safe_model_label(obj):
-        """Return model label if available, else object type name."""
-        meta = getattr(obj, "_meta", None)
-        return getattr(meta, "label_lower", obj.__class__.__name__)
+        return all_record_data
 
     def _build_log_extra(
         self,
@@ -185,35 +227,6 @@ class BaseDNSRuleEngine(ABC):
             extra["candidate_zone_id"] = str(getattr(zone, "id", "")) if zone is not None else ""
 
         return extra
-
-    @staticmethod
-    def _infer_reason_code(exc, default_reason):
-        """Infer stable reason code from known exception shapes."""
-        if isinstance(exc, DNSTemplateEmptyError):
-            message = str(exc)
-            if "view_template" in message:
-                return REASON_VIEW_TEMPLATE_EMPTY
-
-            return REASON_CANDIDATE_TEMPLATE_ERROR
-
-        if isinstance(exc, TemplateError):
-            return REASON_CANDIDATE_TEMPLATE_ERROR
-
-        if isinstance(exc, ValidationError):
-            message_dict = getattr(exc, "message_dict", {})
-            view_errors = " ".join(message_dict.get("view_template", []))
-
-            if "rendered no DNS view names" in view_errors:
-                return REASON_VIEW_TEMPLATE_EMPTY
-
-            if "not found from view_template" in view_errors:
-                return REASON_VIEW_NOT_FOUND
-
-            zone_errors = " ".join(message_dict.get("zone_template", []))
-            if "does not exist in selected DNS view" in zone_errors:
-                return REASON_ZONE_NOT_FOUND
-
-        return default_reason
 
     def _log_rule_processing_error(self, rule, source_obj, exc, phase, cleanup=False):
         """Emit hybrid warning for top-level rule processing failures."""
@@ -442,6 +455,7 @@ class BaseDNSRuleEngine(ABC):
             if source_obj.virtual_machine:
                 vm = source_obj.virtual_machine
                 return vm.location
+
             return None
 
         # Device objects have direct location (required field in Nautobot).
@@ -644,7 +658,10 @@ class BaseDNSRuleEngine(ABC):
         if address_id:
             ip_obj = ipam_models.IPAddress.objects.filter(pk=address_id).first()
             if ip_obj is None:
-                raise ValidationError({"value_template": f"Resolved IP address '{address_id}' was not found."})
+                raise DNSRuleRenderedValueLookupError(
+                    field_name="value_template",
+                    message=f"Resolved IP address '{address_id}' was not found.",
+                )
             context["ip"] = wrap_for_template(ip_obj)
 
         return context
@@ -756,39 +773,6 @@ class BaseDNSRuleEngine(ABC):
             raise ValueError(f"Record type '{record_type}' is not a valid DNS record type")
 
         return record_class
-
-    def _render_template(self, template_str, context, field_name):
-        """
-        Render a Jinja2 template with the given context.
-
-        Args:
-            template_str: The template string to render
-            context: The context variables for rendering
-            field_name: The name of the field being rendered (for error messages)
-
-        Returns:
-            The rendered template string
-
-        Raises:
-            DNSTemplateEmptyError: If template renders empty or error strings
-            TemplateError: Jinja2 template errors (TemplateSyntaxError, TemplateAssertionError, etc.)
-        """
-        # logger.debug(f"Rendering template: {template_str} with context: {context}")
-        result = render_jinja2(template_str, context)  # Let jinja2 exceptions bubble
-        # logger.debug(f"Template (({template_str})) rendered to result: '{result}'")
-
-        # Check for falsy results (None, empty string, etc.)
-        if not result:
-            raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
-
-        # Check for template error strings that render_jinja2 sometimes returns
-        # Pattern: "{{ no such element: None[\"id\"] }}" when accessing attributes on None
-        # This occurs in DEBUG=True environments where Django uses jinja2.runtime.DebugUndefined
-        # instead of regular Undefined, causing descriptive error strings instead of empty results
-        if "{{ no such element:" in result:
-            raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
-
-        return result
 
     def _get_record_content_key(self, dns_record):
         """Generate a content-based key for record comparison."""

@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from time import perf_counter
 
+from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.forms import widgets
 from nautobot.apps.forms import StaticSelect2, StaticSelect2Multiple, add_blank_choice
@@ -26,10 +27,11 @@ from nautobot_dns_models.constants.supported_models import (
     SUPPORTED_SOURCE_MODEL_CHOICES,
     SUPPORTED_SOURCE_MODEL_MAP,
 )
+from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSTemplateEmptyError
 from nautobot_dns_models.models import DNSRule
 from nautobot_dns_models.rules.engine_selector import get_rule_engine
 
-name = "DNS reconciliation jobs"
+name = "DNS Reconciliation Jobs"    # pylint: disable=invalid-name
 
 
 @dataclass
@@ -102,10 +104,8 @@ class ReconcileRunSummary:
         }
 
 
-class _BaseReconcileDNSJob(Job):
+class _ReconcileDNSJobMixin:
     """Shared reconciliation helpers for bulk and object jobs."""
-
-    dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
 
     @staticmethod
     def _normalize_model_labels(source_models):
@@ -117,63 +117,6 @@ class _BaseReconcileDNSJob(Job):
         valid_labels = requested_labels & set(SUPPORTED_SOURCE_MODEL_MAP.keys())
         invalid_labels = requested_labels - valid_labels
         return valid_labels, invalid_labels
-
-    def _get_rule_queryset(self, selected_rules, selected_model_labels):
-        """Build enabled-rule queryset constrained by explicit rule/model filters."""
-        queryset = DNSRule.objects.filter(enabled=True).select_related("content_type")
-
-        if selected_rules:
-            queryset = queryset.filter(pk__in=[rule.pk for rule in selected_rules])
-
-        if selected_model_labels:
-            conditions = Q()
-            for model_label in selected_model_labels:
-                app_label, model_name = model_label.split(".", maxsplit=1)
-                conditions |= Q(content_type__app_label=app_label, content_type__model=model_name)
-            queryset = queryset.filter(conditions)
-
-        return queryset
-
-    def _resolve_target_models(self, selected_rules, selected_model_labels):
-        """Resolve which model labels should be scanned in bulk mode."""
-        filtered_rules = self._get_rule_queryset(selected_rules, selected_model_labels)
-        labels = {
-            f"{rule.content_type.app_label}.{rule.content_type.model}"
-            for rule in filtered_rules
-            if f"{rule.content_type.app_label}.{rule.content_type.model}" in SUPPORTED_SOURCE_MODEL_MAP
-        }
-        return sorted(labels)
-
-    def _iter_targets(
-        self,
-        target_labels,
-        batch_size,
-        limit=None,
-    ):
-        """Yield `(model_label, object)` pairs for reconciliation."""
-        remaining = limit
-        for model_label in target_labels:
-            if remaining is not None and remaining <= 0:
-                break
-
-            model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
-            queryset = model_class.objects.order_by("pk")
-            if model_label == "dcim.interface":
-                # Fast-path bulk runs repeatedly dereference device tenant/location.
-                # Load them in the base interface query to reduce per-object SQL chatter.
-                queryset = queryset.select_related("device", "device__tenant", "device__location").prefetch_related(
-                    "ip_addresses"
-                )
-
-            if remaining is not None:
-                queryset = queryset[:remaining]
-
-            for obj in queryset.iterator(chunk_size=batch_size):
-                yield model_label, obj
-                if remaining is not None:
-                    remaining -= 1
-                    if remaining <= 0:
-                        break
 
     @staticmethod
     def _iter_single_object_targets(object_model, obj, include_children=False):
@@ -235,6 +178,63 @@ class _BaseReconcileDNSJob(Job):
             "errors": [],
         }
 
+    def _get_rule_queryset(self, selected_rules, selected_model_labels):
+        """Build enabled-rule queryset constrained by explicit rule/model filters."""
+        queryset = DNSRule.objects.filter(enabled=True).select_related("content_type")
+
+        if selected_rules:
+            queryset = queryset.filter(pk__in=[rule.pk for rule in selected_rules])
+
+        if selected_model_labels:
+            conditions = Q()
+            for model_label in selected_model_labels:
+                app_label, model_name = model_label.split(".", maxsplit=1)
+                conditions |= Q(content_type__app_label=app_label, content_type__model=model_name)
+            queryset = queryset.filter(conditions)
+
+        return queryset
+
+    def _resolve_target_models(self, selected_rules, selected_model_labels):
+        """Resolve which model labels should be scanned in bulk mode."""
+        filtered_rules = self._get_rule_queryset(selected_rules, selected_model_labels)
+        labels = {
+            f"{rule.content_type.app_label}.{rule.content_type.model}"
+            for rule in filtered_rules
+            if f"{rule.content_type.app_label}.{rule.content_type.model}" in SUPPORTED_SOURCE_MODEL_MAP
+        }
+        return sorted(labels)
+
+    def _iter_targets(
+        self,
+        target_labels,
+        batch_size,
+        limit=None,
+    ):
+        """Yield `(model_label, object)` pairs for reconciliation."""
+        remaining = limit
+        for model_label in target_labels:
+            if remaining is not None and remaining <= 0:
+                break
+
+            model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
+            queryset = model_class.objects.order_by("pk")
+            if model_label == "dcim.interface":
+                # Fast-path bulk runs repeatedly dereference device tenant/location.
+                # Load them in the base interface query to reduce per-object SQL chatter.
+                queryset = queryset.select_related("device", "device__tenant", "device__location").prefetch_related(
+                    "ip_addresses"
+                )
+
+            if remaining is not None:
+                queryset = queryset[:remaining]
+
+            for obj in queryset.iterator(chunk_size=batch_size):
+                yield model_label, obj
+                if remaining is not None:
+                    remaining -= 1
+                    if remaining <= 0:
+                        break
+
     def _process_targets(self, targets, *, dryrun, location_ids, tenant_ids, limit, batch_size):
         """Process target iterator and return aggregated execution/reconciliation summary."""
         summary = ReconcileRunSummary()
@@ -254,6 +254,7 @@ class _BaseReconcileDNSJob(Job):
                     limit=limit,
                 )
                 object_batch = []
+
             if limit and summary.targets_seen >= limit:
                 break
 
@@ -304,6 +305,7 @@ class _BaseReconcileDNSJob(Job):
 
             if dryrun:
                 self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
+
         if dryrun or not targets_in_scope:
             return
 
@@ -311,7 +313,9 @@ class _BaseReconcileDNSJob(Job):
             try:
                 processing_summary = selected_engine.process_object(obj, created=False)
                 summary.mark_processed_success(processing_summary)
-            except Exception as exc:  # pylint: disable=broad-exception-caught
+            except DNSRuleEngineIntegrityError:
+                raise
+            except (DNSTemplateEmptyError, ValidationError, ValueError) as exc:
                 summary.mark_processed_failure()
                 self.logger.error(
                     "reconcile failure target=%s:%s error=%s", model_label, obj.pk, exc, extra={"object": obj}
@@ -385,7 +389,13 @@ class _BaseReconcileDNSJob(Job):
         for model_label, model_objects in targets_by_model_label.items():
             try:
                 batch_summaries = selected_engine.process_objects_pipeline(model_objects, created=False)
-            except Exception as exc:  # pylint: disable=broad-exception-caught
+            except DNSRuleEngineIntegrityError:
+                raise
+            except (
+                DNSTemplateEmptyError,
+                ValidationError,
+                ValueError,
+            ) as exc:
                 for obj in model_objects:
                     summary.mark_processed_failure()
                     self.logger.error(
@@ -436,7 +446,7 @@ class _BaseReconcileDNSJob(Job):
         )
 
 
-class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
+class ReconcileDNSBulkJob(_ReconcileDNSJobMixin, Job):
     """Reconcile DNS records for all or selected source objects in bulk mode."""
 
     class Meta:
@@ -448,6 +458,7 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
         )
         has_sensitive_variables = False
 
+    dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
     source_models = MultiChoiceVar(
         choices=SUPPORTED_SOURCE_MODEL_CHOICES,
         required=False,
@@ -526,17 +537,25 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
         targets = self._iter_targets(target_labels=target_labels, batch_size=batch_size, limit=limit)
         summary = ReconcileRunSummary()
         summary.scanned_model_labels.update(target_labels)
-
-        self._process_pipeline_targets_in_batches(
-            targets,
-            summary=summary,
-            selected_engine=selected_engine,
-            dryrun=dryrun,
-            location_ids=location_ids,
-            tenant_ids=tenant_ids,
-            limit=limit,
-            batch_size=batch_size,
-        )
+        try:
+            self._process_pipeline_targets_in_batches(
+                targets,
+                summary=summary,
+                selected_engine=selected_engine,
+                dryrun=dryrun,
+                location_ids=location_ids,
+                tenant_ids=tenant_ids,
+                limit=limit,
+                batch_size=batch_size,
+            )
+        except DNSRuleEngineIntegrityError as exc:
+            self.fail(str(exc))
+            return {
+                "dryrun": bool(dryrun),
+                "error": "engine_integrity_error",
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+            }
 
         result = self._build_result_payload(
             summary,
@@ -607,7 +626,7 @@ class ReconcileDNSBulkJob(_BaseReconcileDNSJob):
             )
 
 
-class ReconcileDNSObjectJob(_BaseReconcileDNSJob):
+class ReconcileDNSObjectJob(_ReconcileDNSJobMixin, Job):
     """Object-scoped reconciliation job with a simplified UI."""
 
     template_name = "nautobot_dns_models/reconcile_dns_object_job.html"
@@ -619,7 +638,7 @@ class ReconcileDNSObjectJob(_BaseReconcileDNSJob):
         description = "Reconcile rule-driven DNS records for a single object"
         has_sensitive_variables = False
 
-    # Keep only object-scoped selectors in the form.
+    dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
     object_model = ChoiceVar(
         choices=add_blank_choice(SUPPORTED_SOURCE_MODEL_CHOICES),
         required=True,
@@ -671,14 +690,23 @@ class ReconcileDNSObjectJob(_BaseReconcileDNSJob):
                 include_children=bool(include_children),
             )
         )
-        summary = self._process_targets(
-            targets,
-            dryrun=dryrun,
-            location_ids=set(),
-            tenant_ids=set(),
-            limit=None,
-            batch_size=100,
-        )
+        try:
+            summary = self._process_targets(
+                targets,
+                dryrun=dryrun,
+                location_ids=set(),
+                tenant_ids=set(),
+                limit=None,
+                batch_size=100,
+            )
+        except DNSRuleEngineIntegrityError as exc:
+            self.fail(str(exc))
+            return {
+                "dryrun": bool(dryrun),
+                "error": "engine_integrity_error",
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+            }
         summary.scanned_model_labels.update({model_label for model_label, _ in targets})
 
         result = self._build_result_payload(

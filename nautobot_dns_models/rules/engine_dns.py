@@ -15,12 +15,19 @@ from jinja2 import TemplateError
 from nautobot.ipam import models as ipam_models
 
 from nautobot_dns_models import models as dns_models
-from nautobot_dns_models.exceptions import DNSTemplateEmptyError
+from nautobot_dns_models.exceptions import (
+    DNSTemplateEmptyError,
+    DNSRecordContentTypeResolutionError,
+    DNSRuleRenderedValueLookupError,
+)
 from nautobot_dns_models.models import DNSRuleRecord, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.engine import (
     PHASE_CREATE,
     PHASE_UPDATE_RECONCILE,
+    REASON_VIEW_NOT_FOUND,
+    REASON_VIEW_TEMPLATE_EMPTY,
+    REASON_ZONE_NOT_FOUND,
     BaseDNSRuleEngine,
 )
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
@@ -83,7 +90,11 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         rules_count = len(rules)
 
         if rules_count == 0:
-            logger.debug(f"No DNS rules found for {content_type} - skipping DNS record processing for {source_obj}")
+            logger.debug(
+                "No DNS rules found for %s - skipping DNS record processing for %s",
+                content_type,
+                source_obj,
+            )
             return summary
 
         existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=str(source_obj.pk))
@@ -358,7 +369,12 @@ class DNSRuleEngine(BaseDNSRuleEngine):
                         for zone in zones:
                             all_record_data.append({**record_data, "zone": zone})
 
-                    except (ValidationError, DNSTemplateEmptyError, TemplateError, ValueError) as exc:
+                    except (
+                        DNSTemplateEmptyError,
+                        DNSRuleRenderedValueLookupError,
+                        TemplateError,
+                        ValueError,
+                    ) as exc:
                         self._log_candidate_skip(rule, source_obj, record_data, exc, phase=PHASE_UPDATE_RECONCILE)
                         continue
 
@@ -433,7 +449,11 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         rendered = self._render_template(rule.view_template, context, "view_template")
         raw_names = [token.strip() for token in re.split(r"[\s,]+", rendered) if token.strip()]
         if not raw_names:
-            raise ValidationError({"view_template": "view_template rendered no DNS view names."})
+            raise DNSRuleRenderedValueLookupError(
+                field_name="view_template",
+                message="view_template rendered no DNS view names.",
+                reason_code=REASON_VIEW_TEMPLATE_EMPTY,
+            )
 
         requested_names = list(dict.fromkeys(raw_names))
         cache_key = tuple(requested_names)
@@ -445,11 +465,10 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         matched_by_name = {view.name: view for view in matched_views}
         missing_names = [name for name in raw_names if name not in matched_by_name]
         if missing_names:
-            raise ValidationError(
-                {
-                    "view_template": "DNS view(s) not found from view_template: "
-                    f"{', '.join(sorted(set(missing_names)))}"
-                }
+            raise DNSRuleRenderedValueLookupError(
+                field_name="view_template",
+                message=f"DNS view(s) not found from view_template: {', '.join(sorted(set(missing_names)))}",
+                reason_code=REASON_VIEW_NOT_FOUND,
             )
 
         ordered_views = []
@@ -467,30 +486,27 @@ class DNSRuleEngine(BaseDNSRuleEngine):
 
     def _get_zones_for_rule(self, rule, context, selected_views):
         """Cache zone lookups by zone-name and view-id tuple."""
-        if rule.zone_template:
-            zone_name = self._render_template(rule.zone_template, context, "zone_template")
-            view_ids = [view.id for view in selected_views]
-            zone_cache_key = (zone_name, tuple(sorted(view_ids)))
-            zones = self._zone_lookup_cache.get(zone_cache_key)
-            if zones is None:
-                zones = list(DNSZone.objects.filter(name=zone_name, dns_view_id__in=view_ids))
-                self._zone_lookup_cache[zone_cache_key] = zones
-            found_view_ids = {zone.dns_view_id for zone in zones}
-            missing_view_ids = set(view_ids) - found_view_ids
-            if missing_view_ids:
-                missing_view_names = list(
-                    dns_models.DNSView.objects.filter(id__in=missing_view_ids).values_list("name", flat=True)
-                )
-                raise ValidationError(
-                    {
-                        "zone_template": (
-                            f"Zone '{zone_name}' does not exist in selected DNS view(s): "
-                            f"{', '.join(sorted(missing_view_names))}"
-                        )
-                    }
-                )
-            return zones
-        raise ValidationError({"zone_template": "DNS rule must define a zone_template."})
+        zone_name = self._render_template(rule.zone_template, context, "zone_template")
+        view_ids = [view.id for view in selected_views]
+        zone_cache_key = (zone_name, tuple(sorted(view_ids)))
+        zones = self._zone_lookup_cache.get(zone_cache_key)
+        if zones is None:
+            zones = list(DNSZone.objects.filter(name=zone_name, dns_view_id__in=view_ids))
+            self._zone_lookup_cache[zone_cache_key] = zones
+
+        found_view_ids = {zone.dns_view_id for zone in zones}
+        missing_view_ids = set(view_ids) - found_view_ids
+        if missing_view_ids:
+            missing_view_names = list(dns_models.DNSView.objects.filter(id__in=missing_view_ids).values_list("name", flat=True))
+            raise DNSRuleRenderedValueLookupError(
+                field_name="zone_template",
+                message=(
+                    f"Zone '{zone_name}' does not exist in selected DNS view(s): "
+                    f"{', '.join(sorted(missing_view_names))}"
+                ),
+                reason_code=REASON_ZONE_NOT_FOUND,
+            )
+        return zones
 
     def _update_tracking_record_dns_record(
         self,
@@ -505,6 +521,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         desired_name = desired_record_data["name"]
         if dns_record.name == desired_name:
             return "unchanged"
+
         try:
             updated = type(dns_record).objects.filter(pk=dns_record.pk).update(name=desired_name)
             if updated != 1:
@@ -513,6 +530,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         except (ValidationError, IntegrityError, ValueError) as exc:
             self._log_record_update_failure(rule, source_obj, desired_record_data, exc, phase=phase)
             return "failed"
+
         return "updated"
 
     def _create_dns_records_for_object(self, source_obj, applicable_rules):
@@ -683,7 +701,10 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             ip_obj = ipam_models.IPAddress.objects.filter(pk=address_id).first()
 
         if ip_obj is None:
-            raise ValidationError({"value_template": f"Resolved IP address '{address_id}' was not found."})
+            raise DNSRuleRenderedValueLookupError(
+                field_name="value_template",
+                message=f"Resolved IP address '{address_id}' was not found.",
+            )
 
         context["ip"] = wrap_for_template(ip_obj)
         return context
@@ -693,19 +714,23 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         if not tracking_rows:
             return
 
-        rows_by_record_content_type = defaultdict(list)
+        tracking_rows_by_record_content_type = defaultdict(list)
         for tracking_row in tracking_rows:
-            rows_by_record_content_type[tracking_row.dns_record_content_type_id].append(tracking_row)
+            tracking_rows_by_record_content_type[tracking_row.dns_record_content_type_id].append(tracking_row)
 
-        content_types = ContentType.objects.in_bulk(rows_by_record_content_type.keys())
-        for record_content_type_id, rows in rows_by_record_content_type.items():
-            record_content_type = content_types.get(record_content_type_id)
-            if record_content_type is None:
-                continue
-
+        content_types = ContentType.objects.in_bulk(tracking_rows_by_record_content_type.keys())
+        for record_content_type_id, rows in tracking_rows_by_record_content_type.items():
+            record_content_type = content_types[record_content_type_id]
             record_model = record_content_type.model_class()
             if record_model is None:
-                continue
+                #
+                # If this happens, something fairly serious is going on, so bail out.
+                raise DNSRecordContentTypeResolutionError(
+                    "Unable to resolve DNS record content type to model class: "
+                    f"id={record_content_type_id} "
+                    f"label={record_content_type.app_label}.{record_content_type.model} "
+                    f"tracking_rows={len(rows)}"
+                )
 
             record_ids = [tracking_row.dns_record_object_id for tracking_row in rows]
             records_by_id = record_model.objects.in_bulk(record_ids)
@@ -805,13 +830,19 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         bulk_update_collector=None,
     ):
         """Reconcile one rule using caller-provided tracking rows and desired rows."""
-        existing_records_by_identity = {}
-        for tracking_record in tracking_records:
+        def _resolve_dns_record(tracking_record):
             dns_record = getattr(tracking_record, "_prefetched_dns_record", None)
             if dns_record is None:
                 dns_record = tracking_record.dns_record
+
+            return dns_record
+
+        existing_records_by_identity = {}
+        for tracking_record in tracking_records:
+            dns_record = _resolve_dns_record(tracking_record)
             if dns_record is None:
                 continue
+
             identity_key = self._get_record_identity_key(dns_record)
             existing_records_by_identity[identity_key] = tracking_record
 
@@ -837,16 +868,16 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             tracking_record = existing_records_by_identity[identity_key]
             desired_record = desired_records_by_identity[identity_key]
             if bulk_update_collector is not None:
-                dns_record = getattr(tracking_record, "_prefetched_dns_record", None)
-                if dns_record is None:
-                    dns_record = tracking_record.dns_record
+                dns_record = _resolve_dns_record(tracking_record)
                 if dns_record is None:
                     skipped_update += 1
                     continue
+
                 desired_name = desired_record["name"]
                 if dns_record.name == desired_name:
                     keep_count += 1
                     continue
+
                 dns_record.name = desired_name
                 bulk_update_collector[type(dns_record)].append(dns_record)
                 updated_count += 1
