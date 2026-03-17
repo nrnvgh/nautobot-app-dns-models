@@ -316,9 +316,12 @@ class BaseDNSRuleEngine(ABC):
             ),
         )
 
+    #
+    # XXX We may opt to nuke this; it's noisy. That said, it's only logging @ DEBUG so it
+    # XXX may be worth keeping around.
     def _log_reconcile_summary(self, rule, source_obj, counts):
         """Emit per-rule reconciliation outcome summary."""
-        logger.info(
+        logger.debug(
             "dnsrule_reconcile_summary rule=%s source=%s:%s existing=%s desired=%s keep=%s create=%s delete=%s skipped=%s",
             rule.name,
             self._safe_model_label(source_obj),
