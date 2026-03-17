@@ -298,8 +298,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["execution"]["processed_count"], 8)
         self.assertEqual(result["reconciliation"]["objects_changed"], 8)
 
-class InterfaceScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
-    """Validate interface scope selection for device and module topologies."""
+class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
+    """Validate SQL scope selection parity with engine semantics."""
 
     @classmethod
     def setUpTestData(cls):
@@ -314,28 +314,34 @@ class InterfaceScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         BaseRuleEngineMixin.setUp(self)
 
     @staticmethod
-    def _interface_scope_expected_ids_from_engine(interfaces, location_ids):
-        """Return expected interface IDs via engine location-resolution semantics."""
+    def _scope_expected_ids_from_engine(objects, location_ids, tenant_ids=None):
+        """Return expected object IDs via engine scope-resolution semantics."""
+        tenant_ids = tenant_ids or set()
         selected_engine = get_rule_engine()
         expected_ids = set()
-        for interface in interfaces:
-            object_location = selected_engine._get_object_location(interface)  # pylint: disable=protected-access
-            if object_location is not None and object_location.id in location_ids:
-                expected_ids.add(interface.id)
+        for obj in objects:
+            object_location = selected_engine._get_object_location(obj)  # pylint: disable=protected-access
+            object_tenant = selected_engine._get_object_tenant(obj)  # pylint: disable=protected-access
+            if location_ids and (object_location is None or object_location.id not in location_ids):
+                continue
+            if tenant_ids and (object_tenant is None or object_tenant.id not in tenant_ids):
+                continue
+            expected_ids.add(obj.id)
         return expected_ids
 
-    def _interface_scope_actual_ids(self, location_ids):
-        """Return interface IDs selected by the bulk job scope pipeline path."""
+    def _scope_actual_ids(self, *, target_label, location_ids, tenant_ids=None):
+        """Return object IDs selected by the bulk job scope pipeline path."""
+        tenant_ids = tenant_ids or set()
         job = ReconcileDNSBulkJob()
         selected_engine = get_rule_engine()
         summary = ReconcileRunSummary()
         targets = list(
             job._iter_targets(  # pylint: disable=protected-access
-                target_labels=["dcim.interface"],
+                target_labels=[target_label],
                 batch_size=1000,
                 limit=20000,
                 location_ids=location_ids,
-                tenant_ids=set(),
+                tenant_ids=tenant_ids,
             )
         )
         selected_targets = job._build_pipeline_in_scope_targets(  # pylint: disable=protected-access
@@ -344,7 +350,7 @@ class InterfaceScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
             selected_engine=selected_engine,
             dryrun=True,
             location_ids=location_ids,
-            tenant_ids=set(),
+            tenant_ids=tenant_ids,
             limit=20000,
         )
         return {obj.id for _, obj in selected_targets}
@@ -365,6 +371,48 @@ class InterfaceScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
             status=self.interface_status,
         )
         return interface
+
+    def _create_device_only(self, *, name_prefix, location):
+        """Create one device for scope-selection assertions."""
+        return Device.objects.create(
+            name=f"{name_prefix}-device-only",
+            device_type=self.device_type,
+            location=location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+
+    def test_device_scope_matches_engine_semantics(self):
+        """Scoped device selection should match engine semantics for location filtering."""
+        scoped_location = Location.objects.create(
+            name="Scope Device Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        extra_location = Location.objects.create(
+            name="Scope Device Extra Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        devices_in_scope = [
+            self._create_device_only(name_prefix="device-in-1", location=scoped_location),
+            self._create_device_only(name_prefix="device-in-2", location=scoped_location),
+            self._create_device_only(name_prefix="device-in-3", location=scoped_location),
+        ]
+        devices_out_scope = [
+            self._create_device_only(name_prefix="device-out-1", location=self.location),
+            self._create_device_only(name_prefix="device-out-2", location=extra_location),
+        ]
+        created_devices = devices_in_scope + devices_out_scope
+        location_ids = {scoped_location.id}
+
+        expected_ids = {obj.id for obj in devices_in_scope}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_devices, location_ids)
+        actual_ids = self._scope_actual_ids(target_label="dcim.device", location_ids=location_ids) & {
+            obj.id for obj in created_devices
+        }
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
 
     def _create_child_device_with_interface(self, *, name_prefix, parent_device, location):
         """Create one child device installed in parent device bay and one interface."""
@@ -462,8 +510,10 @@ class InterfaceScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         location_ids = {scoped_location.id}
 
         expected_ids = {interface_in_scope.id}
-        expected_ids_from_engine = self._interface_scope_expected_ids_from_engine(created_interfaces, location_ids)
-        actual_ids = self._interface_scope_actual_ids(location_ids) & {interface.id for interface in created_interfaces}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids)
+        actual_ids = self._scope_actual_ids(target_label="dcim.interface", location_ids=location_ids) & {
+            interface.id for interface in created_interfaces
+        }
         self.assertSetEqual(actual_ids, expected_ids)
         self.assertSetEqual(actual_ids, expected_ids_from_engine)
 
@@ -498,8 +548,10 @@ class InterfaceScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         location_ids = {scoped_location.id}
 
         expected_ids = {child_in_scope.id}
-        expected_ids_from_engine = self._interface_scope_expected_ids_from_engine(created_interfaces, location_ids)
-        actual_ids = self._interface_scope_actual_ids(location_ids) & {interface.id for interface in created_interfaces}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids)
+        actual_ids = self._scope_actual_ids(target_label="dcim.interface", location_ids=location_ids) & {
+            interface.id for interface in created_interfaces
+        }
         self.assertSetEqual(actual_ids, expected_ids)
         self.assertSetEqual(actual_ids, expected_ids_from_engine)
 
@@ -530,8 +582,10 @@ class InterfaceScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         location_ids = {scoped_location.id}
 
         expected_ids = {module_in_scope.id}
-        expected_ids_from_engine = self._interface_scope_expected_ids_from_engine(created_interfaces, location_ids)
-        actual_ids = self._interface_scope_actual_ids(location_ids) & {interface.id for interface in created_interfaces}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids)
+        actual_ids = self._scope_actual_ids(target_label="dcim.interface", location_ids=location_ids) & {
+            interface.id for interface in created_interfaces
+        }
         self.assertSetEqual(actual_ids, expected_ids)
         self.assertSetEqual(actual_ids, expected_ids_from_engine)
 
@@ -566,7 +620,9 @@ class InterfaceScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         location_ids = {scoped_location.id}
 
         expected_ids = {nested_in_scope.id}
-        expected_ids_from_engine = self._interface_scope_expected_ids_from_engine(created_interfaces, location_ids)
-        actual_ids = self._interface_scope_actual_ids(location_ids) & {interface.id for interface in created_interfaces}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids)
+        actual_ids = self._scope_actual_ids(target_label="dcim.interface", location_ids=location_ids) & {
+            interface.id for interface in created_interfaces
+        }
         self.assertSetEqual(actual_ids, expected_ids)
         self.assertSetEqual(actual_ids, expected_ids_from_engine)

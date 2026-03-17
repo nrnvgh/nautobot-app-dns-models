@@ -19,7 +19,6 @@ from nautobot.apps.jobs import (
     StringVar,
     register_jobs,
 )
-from nautobot.dcim.constants import MODULE_RECURSION_DEPTH_LIMIT
 from nautobot.dcim.models import Location
 from nautobot.tenancy.models import Tenant
 
@@ -30,6 +29,7 @@ from nautobot_dns_models.constants.supported_models import (
 )
 from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSTemplateEmptyError
 from nautobot_dns_models.models import DNSRule
+from nautobot_dns_models.rules.scope_filters import BulkScopeFilterBuilder
 from nautobot_dns_models.rules.engine_selector import get_rule_engine
 
 name = "DNS Reconciliation Jobs"    # pylint: disable=invalid-name
@@ -107,6 +107,8 @@ class ReconcileRunSummary:
 
 class _ReconcileDNSJobMixin:
     """Shared reconciliation helpers for bulk and object jobs."""
+
+    _bulk_scope_filter_builder = BulkScopeFilterBuilder()
 
     @staticmethod
     def _limit_reached(summary, limit):
@@ -230,20 +232,11 @@ class _ReconcileDNSJobMixin:
             if remaining is not None and remaining <= 0:
                 break
 
-            model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
-            queryset = model_class.objects.order_by("pk")
-            queryset, used_sql_scope_filtering = self._apply_bulk_queryset_scope_filters(
-                model_label=model_label,
-                queryset=queryset,
+            queryset, used_sql_scope_filtering = self._build_target_queryset(
+                model_label,
                 location_ids=location_ids,
                 tenant_ids=tenant_ids,
             )
-            if model_label == "dcim.interface":
-                # Fast-path bulk runs repeatedly dereference device tenant/location.
-                # Load them in the base interface query to reduce per-object SQL chatter.
-                queryset = queryset.select_related("device", "device__tenant", "device__location").prefetch_related(
-                    "ip_addresses"
-                )
 
             if remaining is not None:
                 queryset = queryset[:remaining]
@@ -255,42 +248,33 @@ class _ReconcileDNSJobMixin:
                     if remaining <= 0:
                         break
 
-    def _apply_bulk_queryset_scope_filters(self, model_label, queryset, *, location_ids, tenant_ids):
-        """Apply known-safe bulk scope filters directly in SQL."""
-        if model_label != "dcim.interface":
-            return queryset, False
-
-        scope_filter = Q()
-        used_scope_filter = False
-
-        if location_ids:
-            used_scope_filter = True
-            scope_filter &= self._build_interface_parent_device_filter("location_id", location_ids)
-
-        if tenant_ids:
-            used_scope_filter = True
-            tenant_filter = self._build_interface_parent_device_filter("tenant_id", tenant_ids)
-            # Engine behavior prefers module tenant when present for module-backed interfaces.
-            tenant_filter |= Q(module__tenant_id__in=tenant_ids)
-            scope_filter &= tenant_filter
-
-        if not used_scope_filter:
-            return queryset, False
-
-        queryset = queryset.filter(scope_filter)
-        return queryset, True
+    def _build_target_queryset(self, model_label, *, location_ids, tenant_ids):
+        """Build scoped and optimized queryset for one target model label."""
+        model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
+        queryset = model_class.objects.order_by("pk")
+        queryset, used_sql_scope_filtering = self._bulk_scope_filter_builder.apply(
+            model_label,
+            queryset,
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        )
+        queryset = self._apply_target_queryset_optimizations(model_label, queryset)
+        return queryset, used_sql_scope_filtering
 
     @staticmethod
-    def _build_interface_parent_device_filter(field_name, values):
-        """Build bounded recursive filter from interface to parent device fields."""
+    def _apply_target_queryset_optimizations(model_label, queryset):
+        """Apply model-specific queryset eager-loading optimizations."""
+        if model_label == "dcim.device":
+            return queryset.select_related("location", "tenant", "primary_ip4", "primary_ip6")
 
-        # Copied from nautobot.dcim.filters.mixins.ModularDeviceComponentFilterSetMixin.generate_query_filter_device()
-        recursion_depth = max(0, MODULE_RECURSION_DEPTH_LIMIT - 1)
-        query = Q(**{f"device__{field_name}__in": values})
-        for level in range(recursion_depth):
-            recursive_path = "module__parent_module_bay__" + "parent_module__parent_module_bay__" * level
-            query |= Q(**{f"{recursive_path}parent_device__{field_name}__in": values})
-        return query
+        if model_label == "dcim.interface":
+            # Fast-path bulk runs repeatedly dereference device tenant/location.
+            # Load them in the base interface query to reduce per-object SQL chatter.
+            return queryset.select_related("device", "device__tenant", "device__location").prefetch_related(
+                "ip_addresses"
+            )
+
+        return queryset
 
     def _process_targets(self, targets, *, dryrun, location_ids, tenant_ids, limit, batch_size):
         """Process target iterator and return aggregated execution/reconciliation summary."""
