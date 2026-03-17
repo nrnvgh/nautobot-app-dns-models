@@ -3,11 +3,13 @@
 Extending the application is welcome, however it is best to open an issue first, to ensure that a PR would be accepted and makes sense in terms of features and design.
 
 
-# Entity Relation Diagram
+# Entity Relationship Diagrams
+
+## DNS Record Models
 
 ```mermaid
 ---
-Title: DNS Models Entity Relation Diagram
+Title: DNS Record Models Entity Relation Diagram
 ---
 erDiagram
     DNSModel {
@@ -88,4 +90,61 @@ erDiagram
 
     ARecord ||--|| ipam_IPaddressModel: "references"
     AAAARecord ||--|| ipam_IPaddressModel: "references"
+```
+
+## DNS Rule Models
+
+```mermaid
+---
+Title: DNS Rule Models Entity Relation Diagram
+---
+erDiagram
+    DNSRule {
+        string name UK
+        boolean enabled
+        string record_type
+        uuid location FK
+        uuid tenant FK
+        text view_template
+        text zone_template
+        text name_template
+        text value_template
+    }
+
+    DNSRuleRecord {
+        uuid object_id
+        uuid dns_record_object_id
+    }
+
+    django_ContentType {
+    }
+
+    dcim_Location {
+    }
+
+    tenancy_Tenant {
+    }
+
+    SourceObject {
+        uuid id PK
+    }
+
+    ARecord {
+        uuid id PK
+    }
+
+    AAAARecord {
+        uuid id PK
+    }
+
+    DNSRule ||--o{ DNSRuleRecord : creates
+    DNSRule }o--|| django_ContentType : triggered_by
+    DNSRule }o--o| dcim_Location : scoped_to
+    DNSRule }o--o| tenancy_Tenant : scoped_to
+
+    DNSRuleRecord }o--|| django_ContentType : source_type
+    DNSRuleRecord }o--|| django_ContentType : dns_record_type
+    DNSRuleRecord }o--|| SourceObject : source_object
+    DNSRuleRecord }o--|| ARecord : dns_record
+    DNSRuleRecord }o--|| AAAARecord : dns_record
 ```
