@@ -278,6 +278,29 @@ class _ReconcileDNSJobMixin:
             # VM scope/engine paths repeatedly dereference tenant/location fallback and primary IPs.
             return queryset.select_related("cluster", "cluster__location", "cluster__tenant", "tenant", "primary_ip4", "primary_ip6")
 
+        if model_label == "virtualization.vminterface":
+            # VMInterface scope/engine paths dereference VM tenant/location fallback and IPs.
+            return queryset.select_related(
+                "virtual_machine",
+                "virtual_machine__tenant",
+                "virtual_machine__cluster",
+                "virtual_machine__cluster__location",
+                "virtual_machine__cluster__tenant",
+            ).prefetch_related("ip_addresses")
+
+        if model_label == "ipam.service":
+            # Service scope/engine paths branch on device vs virtual machine attachment.
+            return queryset.select_related(
+                "device",
+                "device__location",
+                "device__tenant",
+                "virtual_machine",
+                "virtual_machine__tenant",
+                "virtual_machine__cluster",
+                "virtual_machine__cluster__location",
+                "virtual_machine__cluster__tenant",
+            )
+
         return queryset
 
     def _process_targets(self, targets, *, dryrun, location_ids, tenant_ids, limit, batch_size):

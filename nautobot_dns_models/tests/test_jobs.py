@@ -12,9 +12,9 @@ from nautobot.apps.testing import TransactionTestCase, create_job_result_and_run
 from nautobot.dcim.models import Device, DeviceBay, Interface, Location, Module, ModuleBay, ModuleType
 from nautobot.extras.choices import JobResultStatusChoices
 from nautobot.extras.models import Status
-from nautobot.ipam.models import IPAddress, Prefix
+from nautobot.ipam.models import IPAddress, Prefix, Service
 from nautobot.tenancy.models import Tenant
-from nautobot.virtualization.models import Cluster, VirtualMachine
+from nautobot.virtualization.models import Cluster, VirtualMachine, VMInterface
 
 from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileRunSummary
 from nautobot_dns_models.models import DNSRule
@@ -403,6 +403,27 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
             tenant=vm_tenant,
         )
 
+    @staticmethod
+    def _create_vminterface_only(*, name_prefix, virtual_machine):
+        """Create one VM interface for scope-selection assertions."""
+        vm_interface_status = Status.objects.get_for_model(VMInterface).first()
+        return VMInterface.objects.create(
+            name=f"{name_prefix}-vmi0",
+            virtual_machine=virtual_machine,
+            status=vm_interface_status,
+        )
+
+    @staticmethod
+    def _create_service_only(*, name_prefix, device=None, virtual_machine=None):
+        """Create one Service for scope-selection assertions."""
+        return Service.objects.create(
+            name=f"{name_prefix}-svc",
+            protocol="TCP",
+            ports=[8443],
+            device=device,
+            virtual_machine=virtual_machine,
+        )
+
     def test_device_scope_matches_engine_semantics(self):
         """Scoped device selection should match engine semantics for location filtering."""
         scoped_location = Location.objects.create(
@@ -656,6 +677,424 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                     _ = vm.tenant
                     _ = vm.primary_ip4
                     _ = vm.primary_ip6
+
+            query_counts.append(len(queries.captured_queries))
+
+        self.assertEqual(query_counts[0], query_counts[1])
+
+    def test_vminterface_scope_location_matches_engine_semantics(self):
+        """Scoped VMInterface selection should match engine semantics for location filtering."""
+        scoped_location = Location.objects.create(
+            name="Scope VMI Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        extra_location = Location.objects.create(
+            name="Scope VMI Extra Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        vm_in_scope = self._create_virtual_machine_only(
+            name_prefix="vmi-vm-in",
+            cluster_location=scoped_location,
+        )
+        vm_out_scope = self._create_virtual_machine_only(
+            name_prefix="vmi-vm-out",
+            cluster_location=self.location,
+        )
+        vm_out_scope_extra = self._create_virtual_machine_only(
+            name_prefix="vmi-vm-out-extra",
+            cluster_location=extra_location,
+        )
+        vmi_in_scope = self._create_vminterface_only(name_prefix="vmi-in", virtual_machine=vm_in_scope)
+        vmi_out_scope = self._create_vminterface_only(name_prefix="vmi-out", virtual_machine=vm_out_scope)
+        vmi_out_scope_extra = self._create_vminterface_only(
+            name_prefix="vmi-out-extra",
+            virtual_machine=vm_out_scope_extra,
+        )
+        created_vm_interfaces = [vmi_in_scope, vmi_out_scope, vmi_out_scope_extra]
+        location_ids = {scoped_location.id}
+
+        expected_ids = {vmi_in_scope.id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vm_interfaces, location_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="virtualization.vminterface",
+            location_ids=location_ids,
+        ) & {obj.id for obj in created_vm_interfaces}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_vminterface_scope_tenant_fallback_matches_engine_semantics(self):
+        """Scoped VMInterface selection should match engine semantics for tenant filtering."""
+        other_tenant = Tenant.objects.create(name="Scope VMI Other Tenant", tenant_group=self.tenant_group)
+        vm_fallback_in_scope = self._create_virtual_machine_only(
+            name_prefix="vmi-tenant-fallback-in",
+            cluster_location=self.location,
+            cluster_tenant=self.tenant,
+            vm_tenant=None,
+        )
+        vm_direct_in_scope = self._create_virtual_machine_only(
+            name_prefix="vmi-tenant-direct-in",
+            cluster_location=self.location,
+            cluster_tenant=other_tenant,
+            vm_tenant=self.tenant,
+        )
+        vm_fallback_out_scope = self._create_virtual_machine_only(
+            name_prefix="vmi-tenant-fallback-out",
+            cluster_location=self.location,
+            cluster_tenant=other_tenant,
+            vm_tenant=None,
+        )
+        vm_direct_out_scope = self._create_virtual_machine_only(
+            name_prefix="vmi-tenant-direct-out",
+            cluster_location=self.location,
+            cluster_tenant=self.tenant,
+            vm_tenant=other_tenant,
+        )
+        created_vm_interfaces = [
+            self._create_vminterface_only(name_prefix="vmi-tenant-fallback-in", virtual_machine=vm_fallback_in_scope),
+            self._create_vminterface_only(name_prefix="vmi-tenant-direct-in", virtual_machine=vm_direct_in_scope),
+            self._create_vminterface_only(name_prefix="vmi-tenant-fallback-out", virtual_machine=vm_fallback_out_scope),
+            self._create_vminterface_only(name_prefix="vmi-tenant-direct-out", virtual_machine=vm_direct_out_scope),
+        ]
+        location_ids = set()
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {created_vm_interfaces[0].id, created_vm_interfaces[1].id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vm_interfaces, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="virtualization.vminterface",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {obj.id for obj in created_vm_interfaces}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_vminterface_scope_location_and_tenant_matches_engine_semantics(self):
+        """Scoped VMInterface selection should match engine semantics for location+tenant filtering."""
+        scoped_location = Location.objects.create(
+            name="Scope VMI Location+Tenant",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        other_tenant = Tenant.objects.create(name="Scope VMI Combo Other Tenant", tenant_group=self.tenant_group)
+        vm_in_scope = self._create_virtual_machine_only(
+            name_prefix="vmi-combo-in",
+            cluster_location=scoped_location,
+            cluster_tenant=self.tenant,
+            vm_tenant=None,
+        )
+        vm_out_scope_location = self._create_virtual_machine_only(
+            name_prefix="vmi-combo-out-location",
+            cluster_location=self.location,
+            cluster_tenant=self.tenant,
+            vm_tenant=None,
+        )
+        vm_out_scope_tenant_fallback = self._create_virtual_machine_only(
+            name_prefix="vmi-combo-out-tenant-fallback",
+            cluster_location=scoped_location,
+            cluster_tenant=other_tenant,
+            vm_tenant=None,
+        )
+        vm_out_scope_tenant_override = self._create_virtual_machine_only(
+            name_prefix="vmi-combo-out-tenant-override",
+            cluster_location=scoped_location,
+            cluster_tenant=self.tenant,
+            vm_tenant=other_tenant,
+        )
+        vmi_in_scope = self._create_vminterface_only(name_prefix="vmi-combo-in", virtual_machine=vm_in_scope)
+        vmi_out_scope = [
+            self._create_vminterface_only(name_prefix="vmi-combo-out-location", virtual_machine=vm_out_scope_location),
+            self._create_vminterface_only(
+                name_prefix="vmi-combo-out-tenant-fallback",
+                virtual_machine=vm_out_scope_tenant_fallback,
+            ),
+            self._create_vminterface_only(
+                name_prefix="vmi-combo-out-tenant-override",
+                virtual_machine=vm_out_scope_tenant_override,
+            ),
+        ]
+        created_vm_interfaces = [vmi_in_scope] + vmi_out_scope
+        location_ids = {scoped_location.id}
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {vmi_in_scope.id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vm_interfaces, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="virtualization.vminterface",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {obj.id for obj in created_vm_interfaces}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_vminterface_target_queryset_avoids_n_plus_one(self):
+        """VMInterface target queryset should not emit per-object relation queries when iterated."""
+        job = ReconcileDNSBulkJob()
+        tenant = Tenant.objects.create(name="N+1 VMInterface Tenant", tenant_group=self.tenant_group)
+        prefix = "vmi-n-plus-one"
+        interface_counts = (2, 8)
+        query_counts = []
+
+        for count in interface_counts:
+            for index in range(count):
+                vm = self._create_virtual_machine_only(
+                    name_prefix=f"{prefix}-vm-{count}-{index}",
+                    cluster_location=self.location,
+                    cluster_tenant=tenant,
+                    vm_tenant=tenant,
+                )
+                vm_interface = self._create_vminterface_only(
+                    name_prefix=f"{prefix}-{count}-{index}",
+                    virtual_machine=vm,
+                )
+                vm_interface.ip_addresses.set([self.ip_addresses[0]])
+
+            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+                "virtualization.vminterface",
+                location_ids=set(),
+                tenant_ids=set(),
+            )
+            queryset = queryset.filter(name__startswith=f"{prefix}-{count}-").order_by("pk")
+
+            with CaptureQueriesContext(connection) as queries:
+                for vm_interface in queryset:
+                    _ = vm_interface.virtual_machine
+                    _ = vm_interface.virtual_machine.cluster
+                    _ = vm_interface.virtual_machine.cluster.location
+                    _ = vm_interface.virtual_machine.cluster.tenant
+                    _ = vm_interface.virtual_machine.tenant
+                    _ = list(vm_interface.ip_addresses.all())
+
+            query_counts.append(len(queries.captured_queries))
+
+        self.assertEqual(query_counts[0], query_counts[1])
+
+    def test_service_scope_location_matches_engine_semantics(self):
+        """Scoped Service selection should match engine semantics for location filtering."""
+        scoped_location = Location.objects.create(
+            name="Scope Service Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        extra_location = Location.objects.create(
+            name="Scope Service Extra Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+
+        device_in_scope = self._create_device_only(
+            name_prefix="service-device-in",
+            location=scoped_location,
+        )
+        device_out_scope = self._create_device_only(
+            name_prefix="service-device-out",
+            location=self.location,
+        )
+        vm_in_scope = self._create_virtual_machine_only(
+            name_prefix="service-vm-in",
+            cluster_location=scoped_location,
+        )
+        vm_out_scope = self._create_virtual_machine_only(
+            name_prefix="service-vm-out",
+            cluster_location=extra_location,
+        )
+        created_services = [
+            self._create_service_only(name_prefix="service-loc-in-device", device=device_in_scope),
+            self._create_service_only(name_prefix="service-loc-in-vm", virtual_machine=vm_in_scope),
+            self._create_service_only(name_prefix="service-loc-out-device", device=device_out_scope),
+            self._create_service_only(name_prefix="service-loc-out-vm", virtual_machine=vm_out_scope),
+        ]
+        location_ids = {scoped_location.id}
+
+        expected_ids = {created_services[0].id, created_services[1].id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_services, location_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="ipam.service",
+            location_ids=location_ids,
+        ) & {obj.id for obj in created_services}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_service_scope_tenant_matches_engine_semantics(self):
+        """Scoped Service selection should match engine semantics for tenant filtering."""
+        other_tenant = Tenant.objects.create(name="Scope Service Other Tenant", tenant_group=self.tenant_group)
+
+        device_in_scope = self._create_device_only(
+            name_prefix="service-tenant-device-in",
+            location=self.location,
+            tenant=self.tenant,
+        )
+        device_out_scope = self._create_device_only(
+            name_prefix="service-tenant-device-out",
+            location=self.location,
+            tenant=other_tenant,
+        )
+        vm_fallback_in_scope = self._create_virtual_machine_only(
+            name_prefix="service-tenant-vm-fallback-in",
+            cluster_location=self.location,
+            cluster_tenant=self.tenant,
+            vm_tenant=None,
+        )
+        vm_direct_in_scope = self._create_virtual_machine_only(
+            name_prefix="service-tenant-vm-direct-in",
+            cluster_location=self.location,
+            cluster_tenant=other_tenant,
+            vm_tenant=self.tenant,
+        )
+        vm_fallback_out_scope = self._create_virtual_machine_only(
+            name_prefix="service-tenant-vm-fallback-out",
+            cluster_location=self.location,
+            cluster_tenant=other_tenant,
+            vm_tenant=None,
+        )
+        vm_direct_out_scope = self._create_virtual_machine_only(
+            name_prefix="service-tenant-vm-direct-out",
+            cluster_location=self.location,
+            cluster_tenant=self.tenant,
+            vm_tenant=other_tenant,
+        )
+        created_services = [
+            self._create_service_only(name_prefix="service-tenant-device-in", device=device_in_scope),
+            self._create_service_only(name_prefix="service-tenant-device-out", device=device_out_scope),
+            self._create_service_only(name_prefix="service-tenant-vm-fallback-in", virtual_machine=vm_fallback_in_scope),
+            self._create_service_only(name_prefix="service-tenant-vm-direct-in", virtual_machine=vm_direct_in_scope),
+            self._create_service_only(name_prefix="service-tenant-vm-fallback-out", virtual_machine=vm_fallback_out_scope),
+            self._create_service_only(name_prefix="service-tenant-vm-direct-out", virtual_machine=vm_direct_out_scope),
+        ]
+        location_ids = set()
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {created_services[0].id, created_services[2].id, created_services[3].id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_services, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="ipam.service",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {obj.id for obj in created_services}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_service_scope_location_and_tenant_matches_engine_semantics(self):
+        """Scoped Service selection should match engine semantics for location+tenant filtering."""
+        scoped_location = Location.objects.create(
+            name="Scope Service Location+Tenant",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        other_tenant = Tenant.objects.create(name="Scope Service Combo Other Tenant", tenant_group=self.tenant_group)
+
+        device_in_scope = self._create_device_only(
+            name_prefix="service-combo-device-in",
+            location=scoped_location,
+            tenant=self.tenant,
+        )
+        device_out_scope_location = self._create_device_only(
+            name_prefix="service-combo-device-out-location",
+            location=self.location,
+            tenant=self.tenant,
+        )
+        device_out_scope_tenant = self._create_device_only(
+            name_prefix="service-combo-device-out-tenant",
+            location=scoped_location,
+            tenant=other_tenant,
+        )
+        vm_in_scope = self._create_virtual_machine_only(
+            name_prefix="service-combo-vm-in",
+            cluster_location=scoped_location,
+            cluster_tenant=self.tenant,
+            vm_tenant=None,
+        )
+        vm_out_scope_location = self._create_virtual_machine_only(
+            name_prefix="service-combo-vm-out-location",
+            cluster_location=self.location,
+            cluster_tenant=self.tenant,
+            vm_tenant=None,
+        )
+        vm_out_scope_tenant_fallback = self._create_virtual_machine_only(
+            name_prefix="service-combo-vm-out-tenant-fallback",
+            cluster_location=scoped_location,
+            cluster_tenant=other_tenant,
+            vm_tenant=None,
+        )
+        vm_out_scope_tenant_override = self._create_virtual_machine_only(
+            name_prefix="service-combo-vm-out-tenant-override",
+            cluster_location=scoped_location,
+            cluster_tenant=self.tenant,
+            vm_tenant=other_tenant,
+        )
+        created_services = [
+            self._create_service_only(name_prefix="service-combo-device-in", device=device_in_scope),
+            self._create_service_only(name_prefix="service-combo-device-out-location", device=device_out_scope_location),
+            self._create_service_only(name_prefix="service-combo-device-out-tenant", device=device_out_scope_tenant),
+            self._create_service_only(name_prefix="service-combo-vm-in", virtual_machine=vm_in_scope),
+            self._create_service_only(name_prefix="service-combo-vm-out-location", virtual_machine=vm_out_scope_location),
+            self._create_service_only(
+                name_prefix="service-combo-vm-out-tenant-fallback",
+                virtual_machine=vm_out_scope_tenant_fallback,
+            ),
+            self._create_service_only(
+                name_prefix="service-combo-vm-out-tenant-override",
+                virtual_machine=vm_out_scope_tenant_override,
+            ),
+        ]
+        location_ids = {scoped_location.id}
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {created_services[0].id, created_services[3].id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_services, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="ipam.service",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {obj.id for obj in created_services}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_service_target_queryset_avoids_n_plus_one(self):
+        """Service target queryset should not emit per-object relation queries when iterated."""
+        job = ReconcileDNSBulkJob()
+        tenant = Tenant.objects.create(name="N+1 Service Tenant", tenant_group=self.tenant_group)
+        prefix = "service-n-plus-one"
+        service_counts = (2, 8)
+        query_counts = []
+
+        for count in service_counts:
+            count_prefix = f"{prefix}-{count}"
+            for index in range(count):
+                device = self._create_device_only(
+                    name_prefix=f"{count_prefix}-device-{index}",
+                    location=self.location,
+                    tenant=tenant,
+                )
+                vm = self._create_virtual_machine_only(
+                    name_prefix=f"{count_prefix}-vm-{index}",
+                    cluster_location=self.location,
+                    cluster_tenant=tenant,
+                    vm_tenant=tenant,
+                )
+                self._create_service_only(name_prefix=f"{count_prefix}-device-{index}", device=device)
+                self._create_service_only(name_prefix=f"{count_prefix}-vm-{index}", virtual_machine=vm)
+
+            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+                "ipam.service",
+                location_ids=set(),
+                tenant_ids=set(),
+            )
+            queryset = queryset.filter(name__startswith=f"{count_prefix}-").order_by("pk")
+
+            with CaptureQueriesContext(connection) as queries:
+                for service in queryset:
+                    _ = service.device
+                    _ = service.virtual_machine
+                    if service.device:
+                        _ = service.device.location
+                        _ = service.device.tenant
+                    if service.virtual_machine:
+                        _ = service.virtual_machine.tenant
+                        _ = service.virtual_machine.cluster
+                        _ = service.virtual_machine.cluster.location
+                        _ = service.virtual_machine.cluster.tenant
 
             query_counts.append(len(queries.captured_queries))
 

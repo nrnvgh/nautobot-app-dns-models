@@ -10,7 +10,9 @@ class BulkScopeFilterBuilder:
     _MODEL_SCOPE_METHODS = {
         "dcim.device": "_apply_device",
         "dcim.interface": "_apply_interface",
+        "ipam.service": "_apply_service",
         "virtualization.virtualmachine": "_apply_virtualmachine",
+        "virtualization.vminterface": "_apply_vminterface",
     }
 
     def apply(self, model_label, queryset, *, location_ids, tenant_ids):
@@ -70,7 +72,54 @@ class BulkScopeFilterBuilder:
 
         if tenant_ids:
             # Engine parity: VM tenant overrides cluster tenant when set.
-            queryset = queryset.filter(Q(tenant_id__in=tenant_ids) | Q(tenant_id__isnull=True, cluster__tenant_id__in=tenant_ids))
+            queryset = queryset.filter(
+                Q(tenant_id__in=tenant_ids) | Q(tenant_id__isnull=True, cluster__tenant_id__in=tenant_ids)
+            )
+            used_scope_filter = True
+
+        return queryset, used_scope_filter
+
+    @staticmethod
+    def _apply_vminterface(queryset, *, location_ids, tenant_ids):
+        """Apply VM interface location/tenant filtering in SQL."""
+        used_scope_filter = False
+
+        if location_ids:
+            queryset = queryset.filter(virtual_machine__cluster__location_id__in=location_ids)
+            used_scope_filter = True
+
+        if tenant_ids:
+            # Engine parity: VM tenant overrides cluster tenant when set.
+            queryset = queryset.filter(
+                Q(virtual_machine__tenant_id__in=tenant_ids)
+                | Q(virtual_machine__tenant_id__isnull=True, virtual_machine__cluster__tenant_id__in=tenant_ids)
+            )
+            used_scope_filter = True
+
+        return queryset, used_scope_filter
+
+    @staticmethod
+    def _apply_service(queryset, *, location_ids, tenant_ids):
+        """Apply Service location/tenant filtering in SQL across device/VM attachment branches."""
+        used_scope_filter = False
+
+        if location_ids:
+            queryset = queryset.filter(
+                Q(device__location_id__in=location_ids)
+                | Q(device_id__isnull=True, virtual_machine__cluster__location_id__in=location_ids)
+            )
+            used_scope_filter = True
+
+        if tenant_ids:
+            queryset = queryset.filter(
+                Q(device__tenant_id__in=tenant_ids)
+                | Q(device_id__isnull=True, virtual_machine__tenant_id__in=tenant_ids)
+                | Q(
+                    device_id__isnull=True,
+                    virtual_machine__tenant_id__isnull=True,
+                    virtual_machine__cluster__tenant_id__in=tenant_ids,
+                )
+            )
             used_scope_filter = True
 
         return queryset, used_scope_filter
