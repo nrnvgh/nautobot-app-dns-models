@@ -6,6 +6,8 @@ from unittest.mock import call, patch
 
 import jsonschema
 from django.contrib.contenttypes.models import ContentType
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from nautobot.apps.testing import TransactionTestCase, create_job_result_and_run_job
 from nautobot.dcim.models import Device, DeviceBay, Interface, Location, Module, ModuleBay, ModuleType
 from nautobot.extras.choices import JobResultStatusChoices
@@ -357,12 +359,13 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         )
         return {obj.id for _, obj in selected_targets}
 
-    def _create_device_with_interface(self, *, name_prefix, location):
+    def _create_device_with_interface(self, *, name_prefix, location, tenant=None):
         """Create one device and one interface for scope-selection assertions."""
         device = Device.objects.create(
             name=f"{name_prefix}-device",
             device_type=self.device_type,
             location=location,
+            tenant=tenant,
             role=self.device_role,
             status=self.device_status,
         )
@@ -374,12 +377,13 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         )
         return interface
 
-    def _create_device_only(self, *, name_prefix, location):
+    def _create_device_only(self, *, name_prefix, location, tenant=None):
         """Create one device for scope-selection assertions."""
         return Device.objects.create(
             name=f"{name_prefix}-device-only",
             device_type=self.device_type,
             location=location,
+            tenant=tenant,
             role=self.device_role,
             status=self.device_status,
         )
@@ -431,6 +435,112 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertSetEqual(actual_ids, expected_ids)
         self.assertSetEqual(actual_ids, expected_ids_from_engine)
 
+    def test_device_scope_tenant_matches_engine_semantics(self):
+        """Scoped device selection should match engine semantics for tenant filtering."""
+        other_tenant = Tenant.objects.create(name="Scope Device Other Tenant", tenant_group=self.tenant_group)
+        devices_in_scope = [
+            self._create_device_only(name_prefix="device-tenant-in-1", location=self.location, tenant=self.tenant),
+            self._create_device_only(name_prefix="device-tenant-in-2", location=self.location, tenant=self.tenant),
+        ]
+        devices_out_scope = [
+            self._create_device_only(name_prefix="device-tenant-out-1", location=self.location, tenant=other_tenant),
+            self._create_device_only(name_prefix="device-tenant-out-2", location=self.location, tenant=None),
+        ]
+        created_devices = devices_in_scope + devices_out_scope
+        location_ids = set()
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {obj.id for obj in devices_in_scope}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_devices, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="dcim.device",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {obj.id for obj in created_devices}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_device_scope_location_and_tenant_matches_engine_semantics(self):
+        """Scoped device selection should match engine semantics for location+tenant filtering."""
+        scoped_location = Location.objects.create(
+            name="Scope Device Location+Tenant",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        other_tenant = Tenant.objects.create(name="Scope Device Combo Other Tenant", tenant_group=self.tenant_group)
+        in_scope = self._create_device_only(
+            name_prefix="device-combo-in",
+            location=scoped_location,
+            tenant=self.tenant,
+        )
+        out_scope = [
+            self._create_device_only(
+                name_prefix="device-combo-out-location",
+                location=self.location,
+                tenant=self.tenant,
+            ),
+            self._create_device_only(
+                name_prefix="device-combo-out-tenant",
+                location=scoped_location,
+                tenant=other_tenant,
+            ),
+            self._create_device_only(
+                name_prefix="device-combo-out-none",
+                location=scoped_location,
+                tenant=None,
+            ),
+        ]
+        created_devices = [in_scope] + out_scope
+        location_ids = {scoped_location.id}
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {in_scope.id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_devices, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="dcim.device",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {obj.id for obj in created_devices}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_device_target_queryset_avoids_n_plus_one(self):
+        """Device target queryset should not emit per-object relation queries when iterated."""
+        job = ReconcileDNSBulkJob()
+        tenant = Tenant.objects.create(name="N+1 Device Tenant", tenant_group=self.tenant_group)
+        prefix = "device-n-plus-one"
+        device_counts = (2, 8)
+        query_counts = []
+
+        for count in device_counts:
+            for index in range(count):
+                device = self._create_device_only(
+                    name_prefix=f"{prefix}-{count}-{index}",
+                    location=self.location,
+                    tenant=tenant,
+                )
+                device.primary_ip4 = self.ip_addresses[0]
+                device.primary_ip6 = self.ipv6_addresses[0]
+                device.save(update_fields=["primary_ip4", "primary_ip6"])
+
+            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+                "dcim.device",
+                location_ids=set(),
+                tenant_ids=set(),
+            )
+            queryset = queryset.filter(name__startswith=f"{prefix}-{count}-").order_by("pk")
+
+            with CaptureQueriesContext(connection) as queries:
+                for device in queryset:
+                    _ = device.location
+                    _ = device.tenant
+                    _ = device.primary_ip4
+                    _ = device.primary_ip6
+
+            query_counts.append(len(queries.captured_queries))
+
+        self.assertEqual(query_counts[0], query_counts[1])
+
     def test_virtualmachine_scope_location_matches_engine_semantics(self):
         """Scoped VM selection should match engine semantics for location filtering."""
         scoped_location = Location.objects.create(
@@ -461,6 +571,95 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         }
         self.assertSetEqual(actual_ids, expected_ids)
         self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_virtualmachine_scope_location_and_tenant_matches_engine_semantics(self):
+        """Scoped VM selection should match engine semantics for location+tenant filtering."""
+        scoped_location = Location.objects.create(
+            name="Scope VM Location+Tenant",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        other_tenant = Tenant.objects.create(name="Scope VM Combo Other Tenant", tenant_group=self.tenant_group)
+        vm_in_scope = self._create_virtual_machine_only(
+            name_prefix="vm-combo-in",
+            cluster_location=scoped_location,
+            cluster_tenant=self.tenant,
+            vm_tenant=None,
+        )
+        vm_out_scope = [
+            self._create_virtual_machine_only(
+                name_prefix="vm-combo-out-location",
+                cluster_location=self.location,
+                cluster_tenant=self.tenant,
+                vm_tenant=None,
+            ),
+            self._create_virtual_machine_only(
+                name_prefix="vm-combo-out-tenant-fallback",
+                cluster_location=scoped_location,
+                cluster_tenant=other_tenant,
+                vm_tenant=None,
+            ),
+            self._create_virtual_machine_only(
+                name_prefix="vm-combo-out-tenant-override",
+                cluster_location=scoped_location,
+                cluster_tenant=self.tenant,
+                vm_tenant=other_tenant,
+            ),
+        ]
+        created_vms = [vm_in_scope] + vm_out_scope
+        location_ids = {scoped_location.id}
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {vm_in_scope.id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vms, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="virtualization.virtualmachine",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {obj.id for obj in created_vms}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_virtualmachine_target_queryset_avoids_n_plus_one(self):
+        """VM target queryset should not emit per-object relation queries when iterated."""
+        job = ReconcileDNSBulkJob()
+        tenant = Tenant.objects.create(name="N+1 VM Tenant", tenant_group=self.tenant_group)
+        prefix = "vm-n-plus-one"
+        vm_counts = (2, 8)
+        query_counts = []
+
+        for count in vm_counts:
+            for index in range(count):
+                vm = self._create_virtual_machine_only(
+                    name_prefix=f"{prefix}-{count}-{index}",
+                    cluster_location=self.location,
+                    cluster_tenant=tenant,
+                    vm_tenant=tenant,
+                )
+                vm.primary_ip4 = self.ip_addresses[0]
+                vm.primary_ip6 = self.ipv6_addresses[0]
+                vm.save(update_fields=["primary_ip4", "primary_ip6"])
+
+            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+                "virtualization.virtualmachine",
+                location_ids=set(),
+                tenant_ids=set(),
+            )
+            queryset = queryset.filter(name__startswith=f"{prefix}-{count}-").order_by("pk")
+
+            with CaptureQueriesContext(connection) as queries:
+                for vm in queryset:
+                    # Exercise the relation paths used by scope and reconcile flows.
+                    _ = vm.cluster
+                    _ = vm.cluster.location
+                    _ = vm.cluster.tenant
+                    _ = vm.tenant
+                    _ = vm.primary_ip4
+                    _ = vm.primary_ip6
+
+            query_counts.append(len(queries.captured_queries))
+
+        self.assertEqual(query_counts[0], query_counts[1])
 
     def test_virtualmachine_scope_tenant_fallback_matches_engine_semantics(self):
         """Scoped VM selection should match engine semantics for VM-tenant fallback behavior."""
@@ -611,6 +810,116 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         }
         self.assertSetEqual(actual_ids, expected_ids)
         self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_interface_scope_plain_device_tenant_matches_engine_semantics(self):
+        """Scoped interface selection should match engine semantics for tenant filtering."""
+        other_tenant = Tenant.objects.create(name="Scope Interface Other Tenant", tenant_group=self.tenant_group)
+        interface_in_scope = self._create_device_with_interface(
+            name_prefix="plain-tenant-in",
+            location=self.location,
+            tenant=self.tenant,
+        )
+        interface_out_scope = self._create_device_with_interface(
+            name_prefix="plain-tenant-out",
+            location=self.location,
+            tenant=other_tenant,
+        )
+        interface_out_scope_none = self._create_device_with_interface(
+            name_prefix="plain-tenant-out-none",
+            location=self.location,
+            tenant=None,
+        )
+        created_interfaces = [interface_in_scope, interface_out_scope, interface_out_scope_none]
+        location_ids = set()
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {interface_in_scope.id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="dcim.interface",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {interface.id for interface in created_interfaces}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_interface_scope_plain_device_location_and_tenant_matches_engine_semantics(self):
+        """Scoped interface selection should match engine semantics for location+tenant filtering."""
+        scoped_location = Location.objects.create(
+            name="Scope Interface Location+Tenant",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        other_tenant = Tenant.objects.create(name="Scope Interface Combo Other Tenant", tenant_group=self.tenant_group)
+        interface_in_scope = self._create_device_with_interface(
+            name_prefix="plain-combo-in",
+            location=scoped_location,
+            tenant=self.tenant,
+        )
+        interface_out_scope = [
+            self._create_device_with_interface(
+                name_prefix="plain-combo-out-location",
+                location=self.location,
+                tenant=self.tenant,
+            ),
+            self._create_device_with_interface(
+                name_prefix="plain-combo-out-tenant",
+                location=scoped_location,
+                tenant=other_tenant,
+            ),
+            self._create_device_with_interface(
+                name_prefix="plain-combo-out-none",
+                location=scoped_location,
+                tenant=None,
+            ),
+        ]
+        created_interfaces = [interface_in_scope] + interface_out_scope
+        location_ids = {scoped_location.id}
+        tenant_ids = {self.tenant.id}
+
+        expected_ids = {interface_in_scope.id}
+        expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids, tenant_ids)
+        actual_ids = self._scope_actual_ids(
+            target_label="dcim.interface",
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        ) & {interface.id for interface in created_interfaces}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_interface_target_queryset_avoids_n_plus_one(self):
+        """Interface target queryset should not emit per-object relation queries when iterated."""
+        job = ReconcileDNSBulkJob()
+        tenant = Tenant.objects.create(name="N+1 Interface Tenant", tenant_group=self.tenant_group)
+        prefix = "interface-n-plus-one"
+        interface_counts = (2, 8)
+        query_counts = []
+
+        for count in interface_counts:
+            for index in range(count):
+                self._create_device_with_interface(
+                    name_prefix=f"{prefix}-{count}-{index}",
+                    location=self.location,
+                    tenant=tenant,
+                )
+
+            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+                "dcim.interface",
+                location_ids=set(),
+                tenant_ids=set(),
+            )
+            queryset = queryset.filter(name__startswith=f"{prefix}-{count}-").order_by("pk")
+
+            with CaptureQueriesContext(connection) as queries:
+                for interface in queryset:
+                    _ = interface.device
+                    _ = interface.device.location
+                    _ = interface.device.tenant
+                    _ = list(interface.ip_addresses.all())
+
+            query_counts.append(len(queries.captured_queries))
+
+        self.assertEqual(query_counts[0], query_counts[1])
 
     def test_interface_scope_child_device_matches_engine_semantics(self):
         """Scoped interface selection should match engine semantics for child-device interfaces."""

@@ -274,6 +274,10 @@ class _ReconcileDNSJobMixin:
                 "ip_addresses"
             )
 
+        if model_label == "virtualization.virtualmachine":
+            # VM scope/engine paths repeatedly dereference tenant/location fallback and primary IPs.
+            return queryset.select_related("cluster", "cluster__location", "cluster__tenant", "tenant", "primary_ip4", "primary_ip6")
+
         return queryset
 
     def _process_targets(self, targets, *, dryrun, location_ids, tenant_ids, limit, batch_size):
