@@ -7,8 +7,9 @@ from unittest.mock import call, patch
 import jsonschema
 from django.contrib.contenttypes.models import ContentType
 from nautobot.apps.testing import TransactionTestCase, create_job_result_and_run_job
-from nautobot.dcim.models import Device, Interface
+from nautobot.dcim.models import Device, Interface, Location
 from nautobot.extras.choices import JobResultStatusChoices
+from nautobot.ipam.models import IPAddress, Prefix
 
 from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob
 from nautobot_dns_models.models import DNSRule
@@ -211,3 +212,86 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             source_models=["not_a_real.contenttype"],
         )
         self.assertJobResultStatus(job_result, JobResultStatusChoices.STATUS_FAILURE)
+
+    def test_bulk_location_scope_updates_all_interfaces_in_scoped_location(self):
+        """Location-scoped reconcile should update all matching interfaces, not only early PK window rows."""
+        self.interface_rule.enabled = False
+        self.interface_rule.save(update_fields=["enabled"])
+
+        scoped_location = Location.objects.create(
+            name="Scoped Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        benchmark_prefix = Prefix.objects.create(
+            network="10.200.0.0",
+            prefix_length=24,
+            namespace=self.namespace,
+            status=self.prefix_status,
+        )
+
+        all_interfaces = []
+        for device_index in range(3):
+            device_location = scoped_location if device_index == 2 else self.location
+            device = Device.objects.create(
+                name=f"scope-device-{device_index}",
+                device_type=self.device_type,
+                location=device_location,
+                role=self.device_role,
+                status=self.device_status,
+            )
+            for interface_index in range(8):
+                interface = Interface.objects.create(
+                    name=f"eth{interface_index}",
+                    device=device,
+                    type=self.interface.type,
+                    status=self.interface_status,
+                )
+                all_interfaces.append(interface)
+
+        for address_host, interface in enumerate(all_interfaces, start=1):
+            ip_address = IPAddress.objects.create(
+                address=f"10.200.0.{address_host}/24",
+                status=self.ip_status,
+                namespace=self.namespace,
+                parent=benchmark_prefix,
+            )
+            interface.ip_addresses.set([ip_address])
+
+        scoped_rule = DNSRule.objects.create(
+            name="scope-arecord-rule",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.device.name }}-{{ obj.name }}-base",
+            value_template="{{ obj.ip_addresses.first() }}",
+        )
+        scoped_interfaces = Interface.objects.filter(device__location=scoped_location).order_by("pk")
+        self.assertEqual(scoped_interfaces.count(), 8)
+
+        # Prime DNSRuleRecord rows so the second run is a true update-path reconcile.
+        primer = ReconcileDNSBulkJob().run(
+            dryrun=False,
+            source_models=["dcim.interface"],
+            rules=[scoped_rule],
+            locations=[scoped_location],
+            limit=None,
+            batch_size=1000,
+        )
+        self.assertEqual(primer["execution"]["targets_seen"], 8)
+
+        scoped_rule.name_template = "{{ obj.device.name }}-{{ obj.name }}-updated"
+        scoped_rule.save()
+
+        # Limit is intentionally smaller than total interfaces so this exercises in-scope limit semantics.
+        result = ReconcileDNSBulkJob().run(
+            dryrun=False,
+            source_models=["dcim.interface"],
+            rules=[scoped_rule],
+            locations=[scoped_location],
+            limit=20,
+            batch_size=1000,
+        )
+        self.assertEqual(result["execution"]["targets_seen"], 8)
+        self.assertEqual(result["execution"]["processed_count"], 8)
+        self.assertEqual(result["reconciliation"]["objects_changed"], 8)

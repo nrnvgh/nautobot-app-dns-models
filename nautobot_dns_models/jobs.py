@@ -209,9 +209,14 @@ class _ReconcileDNSJobMixin:
         target_labels,
         batch_size,
         limit=None,
+        location_ids=None,
+        tenant_ids=None,
     ):
         """Yield `(model_label, object)` pairs for reconciliation."""
-        remaining = limit
+        # `limit` is defined as maximum in-scope objects. If scope filters are active,
+        # enforce the limit downstream after in-scope checks rather than pre-slicing here.
+        apply_pre_slice_limit = not (location_ids or tenant_ids)
+        remaining = limit if apply_pre_slice_limit else None
         for model_label in target_labels:
             if remaining is not None and remaining <= 0:
                 break
@@ -355,6 +360,7 @@ class _ReconcileDNSJobMixin:
 
             if dryrun:
                 self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
+
         return targets_in_scope
 
     def _process_pipeline_target_batch(
@@ -534,7 +540,13 @@ class ReconcileDNSBulkJob(_ReconcileDNSJobMixin, Job):
             }
 
         target_labels = self._resolve_target_models(selected_rules=rules, selected_model_labels=selected_model_labels)
-        targets = self._iter_targets(target_labels=target_labels, batch_size=batch_size, limit=limit)
+        targets = self._iter_targets(
+            target_labels=target_labels,
+            batch_size=batch_size,
+            limit=limit,
+            location_ids=location_ids,
+            tenant_ids=tenant_ids,
+        )
         summary = ReconcileRunSummary()
         summary.scanned_model_labels.update(target_labels)
         try:
