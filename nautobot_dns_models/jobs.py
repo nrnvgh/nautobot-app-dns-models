@@ -19,6 +19,7 @@ from nautobot.apps.jobs import (
     StringVar,
     register_jobs,
 )
+from nautobot.dcim.constants import MODULE_RECURSION_DEPTH_LIMIT
 from nautobot.dcim.models import Location
 from nautobot.tenancy.models import Tenant
 
@@ -106,6 +107,11 @@ class ReconcileRunSummary:
 
 class _ReconcileDNSJobMixin:
     """Shared reconciliation helpers for bulk and object jobs."""
+
+    @staticmethod
+    def _limit_reached(summary, limit):
+        """Return whether in-scope processing limit has been reached."""
+        return bool(limit) and summary.targets_seen >= limit
 
     @staticmethod
     def _normalize_model_labels(source_models):
@@ -212,17 +218,26 @@ class _ReconcileDNSJobMixin:
         location_ids=None,
         tenant_ids=None,
     ):
-        """Yield `(model_label, object)` pairs for reconciliation."""
-        # `limit` is defined as maximum in-scope objects. If scope filters are active,
-        # enforce the limit downstream after in-scope checks rather than pre-slicing here.
-        apply_pre_slice_limit = not (location_ids or tenant_ids)
-        remaining = limit if apply_pre_slice_limit else None
+        """Yield `(model_label, object, used_sql_scope_filtering)` tuples for reconciliation."""
+        # `limit` means maximum in-scope objects.
+        # For scoped runs, avoid pre-slicing here so in-scope enforcement happens
+        # downstream after scope evaluation (SQL-backed for mapped models and
+        # Python-backed for fallback models).
+        remaining = limit if not (location_ids or tenant_ids) else None
+        location_ids = location_ids or set()
+        tenant_ids = tenant_ids or set()
         for model_label in target_labels:
             if remaining is not None and remaining <= 0:
                 break
 
             model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
             queryset = model_class.objects.order_by("pk")
+            queryset, used_sql_scope_filtering = self._apply_bulk_queryset_scope_filters(
+                model_label=model_label,
+                queryset=queryset,
+                location_ids=location_ids,
+                tenant_ids=tenant_ids,
+            )
             if model_label == "dcim.interface":
                 # Fast-path bulk runs repeatedly dereference device tenant/location.
                 # Load them in the base interface query to reduce per-object SQL chatter.
@@ -234,11 +249,48 @@ class _ReconcileDNSJobMixin:
                 queryset = queryset[:remaining]
 
             for obj in queryset.iterator(chunk_size=batch_size):
-                yield model_label, obj
+                yield model_label, obj, used_sql_scope_filtering
                 if remaining is not None:
                     remaining -= 1
                     if remaining <= 0:
                         break
+
+    def _apply_bulk_queryset_scope_filters(self, model_label, queryset, *, location_ids, tenant_ids):
+        """Apply known-safe bulk scope filters directly in SQL."""
+        if model_label != "dcim.interface":
+            return queryset, False
+
+        scope_filter = Q()
+        used_scope_filter = False
+
+        if location_ids:
+            used_scope_filter = True
+            scope_filter &= self._build_interface_parent_device_filter("location_id", location_ids)
+
+        if tenant_ids:
+            used_scope_filter = True
+            tenant_filter = self._build_interface_parent_device_filter("tenant_id", tenant_ids)
+            # Engine behavior prefers module tenant when present for module-backed interfaces.
+            tenant_filter |= Q(module__tenant_id__in=tenant_ids)
+            scope_filter &= tenant_filter
+
+        if not used_scope_filter:
+            return queryset, False
+
+        queryset = queryset.filter(scope_filter)
+        return queryset, True
+
+    @staticmethod
+    def _build_interface_parent_device_filter(field_name, values):
+        """Build bounded recursive filter from interface to parent device fields."""
+
+        # Copied from nautobot.dcim.filters.mixins.ModularDeviceComponentFilterSetMixin.generate_query_filter_device()
+        recursion_depth = max(0, MODULE_RECURSION_DEPTH_LIMIT - 1)
+        query = Q(**{f"device__{field_name}__in": values})
+        for level in range(recursion_depth):
+            recursive_path = "module__parent_module_bay__" + "parent_module__parent_module_bay__" * level
+            query |= Q(**{f"{recursive_path}parent_device__{field_name}__in": values})
+        return query
 
     def _process_targets(self, targets, *, dryrun, location_ids, tenant_ids, limit, batch_size):
         """Process target iterator and return aggregated execution/reconciliation summary."""
@@ -247,6 +299,8 @@ class _ReconcileDNSJobMixin:
 
         object_batch = []
         for model_label, obj in targets:
+            if self._limit_reached(summary, limit):
+                break
             object_batch.append((model_label, obj))
             if len(object_batch) >= batch_size:
                 self._process_target_batch(
@@ -260,10 +314,7 @@ class _ReconcileDNSJobMixin:
                 )
                 object_batch = []
 
-            if limit and summary.targets_seen >= limit:
-                break
-
-        if object_batch and (not limit or summary.targets_seen < limit):
+        if object_batch and not self._limit_reached(summary, limit):
             self._process_target_batch(
                 object_batch,
                 summary=summary,
@@ -290,7 +341,7 @@ class _ReconcileDNSJobMixin:
         """Process one buffered target batch."""
         targets_in_scope = []
         for model_label, obj in object_batch:
-            if limit and summary.targets_seen >= limit:
+            if self._limit_reached(summary, limit):
                 break
 
             if location_ids:
@@ -339,17 +390,17 @@ class _ReconcileDNSJobMixin:
     ):
         """Apply scope filters and return in-scope pipeline targets."""
         targets_in_scope = []
-        for model_label, obj in object_batch:
-            if limit and summary.targets_seen >= limit:
+        for model_label, obj, used_sql_scope_filtering in object_batch:
+            if self._limit_reached(summary, limit):
                 break
 
-            if location_ids:
+            if not used_sql_scope_filtering and location_ids:
                 object_location = selected_engine._get_object_location(obj)  # pylint: disable=protected-access
                 if object_location is None or object_location.id not in location_ids:
                     summary.mark_scope_skipped()
                     continue
 
-            if tenant_ids:
+            if not used_sql_scope_filtering and tenant_ids:
                 object_tenant = selected_engine._get_object_tenant(obj)  # pylint: disable=protected-access
                 if object_tenant is None or object_tenant.id not in tenant_ids:
                     summary.mark_scope_skipped()
@@ -608,8 +659,10 @@ class ReconcileDNSBulkJob(_ReconcileDNSJobMixin, Job):
     ):
         """Process iterator of targets as full batches plus one trailing flush."""
         object_batch = []
-        for model_label, obj in targets:
-            object_batch.append((model_label, obj))
+        for model_label, obj, used_sql_scope_filtering in targets:
+            if self._limit_reached(summary, limit):
+                break
+            object_batch.append((model_label, obj, used_sql_scope_filtering))
             if len(object_batch) >= batch_size:
                 self._process_pipeline_target_batch(
                     object_batch,
@@ -622,11 +675,8 @@ class ReconcileDNSBulkJob(_ReconcileDNSJobMixin, Job):
                 )
                 object_batch = []
 
-            if limit and summary.targets_seen >= limit:
-                break
-
         # Process the last batch if it exists and is within the limit.
-        if object_batch and (not limit or summary.targets_seen < limit):
+        if object_batch and not self._limit_reached(summary, limit):
             self._process_pipeline_target_batch(
                 object_batch,
                 summary=summary,

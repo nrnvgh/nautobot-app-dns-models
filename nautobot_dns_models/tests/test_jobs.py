@@ -7,12 +7,14 @@ from unittest.mock import call, patch
 import jsonschema
 from django.contrib.contenttypes.models import ContentType
 from nautobot.apps.testing import TransactionTestCase, create_job_result_and_run_job
-from nautobot.dcim.models import Device, Interface, Location
+from nautobot.dcim.models import Device, DeviceBay, Interface, Location, Module, ModuleBay, ModuleType
 from nautobot.extras.choices import JobResultStatusChoices
+from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Prefix
 
-from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob
+from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileRunSummary
 from nautobot_dns_models.models import DNSRule
+from nautobot_dns_models.rules.engine_selector import get_rule_engine
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
 
@@ -295,3 +297,276 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["execution"]["targets_seen"], 8)
         self.assertEqual(result["execution"]["processed_count"], 8)
         self.assertEqual(result["reconciliation"]["objects_changed"], 8)
+
+class InterfaceScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
+    """Validate interface scope selection for device and module topologies."""
+
+    @classmethod
+    def setUpTestData(cls):
+        """Set up fixtures required for interface scope selection tests."""
+        super().setUpTestData()
+        cls.interface.ip_addresses.set([cls.ip_addresses[0]])
+
+    def setUp(self):
+        """Rebuild fixtures per test under TransactionTestCase semantics."""
+        TransactionTestCase.setUp(self)
+        type(self).setUpTestData()
+        BaseRuleEngineMixin.setUp(self)
+
+    @staticmethod
+    def _interface_scope_expected_ids_from_engine(interfaces, location_ids):
+        """Return expected interface IDs via engine location-resolution semantics."""
+        selected_engine = get_rule_engine()
+        expected_ids = set()
+        for interface in interfaces:
+            object_location = selected_engine._get_object_location(interface)  # pylint: disable=protected-access
+            if object_location is not None and object_location.id in location_ids:
+                expected_ids.add(interface.id)
+        return expected_ids
+
+    def _interface_scope_actual_ids(self, location_ids):
+        """Return interface IDs selected by the bulk job scope pipeline path."""
+        job = ReconcileDNSBulkJob()
+        selected_engine = get_rule_engine()
+        summary = ReconcileRunSummary()
+        targets = list(
+            job._iter_targets(  # pylint: disable=protected-access
+                target_labels=["dcim.interface"],
+                batch_size=1000,
+                limit=20000,
+                location_ids=location_ids,
+                tenant_ids=set(),
+            )
+        )
+        selected_targets = job._build_pipeline_in_scope_targets(  # pylint: disable=protected-access
+            targets,
+            summary=summary,
+            selected_engine=selected_engine,
+            dryrun=True,
+            location_ids=location_ids,
+            tenant_ids=set(),
+            limit=20000,
+        )
+        return {obj.id for _, obj in selected_targets}
+
+    def _create_device_with_interface(self, *, name_prefix, location):
+        """Create one device and one interface for scope-selection assertions."""
+        device = Device.objects.create(
+            name=f"{name_prefix}-device",
+            device_type=self.device_type,
+            location=location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        interface = Interface.objects.create(
+            name=f"{name_prefix}-eth0",
+            device=device,
+            type=self.interface.type,
+            status=self.interface_status,
+        )
+        return interface
+
+    def _create_child_device_with_interface(self, *, name_prefix, parent_device, location):
+        """Create one child device installed in parent device bay and one interface."""
+        child_device = Device.objects.create(
+            name=f"{name_prefix}-child-device",
+            device_type=self.device_type,
+            location=location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        device_bay = DeviceBay.objects.create(
+            device=parent_device,
+            name=f"{name_prefix}-bay0",
+            installed_device=child_device,
+        )
+        # Ensure relation assignment is materialized before creating interface assertions.
+        self.assertEqual(device_bay.installed_device_id, child_device.id)
+        interface = Interface.objects.create(
+            name=f"{name_prefix}-child-eth0",
+            device=child_device,
+            type=self.interface.type,
+            status=self.interface_status,
+        )
+        return interface
+
+    def _create_module_interface(self, *, name_prefix, parent_device):
+        """Create one module on device and one module-backed interface."""
+        module_status = Status.objects.get_for_model(Module).first()
+        module_type = ModuleType.objects.create(
+            manufacturer=self.manufacturer,
+            model=f"{name_prefix}-module-type",
+        )
+        root_bay = ModuleBay.objects.create(
+            parent_device=parent_device,
+            name=f"{name_prefix}-module-bay0",
+        )
+        module = Module.objects.create(
+            module_type=module_type,
+            parent_module_bay=root_bay,
+            status=module_status,
+        )
+        interface = Interface.objects.create(
+            name=f"{name_prefix}-module-eth0",
+            module=module,
+            device=None,
+            type=self.interface.type,
+            status=self.interface_status,
+        )
+        return interface
+
+    def _create_nested_module_interface(self, *, name_prefix, parent_device):
+        """Create module-in-module topology and one nested module-backed interface."""
+        module_status = Status.objects.get_for_model(Module).first()
+        module_type = ModuleType.objects.create(
+            manufacturer=self.manufacturer,
+            model=f"{name_prefix}-nested-module-type",
+        )
+        root_bay = ModuleBay.objects.create(
+            parent_device=parent_device,
+            name=f"{name_prefix}-root-bay",
+        )
+        root_module = Module.objects.create(
+            module_type=module_type,
+            parent_module_bay=root_bay,
+            status=module_status,
+        )
+        nested_bay = ModuleBay.objects.create(
+            parent_module=root_module,
+            name=f"{name_prefix}-nested-bay",
+        )
+        nested_module = Module.objects.create(
+            module_type=module_type,
+            parent_module_bay=nested_bay,
+            status=module_status,
+        )
+        interface = Interface.objects.create(
+            name=f"{name_prefix}-nested-module-eth0",
+            module=nested_module,
+            device=None,
+            type=self.interface.type,
+            status=self.interface_status,
+        )
+        return interface
+
+    def test_interface_scope_plain_device_matches_engine_semantics(self):
+        """Scoped interface selection should match engine semantics for plain device interfaces."""
+        scoped_location = Location.objects.create(
+            name="Scope Plain Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        interface_in_scope = self._create_device_with_interface(name_prefix="plain-in", location=scoped_location)
+        interface_out_scope = self._create_device_with_interface(name_prefix="plain-out", location=self.location)
+        created_interfaces = [interface_in_scope, interface_out_scope]
+        location_ids = {scoped_location.id}
+
+        expected_ids = {interface_in_scope.id}
+        expected_ids_from_engine = self._interface_scope_expected_ids_from_engine(created_interfaces, location_ids)
+        actual_ids = self._interface_scope_actual_ids(location_ids) & {interface.id for interface in created_interfaces}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_interface_scope_child_device_matches_engine_semantics(self):
+        """Scoped interface selection should match engine semantics for child-device interfaces."""
+        scoped_location = Location.objects.create(
+            name="Scope Child Device Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        parent_device = Device.objects.create(
+            name="child-parent-device",
+            device_type=self.device_type,
+            location=scoped_location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        child_in_scope = self._create_child_device_with_interface(
+            name_prefix="child-in", parent_device=parent_device, location=scoped_location
+        )
+        parent_device_out = Device.objects.create(
+            name="child-parent-device-out",
+            device_type=self.device_type,
+            location=self.location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        child_out_scope = self._create_child_device_with_interface(
+            name_prefix="child-out", parent_device=parent_device_out, location=self.location
+        )
+        created_interfaces = [child_in_scope, child_out_scope]
+        location_ids = {scoped_location.id}
+
+        expected_ids = {child_in_scope.id}
+        expected_ids_from_engine = self._interface_scope_expected_ids_from_engine(created_interfaces, location_ids)
+        actual_ids = self._interface_scope_actual_ids(location_ids) & {interface.id for interface in created_interfaces}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_interface_scope_module_on_device_matches_engine_semantics(self):
+        """Scoped interface selection should match engine semantics for module-backed interfaces on a device."""
+        scoped_location = Location.objects.create(
+            name="Scope Module Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        parent_device_in = Device.objects.create(
+            name="module-parent-in",
+            device_type=self.device_type,
+            location=scoped_location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        parent_device_out = Device.objects.create(
+            name="module-parent-out",
+            device_type=self.device_type,
+            location=self.location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        module_in_scope = self._create_module_interface(name_prefix="module-in", parent_device=parent_device_in)
+        module_out_scope = self._create_module_interface(name_prefix="module-out", parent_device=parent_device_out)
+        created_interfaces = [module_in_scope, module_out_scope]
+        location_ids = {scoped_location.id}
+
+        expected_ids = {module_in_scope.id}
+        expected_ids_from_engine = self._interface_scope_expected_ids_from_engine(created_interfaces, location_ids)
+        actual_ids = self._interface_scope_actual_ids(location_ids) & {interface.id for interface in created_interfaces}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+    def test_interface_scope_module_on_module_matches_engine_semantics(self):
+        """Scoped interface selection should match engine semantics for nested module-backed interfaces."""
+        scoped_location = Location.objects.create(
+            name="Scope Nested Module Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        parent_device_in = Device.objects.create(
+            name="nested-module-parent-in",
+            device_type=self.device_type,
+            location=scoped_location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        parent_device_out = Device.objects.create(
+            name="nested-module-parent-out",
+            device_type=self.device_type,
+            location=self.location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        nested_in_scope = self._create_nested_module_interface(
+            name_prefix="nested-module-in", parent_device=parent_device_in
+        )
+        nested_out_scope = self._create_nested_module_interface(
+            name_prefix="nested-module-out", parent_device=parent_device_out
+        )
+        created_interfaces = [nested_in_scope, nested_out_scope]
+        location_ids = {scoped_location.id}
+
+        expected_ids = {nested_in_scope.id}
+        expected_ids_from_engine = self._interface_scope_expected_ids_from_engine(created_interfaces, location_ids)
+        actual_ids = self._interface_scope_actual_ids(location_ids) & {interface.id for interface in created_interfaces}
+        self.assertSetEqual(actual_ids, expected_ids)
+        self.assertSetEqual(actual_ids, expected_ids_from_engine)
