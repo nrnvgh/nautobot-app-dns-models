@@ -404,7 +404,7 @@ class IPAssignmentPerformanceTestCase(TestCase):
 
         # Verify DNS record was created
         a_record_count = ARecord.objects.filter(name=f"{interface.name}.{interface.device.name}").count()
-        tracking_count = DNSRuleRecord.objects.filter(object_id=str(interface.pk)).count()
+        tracking_count = DNSRuleRecord.objects.filter(object_id=interface.pk).count()
 
         print("\nDNS Records Created:")
         print(f"A Records: {a_record_count}")

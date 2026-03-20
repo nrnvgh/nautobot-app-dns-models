@@ -66,11 +66,6 @@ class ObjectProcessingSummary:
     record_ops_delete_count: int = 0
 
 
-def get_rule_engine():
-    """Return a fresh DNS rule engine instance."""
-    return DNSRuleEngine()
-
-
 class DNSRuleEngine:
     """Primary engine that reconciles DNS records in explicit batch phases."""
 
@@ -88,6 +83,7 @@ class DNSRuleEngine:
         self._view_lookup_cache = {}
         self._zone_lookup_cache = {}
         self._applicable_rules_cache = {}
+
         self._compiled_template_cache = {}
         self._jinja_env = django_template_engines["jinja"].env
         self._pending_batched_creates = defaultdict(list)

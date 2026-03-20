@@ -30,7 +30,7 @@ from nautobot_dns_models.constants.supported_models import (
 from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSTemplateEmptyError
 from nautobot_dns_models.models import DNSRule
 from nautobot_dns_models.rules.scope_filters import BulkScopeFilterBuilder
-from nautobot_dns_models.rules.engine import ObjectProcessingSummary, get_rule_engine
+from nautobot_dns_models.rules.engine import DNSRuleEngine, ObjectProcessingSummary
 
 name = "DNS Reconciliation Jobs"    # pylint: disable=invalid-name
 
@@ -244,7 +244,7 @@ class ReconcileDNSBulkJob(Job):
         """Execute bulk DNS reconciliation."""
         started_at = perf_counter()
 
-        selected_engine = get_rule_engine()
+        selected_engine = DNSRuleEngine()
 
         location_ids = {location.id for location in (locations or [])}
         tenant_ids = {tenant.id for tenant in (tenants or [])}
@@ -666,7 +666,7 @@ class ReconcileDNSObjectJob(Job):
     def _process_targets(self, targets, *, dryrun, limit, batch_size):
         """Process target iterator and return aggregated execution/reconciliation summary."""
         summary = ReconcileRunSummary()
-        selected_engine = get_rule_engine()
+        selected_engine = DNSRuleEngine()
 
         object_batch = []
         for model_label, obj in targets:
