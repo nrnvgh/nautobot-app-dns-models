@@ -559,11 +559,6 @@ class ReconcileDNSBulkJob(_ReconcileDNSJobMixin, Job):
         max_value=5000,
         description="Pipeline batch size for fetch/render/delta/execute phases.",
     )
-    pipeline_strategy = StringVar(
-        default="rule_driven",
-        required=False,
-        description="Pipeline strategy key (rule_driven by default; pluggable).",
-    )
     def run(
         self,
         dryrun,
@@ -573,16 +568,12 @@ class ReconcileDNSBulkJob(_ReconcileDNSJobMixin, Job):
         tenants=None,
         limit=None,
         batch_size=500,
-        pipeline_strategy="rule_driven",
     ):  # pylint: disable=too-many-arguments,arguments-differ
         """Execute bulk DNS reconciliation."""
         started_at = perf_counter()
 
         selected_engine = get_rule_engine()
-        if hasattr(selected_engine, "reset_pipeline_stage_metrics"):
-            selected_engine.reset_pipeline_stage_metrics()
-        if hasattr(selected_engine, "set_pipeline_strategy"):
-            selected_engine.set_pipeline_strategy(pipeline_strategy)
+        selected_engine.reset_pipeline_stage_metrics()
 
         location_ids = {location.id for location in (locations or [])}
         tenant_ids = {tenant.id for tenant in (tenants or [])}
@@ -644,12 +635,7 @@ class ReconcileDNSBulkJob(_ReconcileDNSJobMixin, Job):
             batch_size=batch_size,
         )
         result["execution"]["runtime_seconds"] = round(perf_counter() - started_at, 3)
-
-        if hasattr(selected_engine, "pipeline_strategy"):
-            result["mode"]["pipeline_strategy"] = selected_engine.pipeline_strategy
-
-        if hasattr(selected_engine, "get_pipeline_stage_metrics"):
-            result["mode"]["pipeline_stage_metrics"] = selected_engine.get_pipeline_stage_metrics()
+        result["mode"]["pipeline_stage_metrics"] = selected_engine.get_pipeline_stage_metrics()
 
         self._log_result_summary(result)
 

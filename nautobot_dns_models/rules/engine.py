@@ -78,10 +78,6 @@ class DNSRuleEngine:
         self._applicable_rules_cache = {}
         self._compiled_template_cache = {}
         self._jinja_env = django_template_engines["jinja"].env
-        self._pipeline_dispatch = {
-            "rule_driven": self._process_objects,
-        }
-        self._active_pipeline_strategy = "rule_driven"
         self._pending_batched_creates = defaultdict(list)
         self._batched_create_queue_active = False
         self._pipeline_stage_metrics = {
@@ -138,15 +134,9 @@ class DNSRuleEngine:
 
         return summary
 
-    @property
-    def pipeline_strategy(self):
-        """Return currently active pipeline strategy name."""
-        return self._active_pipeline_strategy
-
     def process_objects_pipeline(self, source_objects, created=False):
-        """Execute active pipeline handler for one source-object batch."""
-        handler = self._pipeline_dispatch[self._active_pipeline_strategy]
-        return handler(source_objects=source_objects, created=created)
+        """Execute batch pipeline for one source-object batch."""
+        return self._process_objects(source_objects=source_objects, created=created)
 
     def delete_dns_records_for_object(self, source_obj):
         """Delete all DNS records created from a source object."""
@@ -155,14 +145,6 @@ class DNSRuleEngine:
 
         for rule_record in rule_records:
             self._delete_tracking_and_dns_record(rule_record)
-
-    def set_pipeline_strategy(self, strategy):
-        """Set active pipeline strategy for subsequent batch processing."""
-        requested_strategy = (strategy or "rule_driven").strip().lower()
-        if requested_strategy not in self._pipeline_dispatch:
-            requested_strategy = "rule_driven"
-
-        self._active_pipeline_strategy = requested_strategy
 
     def reset_pipeline_stage_metrics(self):
         """Reset cumulative stage metrics used for profiling/benchmark diagnostics."""
