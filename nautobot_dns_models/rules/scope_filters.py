@@ -16,10 +16,10 @@ class BulkScopeFilterBuilder:
     }
 
     def apply(self, model_label, queryset, *, location_ids, tenant_ids):
-        """Return `(queryset, used_sql_scope_filtering)` for requested model label."""
+        """Return scope-filtered queryset for requested model label."""
         method_name = self._MODEL_SCOPE_METHODS.get(model_label)
         if not method_name:
-            return queryset, False
+            return queryset
 
         handler = getattr(self, method_name)
 
@@ -28,87 +28,66 @@ class BulkScopeFilterBuilder:
     @staticmethod
     def _apply_device(queryset, *, location_ids, tenant_ids):
         """Apply direct device location/tenant filtering in SQL."""
-        used_scope_filter = False
         if location_ids:
             queryset = queryset.filter(location_id__in=location_ids)
-            used_scope_filter = True
 
         if tenant_ids:
             queryset = queryset.filter(tenant_id__in=tenant_ids)
-            used_scope_filter = True
 
-        return queryset, used_scope_filter
+        return queryset
 
     def _apply_interface(self, queryset, *, location_ids, tenant_ids):
         """Apply recursive interface location/tenant filtering in SQL."""
         scope_filter = Q()
-        used_scope_filter = False
 
         if location_ids:
-            used_scope_filter = True
             scope_filter &= self._build_interface_parent_device_filter("location_id", location_ids)
 
         if tenant_ids:
-            used_scope_filter = True
             tenant_filter = self._build_interface_parent_device_filter("tenant_id", tenant_ids)
-            # Engine behavior prefers module tenant when present for module-backed interfaces.
             tenant_filter |= Q(module__tenant_id__in=tenant_ids)
             scope_filter &= tenant_filter
 
-        if not used_scope_filter:
-            return queryset, False
+        if not scope_filter:
+            return queryset
 
-        queryset = queryset.filter(scope_filter)
-        return queryset, True
+        return queryset.filter(scope_filter)
 
     @staticmethod
     def _apply_virtualmachine(queryset, *, location_ids, tenant_ids):
         """Apply virtual machine location/tenant filtering in SQL."""
-        used_scope_filter = False
-
         if location_ids:
             queryset = queryset.filter(cluster__location_id__in=location_ids)
-            used_scope_filter = True
 
         if tenant_ids:
-            # Engine parity: VM tenant overrides cluster tenant when set.
             queryset = queryset.filter(
                 Q(tenant_id__in=tenant_ids) | Q(tenant_id__isnull=True, cluster__tenant_id__in=tenant_ids)
             )
-            used_scope_filter = True
 
-        return queryset, used_scope_filter
+        return queryset
 
     @staticmethod
     def _apply_vminterface(queryset, *, location_ids, tenant_ids):
         """Apply VM interface location/tenant filtering in SQL."""
-        used_scope_filter = False
-
         if location_ids:
             queryset = queryset.filter(virtual_machine__cluster__location_id__in=location_ids)
-            used_scope_filter = True
 
         if tenant_ids:
-            # Engine parity: VM tenant overrides cluster tenant when set.
             queryset = queryset.filter(
                 Q(virtual_machine__tenant_id__in=tenant_ids)
                 | Q(virtual_machine__tenant_id__isnull=True, virtual_machine__cluster__tenant_id__in=tenant_ids)
             )
-            used_scope_filter = True
 
-        return queryset, used_scope_filter
+        return queryset
 
     @staticmethod
     def _apply_service(queryset, *, location_ids, tenant_ids):
         """Apply Service location/tenant filtering in SQL across device/VM attachment branches."""
-        used_scope_filter = False
-
         if location_ids:
             queryset = queryset.filter(
                 Q(device__location_id__in=location_ids)
                 | Q(device_id__isnull=True, virtual_machine__cluster__location_id__in=location_ids)
             )
-            used_scope_filter = True
 
         if tenant_ids:
             queryset = queryset.filter(
@@ -120,9 +99,8 @@ class BulkScopeFilterBuilder:
                     virtual_machine__cluster__tenant_id__in=tenant_ids,
                 )
             )
-            used_scope_filter = True
 
-        return queryset, used_scope_filter
+        return queryset
 
     @staticmethod
     def _build_interface_parent_device_filter(field_name, values):
@@ -130,6 +108,7 @@ class BulkScopeFilterBuilder:
         # Copied from nautobot.dcim.filters.mixins.ModularDeviceComponentFilterSetMixin.generate_query_filter_device()
         recursion_depth = max(0, MODULE_RECURSION_DEPTH_LIMIT - 1)
         query = Q(**{f"device__{field_name}__in": values})
+
         for level in range(recursion_depth):
             recursive_path = "module__parent_module_bay__" + "parent_module__parent_module_bay__" * level
             query |= Q(**{f"{recursive_path}parent_device__{field_name}__in": values})

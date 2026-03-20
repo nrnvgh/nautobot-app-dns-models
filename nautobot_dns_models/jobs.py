@@ -279,8 +279,6 @@ class ReconcileDNSBulkJob(Job):
                 summary=summary,
                 selected_engine=selected_engine,
                 dryrun=dryrun,
-                location_ids=location_ids,
-                tenant_ids=tenant_ids,
                 limit=limit,
                 batch_size=batch_size,
             )
@@ -362,19 +360,15 @@ class ReconcileDNSBulkJob(Job):
         location_ids=None,
         tenant_ids=None,
     ):
-        """Yield `(model_label, object, used_sql_scope_filtering)` tuples for reconciliation."""
-        # `limit` means maximum in-scope objects.
-        # For scoped runs, avoid pre-slicing here so in-scope enforcement happens
-        # downstream after scope evaluation (SQL-backed for mapped models and
-        # Python-backed for fallback models).
-        remaining = limit if not (location_ids or tenant_ids) else None
+        """Yield `(model_label, object)` tuples for reconciliation."""
+        remaining = limit
         location_ids = location_ids or set()
         tenant_ids = tenant_ids or set()
         for model_label in target_labels:
             if remaining is not None and remaining <= 0:
                 break
 
-            queryset, used_sql_scope_filtering = self._build_target_queryset(
+            queryset = self._build_target_queryset(
                 model_label,
                 location_ids=location_ids,
                 tenant_ids=tenant_ids,
@@ -384,7 +378,7 @@ class ReconcileDNSBulkJob(Job):
                 queryset = queryset[:remaining]
 
             for obj in queryset.iterator(chunk_size=batch_size):
-                yield model_label, obj, used_sql_scope_filtering
+                yield model_label, obj
                 if remaining is not None:
                     remaining -= 1
                     if remaining <= 0:
@@ -394,14 +388,15 @@ class ReconcileDNSBulkJob(Job):
         """Build scoped and optimized queryset for one target model label."""
         model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
         queryset = model_class.objects.order_by("pk")
-        queryset, used_sql_scope_filtering = self._bulk_scope_filter_builder.apply(
+        queryset = self._bulk_scope_filter_builder.apply(
             model_label,
             queryset,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         )
         queryset = self._apply_target_queryset_optimizations(model_label, queryset)
-        return queryset, used_sql_scope_filtering
+
+        return queryset
 
     @staticmethod
     def _apply_target_queryset_optimizations(model_label, queryset):
@@ -451,39 +446,32 @@ class ReconcileDNSBulkJob(Job):
         summary,
         selected_engine,
         dryrun,
-        location_ids,
-        tenant_ids,
         limit,
         batch_size,
     ):
         """Process iterator of targets as full batches plus one trailing flush."""
         object_batch = []
-        for model_label, obj, used_sql_scope_filtering in targets:
+        for model_label, obj in targets:
             if _limit_reached(summary, limit):
                 break
 
-            object_batch.append((model_label, obj, used_sql_scope_filtering))
+            object_batch.append((model_label, obj))
             if len(object_batch) >= batch_size:
                 self._process_pipeline_target_batch(
                     object_batch,
                     summary=summary,
                     selected_engine=selected_engine,
                     dryrun=dryrun,
-                    location_ids=location_ids,
-                    tenant_ids=tenant_ids,
                     limit=limit,
                 )
                 object_batch = []
 
-        # Process the last batch if it exists and is within the limit.
         if object_batch and not _limit_reached(summary, limit):
             self._process_pipeline_target_batch(
                 object_batch,
                 summary=summary,
                 selected_engine=selected_engine,
                 dryrun=dryrun,
-                location_ids=location_ids,
-                tenant_ids=tenant_ids,
                 limit=limit,
             )
 
@@ -492,29 +480,14 @@ class ReconcileDNSBulkJob(Job):
         object_batch,
         *,
         summary,
-        selected_engine,
         dryrun,
-        location_ids,
-        tenant_ids,
         limit,
     ):
-        """Apply scope filters and return in-scope pipeline targets."""
+        """Mark targets seen and return in-scope pipeline targets."""
         targets_in_scope = []
-        for model_label, obj, used_sql_scope_filtering in object_batch:
+        for model_label, obj in object_batch:
             if _limit_reached(summary, limit):
                 break
-
-            if not used_sql_scope_filtering and location_ids:
-                object_location = selected_engine._get_object_location(obj)  # pylint: disable=protected-access
-                if object_location is None or object_location.id not in location_ids:
-                    summary.mark_scope_skipped()
-                    continue
-
-            if not used_sql_scope_filtering and tenant_ids:
-                object_tenant = selected_engine._get_object_tenant(obj)  # pylint: disable=protected-access
-                if object_tenant is None or object_tenant.id not in tenant_ids:
-                    summary.mark_scope_skipped()
-                    continue
 
             summary.mark_target_seen()
             targets_in_scope.append((model_label, obj))
@@ -531,18 +504,13 @@ class ReconcileDNSBulkJob(Job):
         summary,
         selected_engine,
         dryrun,
-        location_ids,
-        tenant_ids,
         limit,
     ):
         """Process one target batch using pipeline batch execution."""
         targets_in_scope = self._build_pipeline_in_scope_targets(
             object_batch,
             summary=summary,
-            selected_engine=selected_engine,
             dryrun=dryrun,
-            location_ids=location_ids,
-            tenant_ids=tenant_ids,
             limit=limit,
         )
 
