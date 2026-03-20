@@ -146,23 +146,6 @@ class DNSRuleEngine:
         for rule_record in rule_records:
             self._delete_tracking_and_dns_record(rule_record)
 
-    def reset_pipeline_stage_metrics(self):
-        """Reset cumulative stage metrics used for profiling/benchmark diagnostics."""
-        self._pipeline_stage_metrics = {
-            "batches": 0,
-            "objects_total": 0,
-            "tracking_rows_total": 0,
-            "pending_rule_calculations_total": 0,
-            "pending_bulk_updates_total": 0,
-            "stage_seconds": {
-                "fetch": 0.0,
-                "planning": 0.0,
-                "apply": 0.0,
-                "bulk_flush": 0.0,
-                "total": 0.0,
-            },
-        }
-
     def get_pipeline_stage_metrics(self):
         """Return cumulative and per-batch stage metrics for current run."""
 

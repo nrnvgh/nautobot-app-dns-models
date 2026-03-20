@@ -246,7 +246,6 @@ class ReconcileDNSBulkJob(Job):
         started_at = perf_counter()
 
         selected_engine = get_rule_engine()
-        selected_engine.reset_pipeline_stage_metrics()
 
         location_ids = {location.id for location in (locations or [])}
         tenant_ids = {tenant.id for tenant in (tenants or [])}
