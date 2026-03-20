@@ -1071,3 +1071,409 @@ Comparison (variant vs baseline):
 Interpretation:
 - For sparse location-scoped interface reconciliations, recursive SQL scope pushdown is a major win.
 - This does not contradict the earlier unscoped A/B result (`limit=20k`, no location filter), where SQL scope logic had no useful work to do.
+
+---
+
+## Create-path performance track (`dcim.interface`, pure-create, `:19080`)
+
+Goal:
+- Track create-path speedups in isolated rounds, one implementation change at a time.
+- Use a strict pure-create harness with inter-run REST cleanup of `ARecord` objects and verification that related `DNSRuleRecord` rows are removed before each run.
+
+Benchmark protocol for each round:
+- Tenant: `dns-job-benchmark-20260318054731`
+- Job: `ReconcileDNSBulkJob`
+- Source model: `dcim.interface`
+- Scope: `limit=1000`, `batch_size=1000`
+- Run shape: `1` warm-up + `5` measured runs
+- Benchmark script: `.local/benchmark_create_only_baseline.py`
+
+### Round 0 baseline (pre-change)
+
+Command:
+
+```bash
+.venv/bin/python .local/benchmark_create_only_baseline.py \
+  --base-url "http://localhost:19080" \
+  --tenant-name "dns-job-benchmark-20260318054731" \
+  --limit 1000 \
+  --batch-size 1000 \
+  --warmup-runs 1 \
+  --measured-runs 5 \
+  --disable-conflicting-rules \
+  --cleanup-between-runs \
+  --delete-batch-size 250 \
+  --benchmark-rule-name "dns-bench-create-baseline" \
+  --output-dir ".local/bench-results-create-baseline-round0-1000-20260318"
+```
+
+Results (measured runs):
+- Run times: `12.588`, `13.201`, `12.594`, `15.041`, `13.688`
+- Average: `13.422s`
+- Median: `13.201s`
+- Min/Max: `12.588s` / `15.041s`
+- Throughput (creates/sec, average): `~74.8` (1000 / 13.422)
+- Throughput (creates/sec, median): `~75.8` (1000 / 13.201)
+
+Per-run reconciliation outcome:
+- `record_ops_create_count=1000`
+- `changed_record_count=1000`
+- `objects_changed=1000`
+
+Pipeline stage metrics (measured runs aggregate):
+- Average stage seconds:
+  - `fetch`: `0.008s`
+  - `planning`: `0.178s`
+  - `apply`: `10.413s`
+  - `bulk_flush`: `0.000s`
+  - `total`: `10.598s`
+- Median stage seconds:
+  - `fetch`: `0.007s`
+  - `planning`: `0.181s`
+  - `apply`: `9.960s`
+  - `bulk_flush`: `0.000s`
+  - `total`: `10.147s`
+
+Interpretation:
+- Create-path runtime is overwhelmingly concentrated in apply-stage work.
+- This is the baseline for Round 1 optimization comparisons.
+
+### Round 1 (`ContentType` lookup hoist in create loop)
+
+Change implemented:
+- In `nautobot_dns_models/rules/engine.py::_create_records_from_data()`, moved:
+  - `ContentType.objects.get_for_model(source_obj)`
+  - `ContentType.objects.get_for_model(record_class)`
+  out of the per-record loop and reused the resolved values for each `DNSRuleRecord.objects.create(...)`.
+
+Command:
+
+```bash
+.venv/bin/python .local/benchmark_create_only_baseline.py \
+  --base-url "http://localhost:19080" \
+  --tenant-name "dns-job-benchmark-20260318054731" \
+  --limit 1000 \
+  --batch-size 1000 \
+  --warmup-runs 1 \
+  --measured-runs 5 \
+  --disable-conflicting-rules \
+  --cleanup-between-runs \
+  --delete-batch-size 250 \
+  --benchmark-rule-name "dns-bench-create-round1-ct-hoist" \
+  --output-dir ".local/bench-results-create-round1-ct-hoist-1000-20260318-rerun3"
+```
+
+Results (measured runs):
+- Run times: `14.304`, `13.156`, `13.716`, `17.054`, `15.431`
+- Average: `14.732s`
+- Median: `14.304s`
+- Min/Max: `13.156s` / `17.054s`
+- Throughput (creates/sec, average): `~68.5` (1000 / 14.732)
+- Throughput (creates/sec, median): `~69.9` (1000 / 14.304)
+
+Comparison vs Round 0 baseline:
+- Average runtime: `13.422s` -> `14.732s` (`+1.310s`, `~9.8%` slower)
+- Median runtime: `13.201s` -> `14.304s` (`+1.103s`, `~8.4%` slower)
+- Average throughput: `~74.8/s` -> `~68.5/s` (`~8.4%` lower)
+- Median throughput: `~75.8/s` -> `~69.9/s` (`~7.8%` lower)
+
+Outcome:
+- Keep this as a measured data point only; no create-path speedup observed.
+- Profile confirms dominant create costs are still `validated_save()` + model save/clean + change-logging signal path, not `ContentType` lookup.
+
+### Strategy A/B (invoke/ORM cleanup baseline shape, `limit=1000`)
+
+Scope notes:
+- Cleanup path switched from REST bulk DELETE to invoke-triggered ORM cleanup (`invoke cleanup-benchmark-arecords`) between runs.
+- Measured wall-clock includes cleanup overhead in this harness, so comparisons below are only among runs using the same cleanup mode.
+
+#### A) `create_strategy=default` (invoke cleanup)
+
+Command:
+
+```bash
+.venv/bin/python .local/benchmark_create_only_baseline.py \
+  --base-url "http://localhost:19080" \
+  --tenant-name "dns-job-benchmark-20260318054731" \
+  --limit 1000 \
+  --batch-size 1000 \
+  --pipeline-strategy rule_driven \
+  --create-strategy default \
+  --warmup-runs 1 \
+  --measured-runs 5 \
+  --disable-conflicting-rules \
+  --cleanup-between-runs \
+  --cleanup-via-invoke \
+  --delete-batch-size 250 \
+  --benchmark-rule-name "dns-bench-create-strategy-default-invoke-cleanup" \
+  --output-dir ".local/bench-results-create-strategy-default-invoke-cleanup-1000-20260319"
+```
+
+Results:
+- Average: `16.910s`
+- Median: `16.750s`
+- Min/Max: `16.350s` / `17.863s`
+- Throughput (average): `~59.2 creates/sec`
+- Throughput (median): `~59.7 creates/sec`
+
+#### B) `create_strategy=validated_deferred` (invoke cleanup)
+
+Command shape:
+- same as (A), with `--create-strategy validated_deferred`
+
+Observed outcome:
+- Run set completed but all measured runs reported:
+  - `record_ops_create_count=0`
+  - `changed_record_count=0`
+  - `objects_changed=0`
+- This strategy remains invalid in current form for create-path benchmarking.
+
+#### C) `create_strategy=bulk_create_fast` (invoke cleanup)
+
+Command:
+
+```bash
+.venv/bin/python .local/benchmark_create_only_baseline.py \
+  --base-url "http://localhost:19080" \
+  --tenant-name "dns-job-benchmark-20260318054731" \
+  --limit 1000 \
+  --batch-size 1000 \
+  --pipeline-strategy rule_driven \
+  --create-strategy bulk_create_fast \
+  --warmup-runs 1 \
+  --measured-runs 5 \
+  --disable-conflicting-rules \
+  --cleanup-between-runs \
+  --cleanup-via-invoke \
+  --delete-batch-size 250 \
+  --benchmark-rule-name "dns-bench-create-strategy-bulk-create-fast-invoke-cleanup" \
+  --output-dir ".local/bench-results-create-strategy-bulk-create-fast-invoke-cleanup-1000-20260319"
+```
+
+Results:
+- Average: `2.671s`
+- Median: `2.804s`
+- Min/Max: `1.798s` / `3.445s`
+- Throughput (average): `~391.9 creates/sec`
+- Throughput (median): `~356.6 creates/sec`
+
+Comparison (C vs A, same cleanup mode):
+- Average runtime: `16.910s` -> `2.671s` (`-14.239s`, `~84.2%` faster)
+- Average throughput: `~59.2/s` -> `~391.9/s` (`~6.62x`)
+
+Current decision point:
+- `bulk_create_fast` is materially faster for pure create throughput.
+- `validated_deferred` is currently non-viable as implemented and needs redesign before valid comparison.
+
+### D) `create_strategy=bulk_create_batched_pipeline` (pipeline-level create queue)
+
+Change implemented:
+- Added a new create strategy in `engine_dns.py` that queues creates during apply and flushes them in batch (`bulk_create`) instead of per-object create calls.
+- SQL validation for measured runs at `limit=1000` shows one `BEGIN`/`COMMIT` and one insert statement per table per run window, rather than per-object transaction churn.
+
+`limit=1000`, `batch_size=1000`, `warmup=1`, `measured=5`:
+- Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-invoke-cleanup-1000-20260320`
+- Average: `1.889s`
+- Median: `2.292s`
+- Throughput (average): `~577.8 creates/sec`
+- Throughput (median): `~436.3 creates/sec`
+- Stage averages (measured): `apply=0.176s`, `planning=0.174s`, `fetch=0.007s`
+- Delete ops in measured runs: always `0` (pure create)
+
+Comparison (`bulk_create_batched_pipeline` vs `bulk_create_fast`, both `limit=1000`, invoke cleanup):
+- Average runtime: `2.671s` -> `1.889s` (`-0.782s`, `~29.3%` faster)
+- Average throughput: `~391.9/s` -> `~577.8/s` (`~47.4%` higher)
+
+### Create-path scaling checks (`bulk_create_batched_pipeline`, pure-create)
+
+Runs used tenant-wide pre-cleanup where needed to guarantee `record_ops_delete_count=0`.
+
+- `limit=5000`, `batch_size=1000`, `measured=1`
+  - Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-invoke-cleanup-5000-20260320`
+  - Elapsed: `4.469s`
+  - Throughput: `~1118.8 creates/sec`
+
+- `limit=10000`, `batch_size=1000`, `measured=1`
+  - Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-invoke-cleanup-10000-20260320c`
+  - Elapsed: `6.040s`
+  - Throughput: `~1655.6 creates/sec`
+
+- `limit=20000`, `batch_size=1000`, `measured=1`
+  - Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-invoke-cleanup-20000-20260320`
+  - Elapsed: `11.594s`
+  - Throughput: `~1725.0 creates/sec`
+
+### 20k batch-size sweep (`bulk_create_batched_pipeline`, pure-create)
+
+Protocol:
+- Tenant: `dns-job-benchmark-20260318054731`
+- `limit=20000`
+- `warmup=1`, `measured=3` per batch-size variant
+- Invoke/ORM cleanup between runs
+- Tenant-wide pre-cleanup before each variant to remove cross-rule residue
+
+`batch_size=1000`:
+- Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-invoke-cleanup-20000-b1000-20260320`
+- Average: `9.871s`
+- Median: `9.896s`
+- Throughput (average): `~2026.2 creates/sec`
+- Throughput (median): `~2021.0 creates/sec`
+- Stage averages: `apply=3.435s`, `planning=2.195s`, `fetch=0.100s`
+
+`batch_size=2000`:
+- Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-invoke-cleanup-20000-b2000-20260320`
+- Average: `10.369s`
+- Median: `10.435s`
+- Throughput (average): `~1929.3 creates/sec`
+- Throughput (median): `~1916.6 creates/sec`
+- Stage averages: `apply=3.320s`, `planning=1.756s`, `fetch=0.162s`
+
+`batch_size=5000`:
+- Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-invoke-cleanup-20000-b5000-20260320`
+- Average: `10.784s`
+- Median: `10.456s`
+- Throughput (average): `~1858.1 creates/sec`
+- Throughput (median): `~1912.8 creates/sec`
+- Stage averages: `apply=3.130s`, `planning=2.288s`, `fetch=0.261s`
+
+Observed best in this sweep:
+- `batch_size=1000` is best overall at 20k in this environment (`~2026/sec` average), with larger batch-size settings reducing net throughput.
+
+### E) Create-only apply fast-path prototype (no-tracking-row shortcut)
+
+Change implemented:
+- Added a shortcut in `_apply_prepared_reconcile_entry()` for:
+  - `existing_count == 0`
+  - `create_strategy=bulk_create_batched_pipeline`
+- New helper `_apply_prepared_create_only_entry()` skips reconcile identity-diff work and directly queues creates from `desired_by_rule_id`.
+
+Benchmark shape:
+- Scope: `limit=20000`, `batch_size=1000`
+- Runs: `warmup=1`, `measured=3`
+- Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-createonlyfast-20000-b1000-20260320`
+
+Results:
+- Average: `10.374s`
+- Median: `10.538s`
+- Throughput (average): `~1930.5 creates/sec`
+- Throughput (median): `~1897.9 creates/sec`
+- Stage averages: `apply=3.492s`, `planning=2.352s`, `fetch=0.097s`
+- Delete ops in measured runs: always `0` (pure create)
+
+Comparison vs prior best (`batch_size=1000` without this shortcut):
+- Baseline average: `9.871s` / `~2026.2/sec`
+- Fast-path average: `10.374s` / `~1930.5/sec`
+- Delta: `+0.503s` average runtime (`~5.1%` slower), `~4.7%` lower average throughput
+
+Outcome:
+- Keep as measured data point only.
+- This specific shortcut does not improve throughput in current pipeline shape; revert or leave disabled behind strategy gating for now.
+
+### F) Create-only planner fast-path prototype (Stage 2/3 branch)
+
+Change implemented:
+- Added a no-tracking branch in `_process_objects()` for `create_strategy=bulk_create_batched_pipeline`.
+- New helper `_plan_create_only_work()` combines Stage 2 and Stage 3 for create-only/no-tracking batches:
+  - builds prepared entries directly with `tracking_rows=[]`
+  - collects rule work inline
+  - preloads referenced `IPAddress` rows once per batch
+  - materializes `desired_by_rule_id` without building the generic `rule_work_items` / `prepared_entry_by_object_id` maps
+- Existing Stage 4 create-only apply shortcut remains in place for this round (separate experiment still TODO for removal).
+
+Benchmark shape:
+- Scope: `limit=20000`, `batch_size=1000`
+- Runs: `warmup=1`, `measured=3`
+- Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-plannerfast-20000-b1000-20260320`
+
+Results:
+- Average: `10.039s`
+- Median: `9.884s`
+- Throughput (average): `~1993.4 creates/sec`
+- Throughput (median): `~2023.5 creates/sec`
+- Stage averages: `apply=3.422s`, `planning=2.104s`, `fetch=0.099s`
+- Delete ops in measured runs: always `0` (pure create)
+
+Comparison vs prior best (`batch_size=1000` without create-only shortcuts):
+- Baseline average: `9.871s` / `~2026.2/sec`
+- Planner fast-path average: `10.039s` / `~1993.4/sec`
+- Delta: `+0.168s` average runtime (`~1.7%` slower), `~1.6%` lower average throughput
+
+Comparison vs Section E create-only apply shortcut:
+- Section E average: `10.374s` / `~1930.5/sec`
+- Planner fast-path average: `10.039s` / `~1993.4/sec`
+- Delta vs E: `-0.335s` average runtime (`~3.2%` faster), `~3.3%` higher average throughput
+
+Outcome:
+- Stage 2/3 planner fast-path recovers part of the regression from the Stage 4-only shortcut, but does not beat the original 20k/1000 best run.
+- Keep as measured data point; further optimization should target planning/materialization overhead and/or database write latency without adding reconcile-only structures on pure-create batches.
+
+### G) Isolation reruns and removal decision for experimental create-only paths
+
+Purpose:
+- Isolate the two experimental code paths and determine whether either materially improves create throughput:
+  - Stage 2/3 planner short-circuit (`_plan_create_only_work`)
+  - Stage 4 apply shortcut (`_apply_prepared_create_only_entry`, TODO-marked)
+
+Benchmark shape (all runs in this section):
+- Scope: `limit=20000`, `batch_size=1000`
+- Runs: `warmup=1`, `measured=3`
+- Cleanup: invoke/ORM cleanup between runs
+- Pure-create validation: measured runs had `record_ops_delete_count=0`
+
+Measured variants:
+- Both experimental paths active:
+  - Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-plannerfast-20000-b1000-20260320`
+  - Average: `10.039s`
+  - Throughput (average): `~1993.4 creates/sec`
+- Apply shortcut disabled (planner path left enabled):
+  - Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-plannerfast-noapplyshortcut-20000-b1000-20260320`
+  - Average: `10.913s`
+  - Throughput (average): `~1834.1 creates/sec`
+  - Note: treated as a noisy outlier relative to adjacent reruns.
+- Both experimental paths disabled:
+  - Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-noplanner-noapplyshortcut-20000-b1000-20260320`
+  - Average: `10.064s`
+  - Throughput (average): `~1988.4 creates/sec`
+
+Key comparison:
+- `both active` vs `both disabled`:
+  - Runtime: `10.039s` vs `10.064s` (`+0.025s`)
+  - Throughput: `~1993.4/s` vs `~1988.4/s` (`~0.3%` delta)
+
+Conclusion:
+- Across repeat runs, neither experimental path shows a clear, stable throughput win at 20k/1000.
+- These experimental paths are removed from `engine_dns.py`; baseline flow remains `_plan_work()` + `_materialize_desired_data()` + `_apply_prepared_reconcile_entry()`.
+- Code not included after this decision:
+  - `_plan_create_only_work` and its `_process_objects()` branch
+  - `_apply_prepared_create_only_entry` and its TODO-marked call site in `_apply_prepared_reconcile_entry()`
+
+### H) SQL flush create strategy (measured, archived, not included)
+
+Prototype:
+- Added an experimental create strategy key: `bulk_create_batched_pipeline_sql`.
+- Reused the existing pipeline-level create queue, but swapped queue flush for SQL on `ARecord`:
+  - `INSERT INTO nautobot_dns_models_arecord ... RETURNING id`
+  - followed by batched `INSERT INTO nautobot_dns_models_dnsrulerecord ...`
+- Non-`ARecord` record classes still used ORM `bulk_create` fallback inside the same flush function.
+
+Benchmark shape:
+- Scope: `limit=20000`, `batch_size=1000`
+- Runs: `warmup=1`, `measured=3`
+- Output: `.local/bench-results-create-strategy-bulk-create-batched-pipeline-sql-20000-b1000-20260320`
+
+Results:
+- Average: `8.348s`
+- Median: `8.297s`
+- Throughput (average): `~2400.0 creates/sec`
+- Throughput (median): `~2410.5 creates/sec`
+- Stage averages: `apply=1.430s`, `planning=2.499s`, `fetch=0.141s`
+- Delete ops in measured runs: always `0` (pure create)
+
+Comparison:
+- Versus prior best create baseline at 20k/1000 (`~2026.2/sec`): `~18.4%` higher throughput.
+- Versus recent cleaned baseline (`~1902.0/sec`): `~26.2%` higher throughput.
+
+Disposition:
+- Not retained in active runtime at this time.
+- Strategy key and active code path were backed out from `engine_dns.py` and `jobs.py`.
+- Implementation preserved in `ATTIC/engine_dns_bulk_create_batched_pipeline_sql_20260320.py` for future reconsideration.
