@@ -11,7 +11,7 @@ from nautobot.ipam.models import IPAddressToInterface, Service
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
 from nautobot_dns_models.models import DNSRecord
-from nautobot_dns_models.rules.engine_selector import get_rule_engine
+from nautobot_dns_models.rules.engine import get_rule_engine
 
 # logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)

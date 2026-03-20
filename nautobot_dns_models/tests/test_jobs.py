@@ -18,7 +18,7 @@ from nautobot.virtualization.models import Cluster, VirtualMachine, VMInterface
 
 from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileRunSummary
 from nautobot_dns_models.models import DNSRule
-from nautobot_dns_models.rules.engine_selector import get_rule_engine
+from nautobot_dns_models.rules.engine import get_rule_engine
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
 

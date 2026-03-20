@@ -30,7 +30,7 @@ from nautobot_dns_models.constants.supported_models import (
 from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSTemplateEmptyError
 from nautobot_dns_models.models import DNSRule
 from nautobot_dns_models.rules.scope_filters import BulkScopeFilterBuilder
-from nautobot_dns_models.rules.engine_selector import get_rule_engine
+from nautobot_dns_models.rules.engine import get_rule_engine
 
 name = "DNS Reconciliation Jobs"    # pylint: disable=invalid-name
 
@@ -564,7 +564,6 @@ class ReconcileDNSBulkJob(_ReconcileDNSJobMixin, Job):
         required=False,
         description="Pipeline strategy key (rule_driven by default; pluggable).",
     )
-
     def run(
         self,
         dryrun,
@@ -673,6 +672,7 @@ class ReconcileDNSBulkJob(_ReconcileDNSJobMixin, Job):
         for model_label, obj, used_sql_scope_filtering in targets:
             if self._limit_reached(summary, limit):
                 break
+
             object_batch.append((model_label, obj, used_sql_scope_filtering))
             if len(object_batch) >= batch_size:
                 self._process_pipeline_target_batch(

@@ -1,26 +1,34 @@
 """DNS Rule Processing Engine for Nautobot DNS Models."""
 
+from __future__ import annotations
+
 import logging
+import re
 import uuid
-from abc import ABC, abstractmethod
 from collections import defaultdict
+from time import perf_counter
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db import models as django_models
+from django.template import engines as django_template_engines
 from jinja2 import TemplateError
-from nautobot.apps.utils import render_jinja2
 from nautobot.dcim import models as dcim_models
 from nautobot.ipam import models as ipam_models
 from nautobot.virtualization import models as virtualization_models
 
-from nautobot_dns_models import models
-from nautobot_dns_models.exceptions import DNSTemplateEmptyError, DNSRuleRenderedValueLookupError
+from nautobot_dns_models import models as dns_models
+from nautobot_dns_models.exceptions import (
+    DNSRecordContentTypeResolutionError,
+    DNSRuleRenderedValueLookupError,
+    DNSTemplateEmptyError,
+)
 from nautobot_dns_models.models import (
     DNSRecord,
     DNSRule,
     DNSRuleRecord,
+    DNSZone,
 )
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
@@ -46,42 +54,780 @@ PHASE_CANDIDATE_EXPANSION = "candidate_expansion"
 PHASE_UNKNOWN = "unknown"
 
 
-class BaseDNSRuleEngine(ABC):
-    """Abstract base engine for DNS rule reconciliation."""
+def get_rule_engine():
+    """Return a fresh DNS rule engine instance."""
+    return DNSRuleEngine()
 
-    @abstractmethod
+
+class DNSRuleEngine:
+    """Primary engine that reconciles DNS records in explicit batch phases."""
+
+    # Tuned against ~65k update benchmarks:
+    # - 250: ~2572 changed/sec (avg, best)
+    # - 500: ~2459 changed/sec (avg)
+    # - 1000: ~2468 changed/sec (avg)
+    # Keep this constant in sync with docs/dev/reconcile_greenfield_performance_tally.md.
+    BULK_RENAME_UPDATE_BATCH_SIZE = 250
+    BULK_CREATE_BATCHED_PIPELINE_SIZE = 1000
+
+    def __init__(self):
+        """Initialize DNS rule engine caches and pipeline state."""
+        self._default_view_cache = None
+        self._view_lookup_cache = {}
+        self._zone_lookup_cache = {}
+        self._applicable_rules_cache = {}
+        self._compiled_template_cache = {}
+        self._jinja_env = django_template_engines["jinja"].env
+        self._pipeline_dispatch = {
+            "rule_driven": self._process_objects,
+        }
+        self._active_pipeline_strategy = "rule_driven"
+        self._pending_batched_creates = defaultdict(list)
+        self._batched_create_queue_active = False
+        self._pipeline_stage_metrics = {
+            "batches": 0,
+            "objects_total": 0,
+            "tracking_rows_total": 0,
+            "pending_rule_calculations_total": 0,
+            "pending_bulk_updates_total": 0,
+            "stage_seconds": {
+                "fetch": 0.0,
+                "planning": 0.0,
+                "apply": 0.0,
+                "bulk_flush": 0.0,
+                "total": 0.0,
+            },
+        }
+
+    #
+    # Public API
+    #
+
     def process_object(self, source_obj, created=False):
-        """Process a source object against all applicable rules."""
+        """Process one source object against applicable rules."""
+        summary = self._initialize_processing_summary()
+        content_type = ContentType.objects.get_for_model(source_obj)
+        rules = self._get_applicable_rules(source_obj)
+        rules_count = len(rules)
 
-    @abstractmethod
-    def _requires_ip_context(self, rule):
-        """Return whether desired-data rendering should resolve per-candidate ip context."""
+        if rules_count == 0:
+            logger.debug(
+                "No DNS rules found for %s - skipping DNS record processing for %s",
+                content_type,
+                source_obj,
+            )
+            return summary
 
-    @abstractmethod
+        existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=str(source_obj.pk))
+        existing_count = existing_records.count()
+        summary["existing_rule_record_count"] = existing_count
+        summary["had_existing_rule_records"] = existing_count > 0
+
+        if created or existing_count == 0:
+            create_summary = self._create_dns_records_for_object(source_obj, rules)
+            summary["changed_record_count"] = create_summary["changed_record_count"]
+            summary["changed"] = create_summary["changed"]
+            summary["record_ops_create_count"] = create_summary["record_ops_create_count"]
+            summary["record_ops_delete_count"] = create_summary["record_ops_delete_count"]
+        else:
+            update_summary = self._update_dns_records_for_object(source_obj, rules)
+            summary["changed_record_count"] = update_summary["changed_record_count"]
+            summary["changed"] = update_summary["changed"]
+            summary["record_ops_create_count"] = update_summary["record_ops_create_count"]
+            summary["record_ops_delete_count"] = update_summary["record_ops_delete_count"]
+
+        return summary
+
+    @property
+    def pipeline_strategy(self):
+        """Return currently active pipeline strategy name."""
+        return self._active_pipeline_strategy
+
+    def process_objects_pipeline(self, source_objects, created=False):
+        """Execute active pipeline handler for one source-object batch."""
+        handler = self._pipeline_dispatch[self._active_pipeline_strategy]
+        return handler(source_objects=source_objects, created=created)
+
+    def delete_dns_records_for_object(self, source_obj):
+        """Delete all DNS records created from a source object."""
+        content_type = ContentType.objects.get_for_model(source_obj)
+        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
+
+        for rule_record in rule_records:
+            self._delete_tracking_and_dns_record(rule_record)
+
+    def set_pipeline_strategy(self, strategy):
+        """Set active pipeline strategy for subsequent batch processing."""
+        requested_strategy = (strategy or "rule_driven").strip().lower()
+        if requested_strategy not in self._pipeline_dispatch:
+            requested_strategy = "rule_driven"
+
+        self._active_pipeline_strategy = requested_strategy
+
+    def reset_pipeline_stage_metrics(self):
+        """Reset cumulative stage metrics used for profiling/benchmark diagnostics."""
+        self._pipeline_stage_metrics = {
+            "batches": 0,
+            "objects_total": 0,
+            "tracking_rows_total": 0,
+            "pending_rule_calculations_total": 0,
+            "pending_bulk_updates_total": 0,
+            "stage_seconds": {
+                "fetch": 0.0,
+                "planning": 0.0,
+                "apply": 0.0,
+                "bulk_flush": 0.0,
+                "total": 0.0,
+            },
+        }
+
+    def get_pipeline_stage_metrics(self):
+        """Return cumulative and per-batch stage metrics for current run."""
+
+        def _round_metric(value):
+            return round(value, 3) if isinstance(value, float) else value
+
+        stage_seconds = {
+            stage_name: _round_metric(value)
+            for stage_name, value in self._pipeline_stage_metrics["stage_seconds"].items()
+        }
+        metrics = {
+            "batches": self._pipeline_stage_metrics["batches"],
+            "objects_total": self._pipeline_stage_metrics["objects_total"],
+            "tracking_rows_total": self._pipeline_stage_metrics["tracking_rows_total"],
+            "pending_rule_calculations_total": self._pipeline_stage_metrics["pending_rule_calculations_total"],
+            "pending_bulk_updates_total": self._pipeline_stage_metrics["pending_bulk_updates_total"],
+            "stage_seconds": stage_seconds,
+        }
+        batches = metrics["batches"] or 1
+        metrics["avg_per_batch"] = {
+            "objects": _round_metric(metrics["objects_total"] / batches),
+            "tracking_rows": _round_metric(metrics["tracking_rows_total"] / batches),
+            "pending_rule_calculations": _round_metric(metrics["pending_rule_calculations_total"] / batches),
+            "pending_bulk_updates": _round_metric(metrics["pending_bulk_updates_total"] / batches),
+            "stage_seconds": {k: _round_metric(v / batches) for k, v in metrics["stage_seconds"].items()},
+        }
+        return metrics
+
+    #
+    # Pipeline internals
+    #
+
+    def _process_objects(self, source_objects, created=False):
+        """Process one object batch through the default phased flow."""
+        if not source_objects:
+            return []
+
+        if created:
+            return [self.process_object(source_obj, created=True) for source_obj in source_objects]
+
+        total_started_at = perf_counter()
+        fetch_seconds = 0.0
+        planning_seconds = 0.0
+        apply_seconds = 0.0
+        bulk_flush_seconds = 0.0
+
+        # Stage 1: Fetch tracking rows
+        fetch_started_at = perf_counter()
+        fetch_result = self._fetch_tracking_data(source_objects)
+        fetch_seconds += perf_counter() - fetch_started_at
+
+        # Stage 2: Build work plan
+        planning_started_at = perf_counter()
+        plan_result = self._plan_work(
+            source_objects=source_objects,
+            tracking_by_object_id=fetch_result["tracking_by_object_id"],
+        )
+        # Stage 3: Materialize desired data from work plan
+        self._materialize_desired_data(
+            rule_work_items=plan_result["rule_work_items"],
+            prepared_entry_by_object_id=plan_result["prepared_entry_by_object_id"],
+            batch_address_ids=plan_result["batch_address_ids"],
+        )
+        planning_seconds += perf_counter() - planning_started_at
+
+        # Stage 4: Apply reconciled changes
+        apply_started_at = perf_counter()
+        apply_result = self._apply_changes(plan_result["prepared_entries"])
+        apply_seconds += perf_counter() - apply_started_at
+
+        # Stage 5: Flush queued rename updates
+        bulk_flush_started_at = perf_counter()
+        self._flush_bulk_rename_updates(apply_result["pending_rename_updates"])
+        bulk_flush_seconds += perf_counter() - bulk_flush_started_at
+        self._record_pipeline_stage_metrics(
+            {
+                "objects": len(source_objects),
+                "tracking_rows": len(fetch_result["tracking_rows"]),
+                "pending_rule_calculations": plan_result["pending_rule_calculations"],
+                "pending_bulk_updates": sum(
+                    len(entries) for entries in apply_result["pending_rename_updates"].values()
+                ),
+                "stage_seconds": {
+                    "fetch": fetch_seconds,
+                    "planning": planning_seconds,
+                    "apply": apply_seconds,
+                    "bulk_flush": bulk_flush_seconds,
+                    "total": perf_counter() - total_started_at,
+                },
+            }
+        )
+        return apply_result["summaries"]
+
+    def _fetch_tracking_data(self, source_objects):
+        """Stage 1: fetch and prefetch tracking rows for the current object batch."""
+        content_type = ContentType.objects.get_for_model(source_objects[0])
+        object_ids = [source_obj.pk for source_obj in source_objects]
+        tracking_rows = list(DNSRuleRecord.objects.filter(content_type=content_type, object_id__in=object_ids))
+        self._prefetch_tracking_dns_records(tracking_rows)
+
+        tracking_by_object_id = defaultdict(list)
+        for tracking_row in tracking_rows:
+            tracking_by_object_id[tracking_row.object_id].append(tracking_row)
+
+        return {
+            "tracking_rows": tracking_rows,
+            "tracking_by_object_id": tracking_by_object_id,
+        }
+
+    def _plan_work(
+        self,
+        source_objects,
+        tracking_by_object_id,
+    ):
+        """Stage 2: build per-object prepared entries and per-rule work items."""
+        prepared_entries = []
+        prepared_entry_by_object_id = {}
+        rule_work_items = defaultdict(list)
+        batch_address_ids = set()
+
+        for source_obj in source_objects:
+            rules = self._get_applicable_rules(source_obj)
+            desired_by_rule_id = {}
+            failed_rule_ids = set()
+            needed_rule_ids = set()
+
+            for rule in rules:
+                needs_records = self._object_needs_dns_records_for_rule(source_obj, rule)
+                if not needs_records:
+                    continue
+
+                needed_rule_ids.add(rule.pk)
+                try:
+                    base_context = {"obj": wrap_for_template(source_obj)}
+                    rendered_name = self._render_template(rule.name_template, base_context, "name_template")
+                    shared_record_data = {"name": normalize_dns_name(rendered_name)}
+                    record_variations = self._get_record_data_variations_for_rule(
+                        rule, base_context, shared_record_data
+                    )
+                    requires_ip_context = self._requires_ip_context(rule)
+                    if requires_ip_context:
+                        for record_data in record_variations:
+                            address_id = record_data.get("address_id")
+                            if address_id:
+                                batch_address_ids.add(address_id)
+
+                    rule_work_items[rule.pk].append(
+                        {
+                            "object_id": source_obj.pk,
+                            "rule": rule,
+                            "base_context": base_context,
+                            "record_variations": record_variations,
+                            "requires_ip_context": requires_ip_context,
+                        }
+                    )
+                except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
+                    self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True)
+                    failed_rule_ids.add(rule.pk)
+
+            prepared_entry = {
+                "source_obj": source_obj,
+                "rules": rules,
+                "needed_rule_ids": needed_rule_ids,
+                "desired_by_rule_id": desired_by_rule_id,
+                "failed_rule_ids": failed_rule_ids,
+                "tracking_rows": tracking_by_object_id.get(source_obj.pk, []),
+            }
+            prepared_entries.append(prepared_entry)
+            prepared_entry_by_object_id[source_obj.pk] = prepared_entry
+
+        return {
+            "prepared_entries": prepared_entries,
+            "prepared_entry_by_object_id": prepared_entry_by_object_id,
+            "rule_work_items": rule_work_items,
+            "batch_address_ids": batch_address_ids,
+            "pending_rule_calculations": sum(len(items) for items in rule_work_items.values()),
+        }
+
+    def _materialize_desired_data(
+        self,
+        rule_work_items,
+        prepared_entry_by_object_id,
+        batch_address_ids,
+    ):
+        """Stage 3: materialize desired record data into prepared entries."""
+        preloaded_ip_by_id = {}
+        if batch_address_ids:
+            preloaded_ip_by_id = ipam_models.IPAddress.objects.in_bulk(batch_address_ids)
+
+        for work_items in rule_work_items.values():
+            for pending in work_items:
+                prepared_entry = prepared_entry_by_object_id.get(pending["object_id"])
+                if prepared_entry is None:
+                    continue
+
+                rule = pending["rule"]
+                source_obj = prepared_entry["source_obj"]
+                base_context = pending["base_context"]
+                record_variations = pending["record_variations"]
+                requires_ip_context = pending["requires_ip_context"]
+                desired_by_rule_id = prepared_entry["desired_by_rule_id"]
+                failed_rule_ids = prepared_entry["failed_rule_ids"]
+
+                if rule.pk in failed_rule_ids:
+                    continue
+
+                all_record_data = []
+                for record_data in record_variations:
+                    try:
+                        if requires_ip_context:
+                            record_context = self._build_record_context_with_preloaded_ips(
+                                base_context, record_data, preloaded_ip_by_id
+                            )
+                        else:
+                            record_context = dict(base_context)
+                            record_context["record"] = record_data.copy()
+
+                        selected_views = self._get_dns_views_for_rule(rule, record_context)
+                        zones = self._get_zones_for_rule(rule, record_context, selected_views)
+                        for zone in zones:
+                            all_record_data.append({**record_data, "zone": zone})
+
+                    except (
+                        DNSTemplateEmptyError,
+                        DNSRuleRenderedValueLookupError,
+                        TemplateError,
+                        ValueError,
+                    ) as exc:
+                        self._log_candidate_skip(rule, source_obj, record_data, exc, phase=PHASE_UPDATE_RECONCILE)
+                        continue
+
+                desired_by_rule_id[rule.pk] = all_record_data
+
+    def _apply_changes(self, prepared_entries):
+        """Stage 4: apply prepared reconcile entries and queue rename updates."""
+        pending_rename_updates = defaultdict(list)
+        summaries = []
+        self._pending_batched_creates.clear()
+        self._batched_create_queue_active = True
+
+        try:
+            for entry in prepared_entries:
+                summaries.append(self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates))
+
+            if self._batched_create_queue_active:
+                self._flush_batched_create_queue()
+        finally:
+            self._batched_create_queue_active = False
+            self._pending_batched_creates.clear()
+
+        return {
+            "summaries": summaries,
+            "pending_rename_updates": pending_rename_updates,
+        }
+
+    def _apply_prepared_reconcile_entry(
+        self,
+        entry,
+        bulk_update_collector=None,
+    ):
+        """Apply prepared desired/tracking data for one source object."""
+        source_obj = entry["source_obj"]
+        rules = entry["rules"]
+        needed_rule_ids = entry.get("needed_rule_ids", set())
+        desired_by_rule_id = entry["desired_by_rule_id"]
+        failed_rule_ids = entry["failed_rule_ids"]
+        tracking_rows = entry["tracking_rows"]
+
+        summary = self._initialize_processing_summary()
+        existing_count = len(tracking_rows)
+        summary["existing_rule_record_count"] = existing_count
+        summary["had_existing_rule_records"] = existing_count > 0
+
+        if not rules:
+            return summary
+
+        tracking_by_rule_id = defaultdict(list)
+        for tracking_row in tracking_rows:
+            tracking_by_rule_id[tracking_row.rule_id].append(tracking_row)
+
+        applicable_rule_ids = {rule.pk for rule in rules}
+        delete_count = self._cleanup_orphaned_records_prefetched(tracking_by_rule_id, applicable_rule_ids)
+        create_count = 0
+        update_count = 0
+
+        for rule in rules:
+            if needed_rule_ids and rule.pk not in needed_rule_ids:
+                delete_count += self._cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule.pk)
+                continue
+
+            if rule.pk in failed_rule_ids:
+                delete_count += self._cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule.pk)
+                continue
+
+            reconcile_summary = self._reconcile_records_for_rule_with_desired(
+                rule=rule,
+                source_obj=source_obj,
+                tracking_records=tracking_by_rule_id.get(rule.pk, []),
+                desired_record_data=desired_by_rule_id.get(rule.pk, []),
+                bulk_update_collector=bulk_update_collector,
+            )
+            create_count += reconcile_summary["create"]
+            delete_count += reconcile_summary["delete"]
+            update_count += reconcile_summary.get("update", 0)
+
+        changed_record_count = create_count + delete_count + update_count
+        summary["changed_record_count"] = changed_record_count
+        summary["changed"] = changed_record_count > 0
+        summary["record_ops_create_count"] = create_count
+        summary["record_ops_delete_count"] = delete_count
+
+        return summary
+
+    def _record_pipeline_stage_metrics(self, batch_metrics):
+        """Accumulate one batch worth of stage metrics into engine totals."""
+        self._pipeline_stage_metrics["batches"] += 1
+        self._pipeline_stage_metrics["objects_total"] += batch_metrics["objects"]
+        self._pipeline_stage_metrics["tracking_rows_total"] += batch_metrics["tracking_rows"]
+        self._pipeline_stage_metrics["pending_rule_calculations_total"] += batch_metrics["pending_rule_calculations"]
+        self._pipeline_stage_metrics["pending_bulk_updates_total"] += batch_metrics["pending_bulk_updates"]
+        for stage_name, value in batch_metrics["stage_seconds"].items():
+            self._pipeline_stage_metrics["stage_seconds"][stage_name] += value
+
+    #
+    # Per-object reconciliation
+    #
+
     def _create_dns_records_for_object(self, source_obj, applicable_rules):
-        """Create DNS records for a source object using applicable rules."""
+        """Create records for one source object."""
+        changed_record_count = 0
+        for rule in applicable_rules:
+            if not self._object_needs_dns_records_for_rule(source_obj, rule):
+                continue
+            try:
+                created_records = self._create_dns_record_from_rule(rule, source_obj)
+                changed_record_count += len(created_records)
+            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
+                self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_CREATE, cleanup=False)
+                continue
+        return {
+            "changed": changed_record_count > 0,
+            "changed_record_count": changed_record_count,
+            "record_ops_create_count": changed_record_count,
+            "record_ops_delete_count": 0,
+        }
 
-    @abstractmethod
     def _update_dns_records_for_object(self, source_obj, applicable_rules):
-        """Reconcile DNS records for a source object using applicable rules."""
+        """Update/reconcile records for one source object."""
+        delete_count = self._cleanup_orphaned_records(source_obj, applicable_rules)
+        create_count = 0
+        update_count = 0
 
-    @abstractmethod
+        for rule in applicable_rules:
+            if not self._object_needs_dns_records_for_rule(source_obj, rule):
+                delete_count += self._cleanup_records_for_rule(rule, source_obj)
+                continue
+            try:
+                reconcile_summary = self._reconcile_records_for_rule(rule, source_obj)
+                create_count += reconcile_summary["create"]
+                delete_count += reconcile_summary["delete"]
+                update_count += reconcile_summary.get("update", 0)
+            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
+                self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True)
+                delete_count += self._cleanup_records_for_rule(rule, source_obj)
+
+        changed_record_count = create_count + delete_count + update_count
+        return {
+            "changed": changed_record_count > 0,
+            "changed_record_count": changed_record_count,
+            "record_ops_create_count": create_count,
+            "record_ops_delete_count": delete_count,
+        }
+
     def _reconcile_records_for_rule(self, rule, source_obj):
-        """Reconcile existing and desired records for one rule/object pair."""
+        """Reconcile records for one rule/object pair."""
+        tracking_records = self._get_existing_tracking_records(rule, source_obj)
+        existing_records_by_content = {}
+        existing_records_by_identity = {}
+        for tracking_record in tracking_records:
+            dns_record = tracking_record.dns_record
+            content_key = self._get_record_content_key(dns_record)
+            identity_key = self._get_record_identity_key(dns_record)
+            existing_records_by_content[content_key] = tracking_record
+            existing_records_by_identity[identity_key] = tracking_record
 
-    @abstractmethod
-    def _get_zones_for_rule(self, rule, context, selected_views):
-        """Resolve DNS zones for one rule/context pair."""
+        desired_record_data = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_UPDATE_RECONCILE)
+        desired_records_by_content = {}
+        desired_records_by_identity = {}
+        for record_data in desired_record_data:
+            content_key = self._get_record_content_key_from_data(record_data, rule.record_type)
+            identity_key = self._get_record_identity_key_from_data(record_data, rule.record_type)
+            desired_records_by_content[content_key] = record_data
+            desired_records_by_identity[identity_key] = record_data
 
-    @abstractmethod
-    def _render_template(self, template_str, context, field_name):
-        """Render a Jinja2 template with the given context."""
+        existing_keys = set(existing_records_by_content.keys())
+        desired_keys = set(desired_records_by_content.keys())
+        existing_identity_keys = set(existing_records_by_identity.keys())
+        desired_identity_keys = set(desired_records_by_identity.keys())
 
-    @abstractmethod
-    def _get_dns_views_for_rule(self, rule, context):
-        """Resolve DNS views for one rule/context pair."""
+        records_to_delete_by_identity = existing_identity_keys - desired_identity_keys
+        records_to_create_by_identity = desired_identity_keys - existing_identity_keys
+        records_to_check_for_update = existing_identity_keys & desired_identity_keys
 
-    @abstractmethod
+        for identity_key in records_to_delete_by_identity:
+            self._delete_tracking_and_dns_record(existing_records_by_identity[identity_key])
+
+        updated_count = 0
+        keep_count = 0
+        skipped_update = 0
+        for identity_key in records_to_check_for_update:
+            tracking_record = existing_records_by_identity[identity_key]
+            desired_record = desired_records_by_identity[identity_key]
+            update_result = self._update_tracking_record_dns_record(
+                rule=rule,
+                source_obj=source_obj,
+                tracking_record=tracking_record,
+                desired_record_data=desired_record,
+                phase=PHASE_UPDATE_RECONCILE,
+            )
+            if update_result == "updated":
+                updated_count += 1
+            elif update_result == "unchanged":
+                keep_count += 1
+            else:
+                skipped_update += 1
+
+        created_records = []
+        if records_to_create_by_identity:
+            records_to_create_data = [desired_records_by_identity[key] for key in records_to_create_by_identity]
+            created_records = self._create_records_from_data(
+                rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
+            )
+
+        skipped_create = len(records_to_create_by_identity) - len(created_records)
+        return {
+            "existing": len(existing_keys),
+            "desired": len(desired_keys),
+            "keep": keep_count,
+            "create": len(created_records),
+            "delete": len(records_to_delete_by_identity),
+            "update": updated_count,
+            "skipped": skipped_create + skipped_update,
+            "changed_record_count": len(created_records) + len(records_to_delete_by_identity) + updated_count,
+        }
+
+    def _reconcile_records_for_rule_with_desired(
+        self,
+        rule,
+        source_obj,
+        tracking_records,
+        desired_record_data,
+        bulk_update_collector=None,
+    ):
+        """Reconcile one rule using caller-provided tracking rows and desired rows."""
+        def _resolve_dns_record(tracking_record):
+            dns_record = getattr(tracking_record, "_prefetched_dns_record", None)
+            if dns_record is None:
+                dns_record = tracking_record.dns_record
+
+            return dns_record
+
+        existing_records_by_identity = {}
+        for tracking_record in tracking_records:
+            dns_record = _resolve_dns_record(tracking_record)
+            if dns_record is None:
+                continue
+
+            identity_key = self._get_record_identity_key(dns_record)
+            existing_records_by_identity[identity_key] = tracking_record
+
+        desired_records_by_identity = {}
+        for record_data in desired_record_data:
+            identity_key = self._get_record_identity_key_from_data(record_data, rule.record_type)
+            desired_records_by_identity[identity_key] = record_data
+
+        existing_identity_keys = set(existing_records_by_identity.keys())
+        desired_identity_keys = set(desired_records_by_identity.keys())
+
+        records_to_delete_by_identity = existing_identity_keys - desired_identity_keys
+        records_to_create_by_identity = desired_identity_keys - existing_identity_keys
+        records_to_check_for_update = existing_identity_keys & desired_identity_keys
+
+        for identity_key in records_to_delete_by_identity:
+            self._delete_tracking_and_dns_record(existing_records_by_identity[identity_key])
+
+        updated_count = 0
+        keep_count = 0
+        skipped_update = 0
+        for identity_key in records_to_check_for_update:
+            tracking_record = existing_records_by_identity[identity_key]
+            desired_record = desired_records_by_identity[identity_key]
+            if bulk_update_collector is not None:
+                dns_record = _resolve_dns_record(tracking_record)
+                if dns_record is None:
+                    skipped_update += 1
+                    continue
+
+                desired_name = desired_record["name"]
+                if dns_record.name == desired_name:
+                    keep_count += 1
+                    continue
+
+                dns_record.name = desired_name
+                bulk_update_collector[type(dns_record)].append(dns_record)
+                updated_count += 1
+            else:
+                update_result = self._update_tracking_record_dns_record(
+                    rule=rule,
+                    source_obj=source_obj,
+                    tracking_record=tracking_record,
+                    desired_record_data=desired_record,
+                    phase=PHASE_UPDATE_RECONCILE,
+                )
+                if update_result == "updated":
+                    updated_count += 1
+                elif update_result == "unchanged":
+                    keep_count += 1
+                else:
+                    skipped_update += 1
+
+        created_records = []
+        if records_to_create_by_identity:
+            records_to_create_data = [desired_records_by_identity[key] for key in records_to_create_by_identity]
+            created_records = self._create_records_from_data(
+                rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
+            )
+
+        skipped_create = len(records_to_create_by_identity) - len(created_records)
+        return {
+            "create": len(created_records),
+            "delete": len(records_to_delete_by_identity),
+            "update": updated_count,
+            "skipped": skipped_create + skipped_update,
+        }
+
+    #
+    # Record creation / update / delete
+    #
+
+    def _create_dns_record_from_rule(self, rule, source_obj):
+        """Create one or more DNS records based on a rule and source object."""
+        desired_record_data_list = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_CREATE)
+        if not desired_record_data_list:
+            return []
+
+        created_records = self._create_records_from_data(rule, source_obj, desired_record_data_list, phase=PHASE_CREATE)
+
+        # logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
+        return created_records
+
+    def _create_records_from_data(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
+        """Dispatch create path based on configured runtime strategy."""
+        if self._batched_create_queue_active:
+            return self._queue_records_for_batched_create(
+                rule=rule,
+                source_obj=source_obj,
+                record_data_list=record_data_list,
+            )
+        return self._create_records_from_data_bulk_create_fast(
+            rule=rule,
+            source_obj=source_obj,
+            record_data_list=record_data_list,
+            phase=phase,
+        )
+
+    def _create_records_from_data_bulk_create_fast(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
+        """Fast-path create using Django bulk_create for records and tracking rows."""
+        if not record_data_list:
+            return []
+
+        record_class = self._get_record_class(rule.record_type)
+        source_content_type = ContentType.objects.get_for_model(source_obj)
+        dns_record_content_type = ContentType.objects.get_for_model(record_class)
+        dns_records = [record_class(**record_data) for record_data in record_data_list]  # pylint: disable=not-callable
+
+        try:
+            with transaction.atomic():
+                created_records = record_class.objects.bulk_create(dns_records, batch_size=1000)
+                tracking_rows = [
+                    DNSRuleRecord(
+                        rule=rule,
+                        content_type=source_content_type,
+                        object_id=source_obj.id,
+                        dns_record_content_type=dns_record_content_type,
+                        dns_record_object_id=dns_record.id,
+                    )
+                    for dns_record in created_records
+                ]
+                DNSRuleRecord.objects.bulk_create(tracking_rows, batch_size=1000)
+        except IntegrityError as exc:
+            self._log_record_create_failure(rule, source_obj, {}, exc, phase=phase)
+            return []
+
+        return created_records
+
+    def _queue_records_for_batched_create(self, rule, source_obj, record_data_list):
+        """Queue create rows for one pipeline-level bulk flush."""
+        if not record_data_list:
+            return []
+
+        record_class = self._get_record_class(rule.record_type)
+        source_content_type_id = ContentType.objects.get_for_model(source_obj).pk
+        dns_record_content_type_id = ContentType.objects.get_for_model(record_class).pk
+        queue_rows = self._pending_batched_creates[record_class]
+        for record_data in record_data_list:
+            queue_rows.append(
+                {
+                    "rule_id": rule.id,
+                    "content_type_id": source_content_type_id,
+                    "object_id": source_obj.id,
+                    "dns_record_content_type_id": dns_record_content_type_id,
+                    "record_data": record_data,
+                }
+            )
+
+        # Reconcile summaries only use len(created_records), so lightweight sentinels are sufficient.
+        return [None] * len(record_data_list)
+
+    def _flush_batched_create_queue(self):
+        """Flush queued create rows with chunked bulk inserts."""
+        if not self._pending_batched_creates:
+            return
+
+        batch_size = self.BULK_CREATE_BATCHED_PIPELINE_SIZE
+        with transaction.atomic():
+            for record_class, queued_rows in self._pending_batched_creates.items():
+                if not queued_rows:
+                    continue
+                for offset in range(0, len(queued_rows), batch_size):
+                    chunk_rows = queued_rows[offset : offset + batch_size]
+                    dns_records = [
+                        record_class(**queued_row["record_data"])  # pylint: disable=not-callable
+                        for queued_row in chunk_rows
+                    ]
+                    created_records = record_class.objects.bulk_create(dns_records, batch_size=batch_size)
+                    tracking_rows = [
+                        DNSRuleRecord(
+                            rule_id=queued_row["rule_id"],
+                            content_type_id=queued_row["content_type_id"],
+                            object_id=queued_row["object_id"],
+                            dns_record_content_type_id=queued_row["dns_record_content_type_id"],
+                            dns_record_object_id=dns_record.id,
+                        )
+                        for queued_row, dns_record in zip(chunk_rows, created_records)
+                    ]
+                    DNSRuleRecord.objects.bulk_create(tracking_rows, batch_size=batch_size)
+
     def _update_tracking_record_dns_record(
         self,
         rule,
@@ -90,28 +836,692 @@ class BaseDNSRuleEngine(ABC):
         desired_record_data,
         phase,
     ):
-        """Apply in-place update for an existing tracking record."""
+        """In-place rename via direct SQL update."""
+        dns_record = tracking_record.dns_record
+        desired_name = desired_record_data["name"]
+        if dns_record.name == desired_name:
+            return "unchanged"
+
+        try:
+            updated = type(dns_record).objects.filter(pk=dns_record.pk).update(name=desired_name)
+            if updated != 1:
+                raise ValueError(f"Failed to update DNS record '{dns_record.pk}'")
+            dns_record.name = desired_name
+        except (ValidationError, IntegrityError, ValueError) as exc:
+            self._log_record_update_failure(rule, source_obj, desired_record_data, exc, phase=phase)
+            return "failed"
+
+        return "updated"
+
+    def _flush_bulk_rename_updates(
+        self,
+        bulk_update_collector,
+    ):
+        """Execute queued rename updates in bulk."""
+        for record_model, update_entries in bulk_update_collector.items():
+            if not update_entries:
+                continue
+            record_model.objects.bulk_update(update_entries, ["name"], batch_size=self.BULK_RENAME_UPDATE_BATCH_SIZE)
+
+    def _delete_tracking_and_dns_record(self, tracking_record):
+        """Delete both the DNS record and its tracking record."""
+        # logger.debug(f"Deleting DNS record {tracking_record.dns_record} and tracking record {tracking_record}")
+
+        try:
+            #
+            # Just delete the DNS record; the associated tracking record is cascade-deleted
+            # via the GenericRelation on the DNSRecord model.
+            tracking_record.dns_record.delete()
+        except Exception as exc:
+            logger.error(
+                "Failed to delete DNS record '%s' and tracking record '%s': %s (%s)",
+                tracking_record.dns_record,
+                tracking_record,
+                exc,
+                type(exc).__name__,
+            )
+            raise
 
     #
-    # Public methods
+    # Record cleanup
     #
 
-    def delete_dns_records_for_object(self, source_obj):
-        """
-        Delete all DNS records created from a source object.
+    def _cleanup_records_for_rule(self, rule, source_obj):
+        """Clean up all DNS records for a specific rule+object combination."""
+        tracking_records = self._get_existing_tracking_records(rule, source_obj)
+        deleted_count = 0
 
-        Args:
-            source_obj: The source object whose DNS records should be deleted
-        """
+        for tracking_record in tracking_records:
+            self._delete_tracking_and_dns_record(tracking_record)
+            deleted_count += 1
+
+        return deleted_count
+
+    def _cleanup_records_for_rule_prefetched(
+        self,
+        tracking_by_rule_id,
+        rule_id,
+    ):
+        """Delete all tracking/DNS rows for one rule from prefetched group."""
+        tracking_rows = tracking_by_rule_id.pop(rule_id, [])
+        for tracking_row in tracking_rows:
+            self._delete_tracking_and_dns_record(tracking_row)
+        return len(tracking_rows)
+
+    def _cleanup_orphaned_records(self, source_obj, applicable_rules):
+        """Clean up DNS records from rules that are no longer applicable to the source object."""
         content_type = ContentType.objects.get_for_model(source_obj)
-        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
+        existing_tracking_records = DNSRuleRecord.objects.filter(
+            content_type=content_type, object_id=str(source_obj.pk)
+        )
 
-        for rule_record in rule_records:
-            self._delete_tracking_and_dns_record(rule_record)
+        orphaned_records = existing_tracking_records.exclude(rule__in=applicable_rules)
+        deleted_count = 0
+        orphaned_rule_ids = orphaned_records.values_list("rule_id", flat=True).distinct()
+        for orphaned_rule in DNSRule.objects.filter(pk__in=orphaned_rule_ids):
+            # logger.debug(f"Cleaning up orphaned record from rule {orphaned_rule.name} for {source_obj}")
+            deleted_count += self._cleanup_records_for_rule(orphaned_rule, source_obj)
+
+        return deleted_count
+
+    def _cleanup_orphaned_records_prefetched(
+        self,
+        tracking_by_rule_id,
+        applicable_rule_ids,
+    ):
+        """Delete tracking/DNS rows for rules no longer applicable."""
+        deleted_count = 0
+
+        for rule_id in list(tracking_by_rule_id.keys()):
+            if rule_id in applicable_rule_ids:
+                continue
+            deleted_count += self._cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule_id)
+
+        return deleted_count
 
     #
-    # Internal methods
+    # Rule resolution
     #
+
+    def _get_applicable_rules(self, source_obj):
+        """Scope-key cache for applicable-rule resolution."""
+        content_type = ContentType.objects.get_for_model(source_obj)
+        object_location = self._get_object_location(source_obj)
+        object_tenant = self._get_object_tenant(source_obj)
+
+        cache_key = (
+            content_type.pk,
+            getattr(object_location, "pk", None),
+            getattr(object_tenant, "pk", None),
+        )
+        cached_rules = self._applicable_rules_cache.get(cache_key)
+        if cached_rules is not None:
+            return cached_rules
+
+        selected_rules = self._resolve_applicable_rules_for_scope(content_type, object_location, object_tenant)
+        self._applicable_rules_cache[cache_key] = selected_rules
+        return selected_rules
+
+    def _resolve_applicable_rules_for_scope(
+        self,
+        content_type,
+        object_location,
+        object_tenant,
+    ):
+        """Resolve rules for a specific content-type/location/tenant scope."""
+        if object_location is None and object_tenant is None:
+            # logger.debug(f"Using global rules for {source_obj} (no location, no tenant)")
+            return list(
+                DNSRule.objects.filter(
+                    content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
+                )
+            )
+
+        base_query = DNSRule.objects.filter(content_type=content_type, enabled=True)
+
+        location_conditions = django_models.Q(location=object_location) | django_models.Q(location__isnull=True)
+        tenant_conditions = django_models.Q(tenant=object_tenant) | django_models.Q(tenant__isnull=True)
+
+        all_rules = list(base_query.filter(location_conditions & tenant_conditions))
+
+        rules_by_type = defaultdict(
+            lambda: {
+                "location_tenant": [],  # Most specific
+                "location": [],  # Location-wide
+                "tenant": [],  # Tenant-wide
+                "global": [],  # Least specific
+            }
+        )
+
+        for rule in all_rules:
+            record_type = rule.record_type
+
+            if rule.location == object_location and rule.tenant == object_tenant:
+                rules_by_type[record_type]["location_tenant"].append(rule)
+            elif rule.location == object_location and rule.tenant is None:
+                rules_by_type[record_type]["location"].append(rule)
+            elif rule.location is None and rule.tenant == object_tenant:
+                rules_by_type[record_type]["tenant"].append(rule)
+            else:  # rule.location is None and rule.tenant is None
+                rules_by_type[record_type]["global"].append(rule)
+
+        final_rule_pks = []
+        for record_type, rules in rules_by_type.items():
+            if rules["location_tenant"]:
+                final_rule_pks.extend([r.pk for r in rules["location_tenant"]])
+                # logger.debug(f"Using location+tenant rule for {source_obj} record type {record_type}")
+            elif rules["location"]:
+                final_rule_pks.extend([r.pk for r in rules["location"]])
+                # logger.debug(f"Using location rule for {source_obj} record type {record_type}")
+            elif rules["tenant"]:
+                final_rule_pks.extend([r.pk for r in rules["tenant"]])
+                # logger.debug(f"Using tenant rule for {source_obj} record type {record_type}")
+            elif rules["global"]:
+                final_rule_pks.extend([r.pk for r in rules["global"]])
+                # logger.debug(f"Using global rule for {source_obj} record type {record_type}")
+
+        final_rule_pk_set = set(final_rule_pks)
+        return [rule for rule in all_rules if rule.pk in final_rule_pk_set]
+
+    def _object_needs_dns_records_for_rule(self, source_obj, rule):
+        """Hybrid fast-path: avoid per-object SQL checks when prefetch cache is present."""
+        if rule.record_type not in ("A", "AAAA"):
+            return True
+
+        target_ip_version = 4 if rule.record_type == "A" else 6
+
+        prefetched = getattr(source_obj, "_prefetched_objects_cache", {}).get("ip_addresses")
+        if prefetched is not None:
+            return any(ip_obj.ip_version == target_ip_version for ip_obj in prefetched)
+
+        if isinstance(source_obj, (dcim_models.Interface, virtualization_models.VMInterface)):
+            return source_obj.ip_addresses.filter(ip_version=target_ip_version).exists()
+
+        if isinstance(source_obj, (dcim_models.Device, virtualization_models.VirtualMachine)):
+            return (rule.record_type == "A" and source_obj.primary_ip4 is not None) or (
+                rule.record_type == "AAAA" and source_obj.primary_ip6 is not None
+            )
+
+        if isinstance(source_obj, ipam_models.Service):
+            return source_obj.ip_addresses.filter(ip_version=target_ip_version).exists()
+
+        return False
+
+    #
+    # Object attribute extraction
+    #
+
+    def _get_object_location(self, source_obj):
+        """
+        Extract location from source object for location-scoped rule resolution.
+
+        Location extraction logic:
+        - Device: device.location (required field in Nautobot)
+        - Interface: interface.device.location, with module-backed fallback via interface.parent
+        - Service: service.device.location OR service.virtual_machine.location (which is just a proxy for cluster.location)
+        - VirtualMachine: vm.cluster.location
+        - VMInterface: vminterface.virtual_machine.location (which is just a proxy for cluster.location)
+        - InterfaceRedundancyGroup: None (complex multi-location) (future)
+        """
+        if isinstance(source_obj, dcim_models.Interface):
+            if source_obj.device:
+                return source_obj.device.location
+
+            parent = source_obj.parent
+            if isinstance(parent, dcim_models.Device):
+                return parent.location
+
+            logger.warning(
+                "dnsrule_interface_parent_fallback_failed field=%s source=%s:%s parent_type=%s",
+                "location",
+                self._safe_model_label(source_obj),
+                source_obj.pk,
+                type(parent).__name__,
+                extra={
+                    "event": "dnsrule_engine",
+                    "reason_code": REASON_INTERFACE_PARENT_FALLBACK_FAILED,
+                    "phase": PHASE_UNKNOWN,
+                    "source_ct": self._safe_model_label(source_obj),
+                    "source_id": str(source_obj.pk),
+                    "source_repr": str(source_obj),
+                    "resolution_field": "location",
+                    "parent_type": type(parent).__name__,
+                },
+            )
+            return None
+
+        if isinstance(source_obj, virtualization_models.VMInterface):
+            if source_obj.virtual_machine:
+                vm = source_obj.virtual_machine
+                return vm.location
+
+            return None
+
+        if isinstance(source_obj, dcim_models.Device):
+            return source_obj.location
+
+        if isinstance(source_obj, virtualization_models.VirtualMachine):
+            return source_obj.location
+
+        if isinstance(source_obj, ipam_models.Service):
+            if source_obj.device:
+                return source_obj.device.location
+
+            if source_obj.virtual_machine:
+                vm = source_obj.virtual_machine
+                return vm.location
+
+            return None
+
+        return None
+
+    def _get_object_tenant(self, source_obj):
+        """
+        Extract tenant from source object for tenant-scoped rule resolution.
+
+        Tenant extraction logic:
+        - Device: device.tenant (optional field in Nautobot)
+        - Interface: interface.device.tenant, with module-backed fallback via interface.parent
+        - Service: service.device.tenant OR service.virtual_machine.tenant (with cluster.tenant fallback)
+        - VirtualMachine: vm.tenant (with cluster.tenant fallback)
+        - VMInterface: vminterface.virtual_machine.tenant (with cluster.tenant fallback)
+        - Other objects: None (no tenant awareness)
+        """
+        if isinstance(source_obj, dcim_models.Interface):
+            if source_obj.device:
+                return source_obj.device.tenant
+
+            module = source_obj.module
+            # NOTE: This currently checks only the directly attached module tenant.
+            # NOTE: It does not walk ancestor modules/module-bays to discover tenant.
+            if module and module.tenant:
+                return module.tenant
+
+            parent = source_obj.parent
+            if isinstance(parent, dcim_models.Device):
+                return parent.tenant
+
+            logger.warning(
+                "dnsrule_interface_parent_fallback_failed field=%s source=%s:%s parent_type=%s",
+                "tenant",
+                self._safe_model_label(source_obj),
+                source_obj.pk,
+                type(parent).__name__,
+                extra={
+                    "event": "dnsrule_engine",
+                    "reason_code": REASON_INTERFACE_PARENT_FALLBACK_FAILED,
+                    "phase": PHASE_UNKNOWN,
+                    "source_ct": self._safe_model_label(source_obj),
+                    "source_id": str(source_obj.pk),
+                    "source_repr": str(source_obj),
+                    "resolution_field": "tenant",
+                    "parent_type": type(parent).__name__,
+                },
+            )
+            return None
+
+        if isinstance(source_obj, virtualization_models.VMInterface):
+            if source_obj.virtual_machine:
+                vm = source_obj.virtual_machine
+                return vm.tenant or vm.cluster.tenant
+
+            return None
+
+        if isinstance(source_obj, dcim_models.Device):
+            return source_obj.tenant
+
+        if isinstance(source_obj, virtualization_models.VirtualMachine):
+            return source_obj.tenant or source_obj.cluster.tenant
+
+        if isinstance(source_obj, ipam_models.Service):
+            if source_obj.device:
+                return source_obj.device.tenant
+
+            if source_obj.virtual_machine:
+                vm = source_obj.virtual_machine
+                return vm.tenant or vm.cluster.tenant
+
+            return None
+
+        return None
+
+    #
+    # Template rendering
+    #
+
+    def _render_template(self, template_str, context, field_name):
+        """Render from cached compiled Jinja templates."""
+        if "{{" not in template_str and "{%" not in template_str and "{#" not in template_str:
+            result = template_str.strip()
+            if not result:
+                raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
+
+            return result
+
+        compiled_template = self._compiled_template_cache.get(template_str)
+        if compiled_template is None:
+            if len(self._compiled_template_cache) >= 1024:
+                self._compiled_template_cache.clear()
+            compiled_template = self._jinja_env.from_string(template_str)
+            self._compiled_template_cache[template_str] = compiled_template
+
+        result = compiled_template.render(context)
+
+        if not result:
+            raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
+
+        if "{{ no such element:" in result:
+            raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
+
+        return result
+
+    def _requires_ip_context(self, rule):
+        """Production tuning: only resolve ip context when templates reference ip."""
+        template_text = " ".join([rule.view_template or "", rule.zone_template or ""])
+        return bool(re.search(r"\bip\b", template_text))
+
+    def _calculate_desired_record_data(self, rule, source_obj, phase=PHASE_UNKNOWN):
+        """Calculate desired DNS record data for one rule/object pair."""
+        base_context = {"obj": wrap_for_template(source_obj)}
+        rendered_name = self._render_template(rule.name_template, base_context, "name_template")
+        shared_record_data = {"name": normalize_dns_name(rendered_name)}
+        requires_ip_context = self._requires_ip_context(rule)
+
+        all_record_data = []
+        record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
+        for record_data in record_variations:
+            try:
+                if requires_ip_context:
+                    record_context = self._build_record_context(base_context, record_data)
+                else:
+                    record_context = dict(base_context)
+                    record_context["record"] = record_data.copy()
+                selected_views = self._get_dns_views_for_rule(rule, record_context)
+                zones = self._get_zones_for_rule(rule, record_context, selected_views)
+                for zone in zones:
+                    all_record_data.append({**record_data, "zone": zone})
+            except (DNSTemplateEmptyError, DNSRuleRenderedValueLookupError, TemplateError, ValueError) as exc:
+                self._log_candidate_skip(rule, source_obj, record_data, exc, phase=phase)
+                continue
+
+        return all_record_data
+
+    def _get_record_data_variations_for_rule(self, rule, context, base_record_data):
+        """Build list of record data dictionaries (1 for single, N for multiple records)."""
+        record_type = rule.record_type
+
+        if record_type in ("A", "AAAA"):
+            # logger.debug(f"Building A/AAAA record data variations from rule {rule.name}")
+            if rule.value_template:
+                address_result = self._render_template(rule.value_template, context, "value_template")
+                # logger.debug(f"A/AAAA record data variations from rule {rule.name} - address result: {address_result}")
+
+                address_ids = address_result.split()
+
+                return self._build_record_variations(rule, base_record_data, address_ids)
+
+            raise DNSTemplateEmptyError("value_template", "missing", [])
+
+        record_data = base_record_data.copy()
+        self._add_record_type_fields_single(rule, context, record_data)
+        return [record_data]
+
+    def _build_record_variations(self, rule, base_record_data, address_ids):
+        """Build list of record data dictionaries for a given list of address IDs."""
+        record_variations = []
+        for address_id in address_ids:
+            address_id = address_id.strip()
+            if not address_id:
+                continue
+
+            try:
+                parsed_address_id = uuid.UUID(address_id)
+            except ValueError:
+                logger.warning(
+                    "dnsrule_candidate_skipped reason=%s rule=%s invalid_address_id=%s",
+                    REASON_INVALID_ADDRESS_UUID,
+                    rule.name,
+                    address_id,
+                    extra={
+                        "event": "dnsrule_engine",
+                        "reason_code": REASON_INVALID_ADDRESS_UUID,
+                        "phase": PHASE_CANDIDATE_EXPANSION,
+                        "rule_id": str(rule.pk),
+                        "rule_name": rule.name,
+                        "record_type": rule.record_type,
+                        "invalid_address_id": address_id,
+                    },
+                )
+                continue
+
+            record_data = base_record_data.copy()
+            record_data["address_id"] = parsed_address_id
+            record_variations.append(record_data)
+
+        return record_variations
+
+    def _add_record_type_fields_single(self, rule, context, record_data):
+        """Add record-type specific fields to the record data."""
+        if record_type_method := getattr(self, f"_add_record_type_fields_{rule.record_type}", None):
+            record_type_method(rule, context, record_data)  # pylint: disable=not-callable
+
+    #
+    # DNS view / zone resolution
+    #
+
+    def _get_dns_views_for_rule(self, rule, context):
+        """Cache DNS view resolution for repeated templates."""
+        if not rule.view_template:
+            if self._default_view_cache is None:
+                self._default_view_cache = dns_models.DNSView.objects.get(pk=dns_models.get_default_view_pk())
+            return [self._default_view_cache]
+
+        rendered = self._render_template(rule.view_template, context, "view_template")
+        raw_names = [token.strip() for token in re.split(r"[\s,]+", rendered) if token.strip()]
+        if not raw_names:
+            raise DNSRuleRenderedValueLookupError(
+                field_name="view_template",
+                message="view_template rendered no DNS view names.",
+                reason_code=REASON_VIEW_TEMPLATE_EMPTY,
+            )
+
+        requested_names = list(dict.fromkeys(raw_names))
+        cache_key = tuple(requested_names)
+        cached_views = self._view_lookup_cache.get(cache_key)
+        if cached_views is not None:
+            return cached_views
+
+        matched_views = list(dns_models.DNSView.objects.filter(name__in=requested_names))
+        matched_by_name = {view.name: view for view in matched_views}
+        missing_names = [name for name in raw_names if name not in matched_by_name]
+        if missing_names:
+            raise DNSRuleRenderedValueLookupError(
+                field_name="view_template",
+                message=f"DNS view(s) not found from view_template: {', '.join(sorted(set(missing_names)))}",
+                reason_code=REASON_VIEW_NOT_FOUND,
+            )
+
+        ordered_views = []
+        seen_ids = set()
+        for name in raw_names:
+            view = matched_by_name[name]
+            if view.id in seen_ids:
+                continue
+            ordered_views.append(view)
+            seen_ids.add(view.id)
+
+        self._view_lookup_cache[cache_key] = ordered_views
+
+        return ordered_views
+
+    def _get_zones_for_rule(self, rule, context, selected_views):
+        """Cache zone lookups by zone-name and view-id tuple."""
+        zone_name = self._render_template(rule.zone_template, context, "zone_template")
+        view_ids = [view.id for view in selected_views]
+        zone_cache_key = (zone_name, tuple(sorted(view_ids)))
+        zones = self._zone_lookup_cache.get(zone_cache_key)
+        if zones is None:
+            zones = list(DNSZone.objects.filter(name=zone_name, dns_view_id__in=view_ids))
+            self._zone_lookup_cache[zone_cache_key] = zones
+
+        found_view_ids = {zone.dns_view_id for zone in zones}
+        missing_view_ids = set(view_ids) - found_view_ids
+        if missing_view_ids:
+            missing_view_names = list(dns_models.DNSView.objects.filter(id__in=missing_view_ids).values_list("name", flat=True))
+            raise DNSRuleRenderedValueLookupError(
+                field_name="zone_template",
+                message=(
+                    f"Zone '{zone_name}' does not exist in selected DNS view(s): "
+                    f"{', '.join(sorted(missing_view_names))}"
+                ),
+                reason_code=REASON_ZONE_NOT_FOUND,
+            )
+        return zones
+
+    #
+    # Context building
+    #
+
+    def _build_record_context(self, base_context, record_data):
+        """Build per-record template context, including selected IP when available."""
+        context = dict(base_context)
+        context["record"] = record_data.copy()
+
+        address_id = record_data.get("address_id")
+        if address_id:
+            ip_obj = ipam_models.IPAddress.objects.filter(pk=address_id).first()
+            if ip_obj is None:
+                raise DNSRuleRenderedValueLookupError(
+                    field_name="value_template",
+                    message=f"Resolved IP address '{address_id}' was not found.",
+                )
+            context["ip"] = wrap_for_template(ip_obj)
+
+        return context
+
+    def _build_record_context_with_preloaded_ips(self, base_context, record_data, preloaded_ip_by_id):
+        """Build context using preloaded batch IP map, with fallback lookup for misses."""
+        context = dict(base_context)
+        context["record"] = record_data.copy()
+
+        address_id = record_data.get("address_id")
+        if not address_id:
+            return context
+
+        ip_obj = preloaded_ip_by_id.get(address_id)
+
+        if ip_obj is None:
+            ip_obj = ipam_models.IPAddress.objects.filter(pk=address_id).first()
+
+        if ip_obj is None:
+            raise DNSRuleRenderedValueLookupError(
+                field_name="value_template",
+                message=f"Resolved IP address '{address_id}' was not found.",
+            )
+
+        context["ip"] = wrap_for_template(ip_obj)
+        return context
+
+    #
+    # Record key / identity helpers
+    #
+
+    def _get_record_class(self, record_type):
+        """Get the DNS record model class for a given record type."""
+        record_type_name = f"{record_type}Record"
+        record_class = getattr(dns_models, record_type_name, None)
+
+        if not record_class:
+            raise ValueError(f'Unknown record type "{record_type}"')
+
+        if not issubclass(record_class, DNSRecord):
+            raise ValueError(f"Record type '{record_type}' is not a valid DNS record type")
+
+        return record_class
+
+    def _get_record_content_key(self, dns_record):
+        """Generate a content-based key for record comparison."""
+        record_type = dns_record.__class__.__name__
+        base_key = f"{record_type}:{dns_record.name}:{dns_record.zone_id}"
+
+        suffix = "unknown"
+        if hasattr(dns_record, "address_id"):  # A/AAAA
+            suffix = dns_record.address_id
+
+        return f"{base_key}:{suffix}"
+
+    def _get_record_identity_key(self, dns_record):
+        """Generate an identity key that excludes mutable fields such as rendered name."""
+        record_type = dns_record.__class__.__name__
+
+        if hasattr(dns_record, "address_id"):  # A/AAAA
+            return f"{record_type}:{dns_record.zone_id}:{dns_record.address_id}"
+
+        return self._get_record_content_key(dns_record)
+
+    def _get_record_content_key_from_data(self, record_data, rule_record_type):
+        """Generate content key from record data dict."""
+        zone_id = record_data["zone"].id
+        name = record_data["name"]
+
+        record_type = f"{rule_record_type}Record"
+        if rule_record_type in ("A", "AAAA"):
+            suffix = record_data["address_id"]
+        else:
+            raise ValueError(f"Unsupported record type for content key generation: {rule_record_type}")
+
+        return f"{record_type}:{name}:{zone_id}:{suffix}"
+
+    def _get_record_identity_key_from_data(self, record_data, rule_record_type):
+        """Generate identity key from record data dict."""
+        zone_id = record_data["zone"].id
+        record_type = f"{rule_record_type}Record"
+
+        if rule_record_type in ("A", "AAAA"):
+            return f"{record_type}:{zone_id}:{record_data['address_id']}"
+
+        return self._get_record_content_key_from_data(record_data, rule_record_type)
+
+    #
+    # Tracking record helpers
+    #
+
+    def _get_existing_tracking_records(self, rule, source_obj):
+        """Get existing tracking records for a rule+object combination."""
+        return DNSRuleRecord.objects.filter(
+            rule=rule, content_type=ContentType.objects.get_for_model(source_obj), object_id=source_obj.id
+        )
+
+    def _prefetch_tracking_dns_records(self, tracking_rows):
+        """Batch-resolve GenericFK dns_record objects and attach them to tracking rows."""
+        if not tracking_rows:
+            return
+
+        tracking_rows_by_record_content_type = defaultdict(list)
+        for tracking_row in tracking_rows:
+            tracking_rows_by_record_content_type[tracking_row.dns_record_content_type_id].append(tracking_row)
+
+        content_types = ContentType.objects.in_bulk(tracking_rows_by_record_content_type.keys())
+        for record_content_type_id, rows in tracking_rows_by_record_content_type.items():
+            record_content_type = content_types[record_content_type_id]
+            record_model = record_content_type.model_class()
+            if record_model is None:
+                raise DNSRecordContentTypeResolutionError(
+                    "Unable to resolve DNS record content type to model class: "
+                    f"id={record_content_type_id} "
+                    f"label={record_content_type.app_label}.{record_content_type.model} "
+                    f"tracking_rows={len(rows)}"
+                )
+
+            record_ids = [tracking_row.dns_record_object_id for tracking_row in rows]
+            records_by_id = record_model.objects.in_bulk(record_ids)
+            for tracking_row in rows:
+                tracking_row._prefetched_dns_record = records_by_id.get(tracking_row.dns_record_object_id)
+
+    #
+    # Summary / logging
+    #
+
     @staticmethod
     def _initialize_processing_summary():
         """Default object-level processing summary."""
@@ -163,32 +1573,6 @@ class BaseDNSRuleEngine(ABC):
                 return REASON_ZONE_NOT_FOUND
 
         return default_reason
-
-    def _calculate_desired_record_data(self, rule, source_obj, phase=PHASE_UNKNOWN):
-        """Calculate desired DNS record data for one rule/object pair."""
-        base_context = {"obj": wrap_for_template(source_obj)}
-        rendered_name = self._render_template(rule.name_template, base_context, "name_template")
-        shared_record_data = {"name": normalize_dns_name(rendered_name)}
-        requires_ip_context = self._requires_ip_context(rule)
-
-        all_record_data = []
-        record_variations = self._get_record_data_variations_for_rule(rule, base_context, shared_record_data)
-        for record_data in record_variations:
-            try:
-                if requires_ip_context:
-                    record_context = self._build_record_context(base_context, record_data)
-                else:
-                    record_context = dict(base_context)
-                    record_context["record"] = record_data.copy()
-                selected_views = self._get_dns_views_for_rule(rule, record_context)
-                zones = self._get_zones_for_rule(rule, record_context, selected_views)
-                for zone in zones:
-                    all_record_data.append({**record_data, "zone": zone})
-            except (DNSTemplateEmptyError, DNSRuleRenderedValueLookupError, TemplateError, ValueError) as exc:
-                self._log_candidate_skip(rule, source_obj, record_data, exc, phase=phase)
-                continue
-
-        return all_record_data
 
     def _build_log_extra(
         self,
@@ -315,573 +1699,3 @@ class BaseDNSRuleEngine(ABC):
                 record_data=record_data,
             ),
         )
-
-    def _object_needs_dns_records_for_rule(self, source_obj, rule):
-        """
-        Determine if an object needs DNS records for a specific rule.
-
-        Args:
-            source_obj: The source object to check
-            rule: The rule to check
-        """
-        if rule.record_type in ("A", "AAAA"):
-            target_ip_version = 4 if rule.record_type == "A" else 6
-
-            if isinstance(source_obj, (dcim_models.Interface, virtualization_models.VMInterface)):
-                return source_obj.ip_addresses.filter(ip_version=target_ip_version).exists()
-
-            if isinstance(source_obj, (dcim_models.Device, virtualization_models.VirtualMachine)):
-                return (rule.record_type == "A" and source_obj.primary_ip4 is not None) or (
-                    rule.record_type == "AAAA" and source_obj.primary_ip6 is not None
-                )
-
-            if isinstance(source_obj, ipam_models.Service):
-                return source_obj.ip_addresses.filter(ip_version=target_ip_version).exists()
-
-            return False
-
-        #
-        # No "don't create" logic implemented for other record types yet
-        return True
-
-    def _create_dns_record_from_rule(self, rule, source_obj):
-        """
-        Create one or more DNS records based on a rule and source object.
-
-        Now aligned with update reconciliation pattern - uses shared helper methods
-        for consistent template rendering, zone lookup, and record creation logic.
-
-        Args:
-            rule: The DNS rule to apply
-            source_obj: The source object to create a record for
-
-        Returns:
-            List of created DNS records (empty list if creation failed)
-
-        Note:
-            Jinja2 exceptions bubble up naturally for proper error handling.
-            Empty result indicates template/data issues, not programming errors.
-        """
-        # Calculate what DNS records should exist (reuses update logic)
-        desired_record_data_list = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_CREATE)
-        if not desired_record_data_list:
-            return []
-
-        # Create DNS records and tracking records (reuses update logic)
-        created_records = self._create_records_from_data(rule, source_obj, desired_record_data_list, phase=PHASE_CREATE)
-
-        # logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
-        return created_records
-
-    def _get_object_location(self, source_obj):
-        """
-        Extract location from source object for location-scoped rule resolution.
-
-        Location extraction logic:
-        - Device: device.location (required field in Nautobot)
-        - Interface: interface.device.location, with module-backed fallback via interface.parent
-        - Service: service.device.location OR service.virtual_machine.location (which is just a proxy for cluster.location)
-        - VirtualMachine: vm.cluster.location
-        - VMInterface: vminterface.virtual_machine.location (which is just a proxy for cluster.location)
-        - InterfaceRedundancyGroup: None (complex multi-location) (future)
-
-        Args:
-            source_obj: The object to extract location from
-
-        Returns:
-            Location object or None if object type is not location-aware
-        """
-        # Interface objects are the hot path for signal-driven processing.
-        if isinstance(source_obj, dcim_models.Interface):
-            #
-            # Interface.device is set when the interface is a component of a device.
-            if source_obj.device:
-                return source_obj.device.location
-
-            # Module-backed interfaces may expose their containing Device via parent.
-            parent = source_obj.parent
-            if isinstance(parent, dcim_models.Device):
-                return parent.location
-
-            logger.warning(
-                "dnsrule_interface_parent_fallback_failed field=%s source=%s:%s parent_type=%s",
-                "location",
-                self._safe_model_label(source_obj),
-                source_obj.pk,
-                type(parent).__name__,
-                extra={
-                    "event": "dnsrule_engine",
-                    "reason_code": REASON_INTERFACE_PARENT_FALLBACK_FAILED,
-                    "phase": PHASE_UNKNOWN,
-                    "source_ct": self._safe_model_label(source_obj),
-                    "source_id": str(source_obj.pk),
-                    "source_repr": str(source_obj),
-                    "resolution_field": "location",
-                    "parent_type": type(parent).__name__,
-                },
-            )
-            return None
-
-        if isinstance(source_obj, virtualization_models.VMInterface):
-            if source_obj.virtual_machine:
-                vm = source_obj.virtual_machine
-                return vm.location
-
-            return None
-
-        # Device objects have direct location (required field in Nautobot).
-        if isinstance(source_obj, dcim_models.Device):
-            return source_obj.location
-
-        # VM.location property resolves to cluster.location.
-        if isinstance(source_obj, virtualization_models.VirtualMachine):
-            return source_obj.location
-
-        # Service objects can be attached to either Device or VirtualMachine.
-        if isinstance(source_obj, ipam_models.Service):
-            if source_obj.device:
-                return source_obj.device.location
-
-            if source_obj.virtual_machine:
-                vm = source_obj.virtual_machine
-                return vm.location
-
-            return None
-
-        return None
-
-    def _get_object_tenant(self, source_obj):
-        """
-        Extract tenant from source object for tenant-scoped rule resolution.
-
-        Tenant extraction logic:
-        - Device: device.tenant (optional field in Nautobot)
-        - Interface: interface.device.tenant, with module-backed fallback via interface.parent
-        - Service: service.device.tenant OR service.virtual_machine.tenant (with cluster.tenant fallback)
-        - VirtualMachine: vm.tenant (with cluster.tenant fallback)
-        - VMInterface: vminterface.virtual_machine.tenant (with cluster.tenant fallback)
-        - Other objects: None (no tenant awareness)
-
-        Args:
-            source_obj: The object to extract tenant from
-
-        Returns:
-            Tenant object or None if object has no tenant or type is not tenant-aware
-        """
-        if isinstance(source_obj, dcim_models.Interface):
-            if source_obj.device:
-                return source_obj.device.tenant
-
-            module = source_obj.module
-            # NOTE: This currently checks only the directly attached module tenant.
-            # NOTE: It does not walk ancestor modules/module-bays to discover tenant.
-            if module and module.tenant:
-                return module.tenant
-
-            # Module-backed interfaces may expose their containing Device via parent.
-            parent = source_obj.parent
-            if isinstance(parent, dcim_models.Device):
-                return parent.tenant
-
-            logger.warning(
-                "dnsrule_interface_parent_fallback_failed field=%s source=%s:%s parent_type=%s",
-                "tenant",
-                self._safe_model_label(source_obj),
-                source_obj.pk,
-                type(parent).__name__,
-                extra={
-                    "event": "dnsrule_engine",
-                    "reason_code": REASON_INTERFACE_PARENT_FALLBACK_FAILED,
-                    "phase": PHASE_UNKNOWN,
-                    "source_ct": self._safe_model_label(source_obj),
-                    "source_id": str(source_obj.pk),
-                    "source_repr": str(source_obj),
-                    "resolution_field": "tenant",
-                    "parent_type": type(parent).__name__,
-                },
-            )
-            return None
-
-        if isinstance(source_obj, virtualization_models.VMInterface):
-            if source_obj.virtual_machine:
-                vm = source_obj.virtual_machine
-                return vm.tenant or vm.cluster.tenant
-
-            return None
-
-        if isinstance(source_obj, dcim_models.Device):
-            return source_obj.tenant
-
-        if isinstance(source_obj, virtualization_models.VirtualMachine):
-            return source_obj.tenant or source_obj.cluster.tenant
-
-        # Service objects can be attached to either Device or VirtualMachine.
-        if isinstance(source_obj, ipam_models.Service):
-            if source_obj.device:
-                return source_obj.device.tenant
-
-            if source_obj.virtual_machine:
-                vm = source_obj.virtual_machine
-                return vm.tenant or vm.cluster.tenant
-
-            return None
-
-        # Object type is not tenant-aware or has no tenant assigned
-        return None
-
-    def _get_applicable_rules(self, source_obj):
-        """
-        Get all DNS rules that apply to the given source object.
-
-        Tenant+Location-scoped rule resolution with per-record-type precedence:
-        1. For each record type, prefer most specific rule in this order:
-           a. Location+Tenant specific (most specific)
-           b. Location specific (location-wide, any tenant)
-           c. Tenant specific (tenant-wide, any location)
-           d. Global (any tenant, any location)
-        2. Different record types can use different rule sources
-        3. Location-first precedence: locations are more specific than tenants
-
-        Args:
-            source_obj: The object to find applicable rules for
-
-        Returns:
-            List of applicable DNSRule objects
-        """
-        content_type = ContentType.objects.get_for_model(source_obj)
-        object_location = self._get_object_location(source_obj)
-        object_tenant = self._get_object_tenant(source_obj)
-        return self._resolve_applicable_rules_for_scope(content_type, object_location, object_tenant)
-
-    def _resolve_applicable_rules_for_scope(
-        self,
-        content_type,
-        object_location,
-        object_tenant,
-    ):
-        """Resolve rules for a specific content-type/location/tenant scope."""
-        # Early return for objects with no location or tenant - only global rules can apply
-        if object_location is None and object_tenant is None:
-            # logger.debug(f"Using global rules for {source_obj} (no location, no tenant)")
-            return list(
-                DNSRule.objects.filter(
-                    content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
-                )
-            )
-
-        # Build query for all potentially applicable rules
-        base_query = DNSRule.objects.filter(content_type=content_type, enabled=True)
-
-        # Get all rules that could apply based on location and tenant
-        location_conditions = django_models.Q(location=object_location) | django_models.Q(location__isnull=True)
-        tenant_conditions = django_models.Q(tenant=object_tenant) | django_models.Q(tenant__isnull=True)
-
-        all_rules = list(base_query.filter(location_conditions & tenant_conditions))
-
-        # Group rules by record type and precedence level
-        rules_by_type = defaultdict(
-            lambda: {
-                "location_tenant": [],  # Most specific
-                "location": [],  # Location-wide
-                "tenant": [],  # Tenant-wide
-                "global": [],  # Least specific
-            }
-        )
-
-        for rule in all_rules:
-            record_type = rule.record_type
-
-            if rule.location == object_location and rule.tenant == object_tenant:
-                rules_by_type[record_type]["location_tenant"].append(rule)
-            elif rule.location == object_location and rule.tenant is None:
-                rules_by_type[record_type]["location"].append(rule)
-            elif rule.location is None and rule.tenant == object_tenant:
-                rules_by_type[record_type]["tenant"].append(rule)
-            else:  # rule.location is None and rule.tenant is None
-                rules_by_type[record_type]["global"].append(rule)
-
-        # For each record type, select highest precedence rule (location-first)
-        final_rule_pks = []
-        for record_type, rules in rules_by_type.items():
-            if rules["location_tenant"]:
-                final_rule_pks.extend([r.pk for r in rules["location_tenant"]])
-                # logger.debug(f"Using location+tenant rule for {source_obj} record type {record_type}")
-            elif rules["location"]:
-                final_rule_pks.extend([r.pk for r in rules["location"]])
-                # logger.debug(f"Using location rule for {source_obj} record type {record_type}")
-            elif rules["tenant"]:
-                final_rule_pks.extend([r.pk for r in rules["tenant"]])
-                # logger.debug(f"Using tenant rule for {source_obj} record type {record_type}")
-            elif rules["global"]:
-                final_rule_pks.extend([r.pk for r in rules["global"]])
-                # logger.debug(f"Using global rule for {source_obj} record type {record_type}")
-
-        # Return selected rules from the already-fetched candidate set.
-        final_rule_pk_set = set(final_rule_pks)
-        return [rule for rule in all_rules if rule.pk in final_rule_pk_set]
-
-    def _build_record_context(self, base_context, record_data):
-        """Build per-record template context, including selected IP when available."""
-        context = dict(base_context)
-        context["record"] = record_data.copy()
-
-        address_id = record_data.get("address_id")
-        if address_id:
-            ip_obj = ipam_models.IPAddress.objects.filter(pk=address_id).first()
-            if ip_obj is None:
-                raise DNSRuleRenderedValueLookupError(
-                    field_name="value_template",
-                    message=f"Resolved IP address '{address_id}' was not found.",
-                )
-            context["ip"] = wrap_for_template(ip_obj)
-
-        return context
-
-    def _get_existing_tracking_records(self, rule, source_obj):
-        """Get existing tracking records for a rule+object combination."""
-        return DNSRuleRecord.objects.filter(
-            rule=rule, content_type=ContentType.objects.get_for_model(source_obj), object_id=source_obj.id
-        )
-
-    def _cleanup_records_for_rule(self, rule, source_obj):
-        """Clean up all DNS records for a specific rule+object combination."""
-        tracking_records = self._get_existing_tracking_records(rule, source_obj)
-        deleted_count = 0
-
-        for tracking_record in tracking_records:
-            self._delete_tracking_and_dns_record(tracking_record)
-            deleted_count += 1
-
-        return deleted_count
-
-    def _cleanup_orphaned_records(self, source_obj, applicable_rules):
-        """
-        Clean up DNS records from rules that are no longer applicable to the source object.
-
-        This handles scenarios like:
-        - Device location changes (old location-specific rules no longer apply)
-        - Rule modifications (disabled, deleted, or scope changes)
-        - Object attribute changes that affect rule applicability
-
-        Args:
-            source_obj: The source object whose orphaned records should be cleaned up
-            applicable_rules: QuerySet of currently applicable rules for this object
-        """
-        content_type = ContentType.objects.get_for_model(source_obj)
-        existing_tracking_records = DNSRuleRecord.objects.filter(
-            content_type=content_type, object_id=str(source_obj.pk)
-        )
-
-        # Find and clean up records from rules that are no longer applicable
-        orphaned_records = existing_tracking_records.exclude(rule__in=applicable_rules)
-        deleted_count = 0
-        orphaned_rule_ids = orphaned_records.values_list("rule_id", flat=True).distinct()
-        for orphaned_rule in DNSRule.objects.filter(pk__in=orphaned_rule_ids):
-            # logger.debug(f"Cleaning up orphaned record from rule {orphaned_rule.name} for {source_obj}")
-            deleted_count += self._cleanup_records_for_rule(orphaned_rule, source_obj)
-
-        return deleted_count
-
-    def _create_records_from_data(self, rule, source_obj, record_data_list, phase=PHASE_UNKNOWN):
-        """Create DNS records and tracking records from prepared data, returning the created DNS records."""
-        record_class = self._get_record_class(rule.record_type)
-        source_content_type = ContentType.objects.get_for_model(source_obj)
-        dns_record_content_type = ContentType.objects.get_for_model(record_class)
-
-        created_records = []
-
-        for record_data in record_data_list:
-            # Create the DNS record. This is a best-effort operation; if any of them fail, log the error and continue.
-            try:
-                with transaction.atomic():
-                    dns_record = record_class(**record_data)  # pylint: disable=not-callable
-                    dns_record.validated_save()
-
-                    DNSRuleRecord.objects.create(
-                        rule=rule,
-                        content_type=source_content_type,
-                        object_id=source_obj.id,
-                        dns_record_content_type=dns_record_content_type,
-                        dns_record_object_id=dns_record.id,
-                    )
-            except (ValidationError, IntegrityError) as exc:
-                self._log_record_create_failure(rule, source_obj, record_data, exc, phase=phase)
-                continue
-
-            created_records.append(dns_record)
-            # logger.debug(f"Created DNS record {dns_record} from rule {rule.name} for {source_obj}")
-
-        return created_records
-
-    def _get_record_class(self, record_type):
-        """Get the DNS record model class for a given record type."""
-        record_type_name = f"{record_type}Record"
-        record_class = getattr(models, record_type_name, None)
-
-        if not record_class:
-            raise ValueError(f'Unknown record type "{record_type}"')
-
-        if not issubclass(record_class, DNSRecord):
-            raise ValueError(f"Record type '{record_type}' is not a valid DNS record type")
-
-        return record_class
-
-    def _get_record_content_key(self, dns_record):
-        """Generate a content-based key for record comparison."""
-        record_type = dns_record.__class__.__name__
-        base_key = f"{record_type}:{dns_record.name}:{dns_record.zone_id}"
-
-        suffix = "unknown"
-        if hasattr(dns_record, "address_id"):  # A/AAAA
-            suffix = dns_record.address_id
-
-        return f"{base_key}:{suffix}"
-
-    def _get_record_identity_key(self, dns_record):
-        """Generate an identity key that excludes mutable fields such as rendered name."""
-        record_type = dns_record.__class__.__name__
-
-        if hasattr(dns_record, "address_id"):  # A/AAAA
-            return f"{record_type}:{dns_record.zone_id}:{dns_record.address_id}"
-
-        return self._get_record_content_key(dns_record)
-
-    def _get_record_content_key_from_data(self, record_data, rule_record_type):
-        """Generate content key from record data dict."""
-        zone_id = record_data["zone"].id
-        name = record_data["name"]
-
-        record_type = f"{rule_record_type}Record"
-        if rule_record_type in ("A", "AAAA"):
-            suffix = record_data["address_id"]
-        else:
-            raise ValueError(f"Unsupported record type for content key generation: {rule_record_type}")
-
-        return f"{record_type}:{name}:{zone_id}:{suffix}"
-
-    def _get_record_identity_key_from_data(self, record_data, rule_record_type):
-        """Generate identity key from record data dict."""
-        zone_id = record_data["zone"].id
-        record_type = f"{rule_record_type}Record"
-
-        if rule_record_type in ("A", "AAAA"):
-            return f"{record_type}:{zone_id}:{record_data['address_id']}"
-
-        return self._get_record_content_key_from_data(record_data, rule_record_type)
-
-    def _delete_tracking_and_dns_record(self, tracking_record):
-        """Delete both the DNS record and its tracking record."""
-        # logger.debug(f"Deleting DNS record {tracking_record.dns_record} and tracking record {tracking_record}")
-
-        try:
-            #
-            # Just delete the DNS record; the associated tracking record is cascade-deleted
-            # via the GenericRelation on the DNSRecord model.
-            tracking_record.dns_record.delete()
-        except Exception as exc:
-            logger.error(
-                "Failed to delete DNS record '%s' and tracking record '%s': %s (%s)",
-                tracking_record.dns_record,
-                tracking_record,
-                exc,
-                type(exc).__name__,
-            )
-            raise
-
-    def _get_record_data_variations_for_rule(self, rule, context, base_record_data):
-        """
-        Build list of record data dictionaries (1 for single, N for multiple records).
-
-        Handles the case where value templates return multiple IPs (space-delimited UUIDs)
-        and creates separate record data for each one.
-
-        Args:
-            rule: The DNS rule containing templates
-            context: Jinja context for template rendering
-            base_record_data: Base data shared across all records (name, etc.)
-
-        Returns:
-            List of record_data dictionaries ready for DNS record creation
-        """
-        record_type = rule.record_type
-
-        if record_type in ("A", "AAAA"):
-            # logger.debug(f"Building A/AAAA record data variations from rule {rule.name}")
-            # Handle A/AAAA records with potential multiple IPs
-            if rule.value_template:
-                address_result = self._render_template(rule.value_template, context, "value_template")
-                # logger.debug(f"A/AAAA record data variations from rule {rule.name} - address result: {address_result}")
-
-                # Split on space - handles both single and multiple IPs uniformly
-                address_ids = address_result.split()
-
-                return self._build_record_variations(rule, base_record_data, address_ids)
-
-            # No value template - raise exception rather than return empty
-            raise DNSTemplateEmptyError("value_template", "missing", [])
-
-        # Other record types - use existing single-record logic
-        record_data = base_record_data.copy()
-        self._add_record_type_fields_single(rule, context, record_data)
-        return [record_data]
-
-    def _build_record_variations(self, rule, base_record_data, address_ids):
-        """
-        Build list of record data dictionaries for a given list of address IDs.
-
-        Args:
-            rule: The DNS rule containing the templates
-            base_record_data: Base data shared across all records (name, zone, etc.)
-            address_ids: List of address IDs to build record data for
-
-        Returns:
-            List of record data dictionaries ready for DNS record creation
-        """
-        record_variations = []
-        for address_id in address_ids:
-            address_id = address_id.strip()
-            if not address_id:
-                continue
-
-            try:
-                parsed_address_id = uuid.UUID(address_id)
-            except ValueError:
-                logger.warning(
-                    "dnsrule_candidate_skipped reason=%s rule=%s invalid_address_id=%s",
-                    REASON_INVALID_ADDRESS_UUID,
-                    rule.name,
-                    address_id,
-                    extra={
-                        "event": "dnsrule_engine",
-                        "reason_code": REASON_INVALID_ADDRESS_UUID,
-                        "phase": PHASE_CANDIDATE_EXPANSION,
-                        "rule_id": str(rule.pk),
-                        "rule_name": rule.name,
-                        "record_type": rule.record_type,
-                        "invalid_address_id": address_id,
-                    },
-                )
-                continue
-
-            record_data = base_record_data.copy()
-            record_data["address_id"] = parsed_address_id
-            record_variations.append(record_data)
-
-        return record_variations
-
-    def _add_record_type_fields_single(self, rule, context, record_data):
-        """
-        Add record-type specific fields to the record data.
-
-        Args:
-            rule: The DNS rule containing the templates
-            context: The Jinja context for rendering
-            record_data: The dictionary to add fields to
-
-        Side effect: Adds record-type specific fields to the record data.
-
-        Raises:
-            DNSTemplateEmptyError: If any required template renders empty
-        """
-        if record_type_method := getattr(self, f"_add_record_type_fields_{rule.record_type}", None):
-            record_type_method(rule, context, record_data)  # pylint: disable=not-callable
