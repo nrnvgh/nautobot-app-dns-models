@@ -30,7 +30,7 @@ from nautobot_dns_models.constants.supported_models import (
 from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSTemplateEmptyError
 from nautobot_dns_models.models import DNSRule
 from nautobot_dns_models.rules.scope_filters import BulkScopeFilterBuilder
-from nautobot_dns_models.rules.engine import get_rule_engine
+from nautobot_dns_models.rules.engine import ObjectProcessingSummary, get_rule_engine
 
 name = "DNS Reconciliation Jobs"    # pylint: disable=invalid-name
 
@@ -70,17 +70,16 @@ class ReconcileRunSummary:
         self.processed_count += 1
         self.success_count += 1
 
-        if processing_summary.get("had_existing_rule_records"):
+        if processing_summary.had_existing_rule_records:
             self.objects_with_existing_rule_records += 1
-            self.existing_rule_record_count += int(processing_summary.get("existing_rule_record_count", 0))
+            self.existing_rule_record_count += processing_summary.existing_rule_record_count
 
-        object_changed_record_count = int(processing_summary.get("changed_record_count", 0))
-        if object_changed_record_count > 0:
+        if processing_summary.changed_record_count > 0:
             self.objects_changed += 1
-            self.changed_record_count += object_changed_record_count
+            self.changed_record_count += processing_summary.changed_record_count
 
-        self.record_ops_create_count += int(processing_summary.get("record_ops_create_count", 0))
-        self.record_ops_delete_count += int(processing_summary.get("record_ops_delete_count", 0))
+        self.record_ops_create_count += processing_summary.record_ops_create_count
+        self.record_ops_delete_count += processing_summary.record_ops_delete_count
 
     def as_execution_dict(self):
         """Serialize execution counters for job result output."""
@@ -539,16 +538,6 @@ class ReconcileDNSBulkJob(Job):
                 continue
 
             for obj, processing_summary in zip(model_objects, batch_summaries):
-                if processing_summary.get("_batch_failed"):
-                    summary.mark_processed_failure()
-                    self.logger.error(
-                        "reconcile failure target=%s:%s error=%s",
-                        model_label,
-                        obj.pk,
-                        processing_summary.get("_batch_error"),
-                        extra={"object": obj},
-                    )
-                    continue
                 summary.mark_processed_success(processing_summary)
 
 

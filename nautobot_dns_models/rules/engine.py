@@ -6,6 +6,7 @@ import logging
 import re
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass
 from time import perf_counter
 
 from django.contrib.contenttypes.models import ContentType
@@ -52,6 +53,17 @@ PHASE_CREATE = "create"
 PHASE_UPDATE_RECONCILE = "update_reconcile"
 PHASE_CANDIDATE_EXPANSION = "candidate_expansion"
 PHASE_UNKNOWN = "unknown"
+
+
+@dataclass
+class ObjectProcessingSummary:
+    """Per-object result returned by the engine's processing paths."""
+
+    had_existing_rule_records: bool = False
+    existing_rule_record_count: int = 0
+    changed_record_count: int = 0
+    record_ops_create_count: int = 0
+    record_ops_delete_count: int = 0
 
 
 def get_rule_engine():
@@ -101,12 +113,11 @@ class DNSRuleEngine:
 
     def process_object(self, source_obj, created=False):
         """Process one source object against applicable rules."""
-        summary = self._initialize_processing_summary()
+        summary = ObjectProcessingSummary()
         content_type = ContentType.objects.get_for_model(source_obj)
         rules = self._get_applicable_rules(source_obj)
-        rules_count = len(rules)
 
-        if rules_count == 0:
+        if not rules:
             logger.debug(
                 "No DNS rules found for %s - skipping DNS record processing for %s",
                 content_type,
@@ -114,23 +125,19 @@ class DNSRuleEngine:
             )
             return summary
 
-        existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=str(source_obj.pk))
+        existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.pk)
         existing_count = existing_records.count()
-        summary["existing_rule_record_count"] = existing_count
-        summary["had_existing_rule_records"] = existing_count > 0
+        summary.existing_rule_record_count = existing_count
+        summary.had_existing_rule_records = existing_count > 0
 
         if created or existing_count == 0:
-            create_summary = self._create_dns_records_for_object(source_obj, rules)
-            summary["changed_record_count"] = create_summary["changed_record_count"]
-            summary["changed"] = create_summary["changed"]
-            summary["record_ops_create_count"] = create_summary["record_ops_create_count"]
-            summary["record_ops_delete_count"] = create_summary["record_ops_delete_count"]
+            change_result = self._create_dns_records_for_object(source_obj, rules)
         else:
-            update_summary = self._update_dns_records_for_object(source_obj, rules)
-            summary["changed_record_count"] = update_summary["changed_record_count"]
-            summary["changed"] = update_summary["changed"]
-            summary["record_ops_create_count"] = update_summary["record_ops_create_count"]
-            summary["record_ops_delete_count"] = update_summary["record_ops_delete_count"]
+            change_result = self._update_dns_records_for_object(source_obj, rules)
+
+        summary.changed_record_count = change_result["changed_record_count"]
+        summary.record_ops_create_count = change_result["record_ops_create_count"]
+        summary.record_ops_delete_count = change_result["record_ops_delete_count"]
 
         return summary
 
@@ -414,10 +421,10 @@ class DNSRuleEngine:
         failed_rule_ids = entry["failed_rule_ids"]
         tracking_rows = entry["tracking_rows"]
 
-        summary = self._initialize_processing_summary()
+        summary = ObjectProcessingSummary()
         existing_count = len(tracking_rows)
-        summary["existing_rule_record_count"] = existing_count
-        summary["had_existing_rule_records"] = existing_count > 0
+        summary.existing_rule_record_count = existing_count
+        summary.had_existing_rule_records = existing_count > 0
 
         if not rules:
             return summary
@@ -451,12 +458,9 @@ class DNSRuleEngine:
             delete_count += reconcile_summary["delete"]
             update_count += reconcile_summary.get("update", 0)
 
-        changed_record_count = create_count + delete_count + update_count
-        summary["changed_record_count"] = changed_record_count
-        summary["changed"] = changed_record_count > 0
-        summary["record_ops_create_count"] = create_count
-        summary["record_ops_delete_count"] = delete_count
-
+        summary.changed_record_count = create_count + delete_count + update_count
+        summary.record_ops_create_count = create_count
+        summary.record_ops_delete_count = delete_count
         return summary
 
     def _record_pipeline_stage_metrics(self, batch_metrics):
@@ -485,6 +489,7 @@ class DNSRuleEngine:
             except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                 self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_CREATE, cleanup=False)
                 continue
+
         return {
             "changed": changed_record_count > 0,
             "changed_record_count": changed_record_count,
@@ -512,6 +517,7 @@ class DNSRuleEngine:
                 delete_count += self._cleanup_records_for_rule(rule, source_obj)
 
         changed_record_count = create_count + delete_count + update_count
+
         return {
             "changed": changed_record_count > 0,
             "changed_record_count": changed_record_count,
@@ -877,7 +883,7 @@ class DNSRuleEngine:
         """Clean up DNS records from rules that are no longer applicable to the source object."""
         content_type = ContentType.objects.get_for_model(source_obj)
         existing_tracking_records = DNSRuleRecord.objects.filter(
-            content_type=content_type, object_id=str(source_obj.pk)
+            content_type=content_type, object_id=source_obj.pk
         )
 
         orphaned_records = existing_tracking_records.exclude(rule__in=applicable_rules)
@@ -1486,18 +1492,6 @@ class DNSRuleEngine:
     #
     # Summary / logging
     #
-
-    @staticmethod
-    def _initialize_processing_summary():
-        """Default object-level processing summary."""
-        return {
-            "had_existing_rule_records": False,
-            "existing_rule_record_count": 0,
-            "changed": False,
-            "changed_record_count": 0,
-            "record_ops_create_count": 0,
-            "record_ops_delete_count": 0,
-        }
 
     @staticmethod
     def _safe_model_label(obj):
