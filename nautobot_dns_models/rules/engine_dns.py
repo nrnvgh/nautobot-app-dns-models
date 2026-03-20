@@ -9,7 +9,7 @@ from time import perf_counter
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.template import engines as django_template_engines
 from jinja2 import TemplateError
 from nautobot.ipam import models as ipam_models
@@ -44,6 +44,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
     # - 1000: ~2468 changed/sec (avg)
     # Keep this constant in sync with docs/dev/reconcile_greenfield_performance_tally.md.
     BULK_RENAME_UPDATE_BATCH_SIZE = 250
+    BULK_CREATE_BATCHED_PIPELINE_SIZE = 1000
 
     def __init__(self):
         """Initialize DNS rule engine and pipeline dispatch registry."""
@@ -57,6 +58,8 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             "rule_driven": self._process_objects,
         }
         self._active_pipeline_strategy = "rule_driven"
+        self._pending_batched_creates = defaultdict(list)
+        self._batched_create_queue_active = False
         self._pipeline_stage_metrics = {
             "batches": 0,
             "objects_total": 0,
@@ -116,15 +119,6 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             summary["record_ops_delete_count"] = update_summary["record_ops_delete_count"]
 
         return summary
-
-    def register_pipeline_strategy(self, name, handler):
-        """Register a custom pipeline strategy key to callable handler."""
-        normalized = (name or "").strip().lower()
-        if not normalized:
-            return
-        if not callable(handler):
-            return
-        self._pipeline_dispatch[normalized] = handler
 
     def set_pipeline_strategy(self, strategy):
         """Set active pipeline strategy for subsequent batch processing."""
@@ -384,12 +378,120 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         """Stage 4: apply prepared reconcile entries and queue rename updates."""
         pending_rename_updates = defaultdict(list)
         summaries = []
-        for entry in prepared_entries:
-            summaries.append(self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates))
+        self._pending_batched_creates.clear()
+        self._batched_create_queue_active = True
+
+        try:
+            for entry in prepared_entries:
+                summaries.append(self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates))
+
+            if self._batched_create_queue_active:
+                self._flush_batched_create_queue()
+        finally:
+            self._batched_create_queue_active = False
+            self._pending_batched_creates.clear()
+
         return {
             "summaries": summaries,
             "pending_rename_updates": pending_rename_updates,
         }
+
+    def _create_records_from_data(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
+        """Dispatch create path based on configured runtime strategy."""
+        if self._batched_create_queue_active:
+            return self._queue_records_for_batched_create(
+                rule=rule,
+                source_obj=source_obj,
+                record_data_list=record_data_list,
+            )
+        return self._create_records_from_data_bulk_create_fast(
+            rule=rule,
+            source_obj=source_obj,
+            record_data_list=record_data_list,
+            phase=phase,
+        )
+
+    def _queue_records_for_batched_create(self, rule, source_obj, record_data_list):
+        """Queue create rows for one pipeline-level bulk flush."""
+        if not record_data_list:
+            return []
+
+        record_class = self._get_record_class(rule.record_type)
+        source_content_type_id = ContentType.objects.get_for_model(source_obj).pk
+        dns_record_content_type_id = ContentType.objects.get_for_model(record_class).pk
+        queue_rows = self._pending_batched_creates[record_class]
+        for record_data in record_data_list:
+            queue_rows.append(
+                {
+                    "rule_id": rule.id,
+                    "content_type_id": source_content_type_id,
+                    "object_id": source_obj.id,
+                    "dns_record_content_type_id": dns_record_content_type_id,
+                    "record_data": record_data,
+                }
+            )
+
+        # Reconcile summaries only use len(created_records), so lightweight sentinels are sufficient.
+        return [None] * len(record_data_list)
+
+    def _flush_batched_create_queue(self):
+        """Flush queued create rows with chunked bulk inserts."""
+        if not self._pending_batched_creates:
+            return
+
+        batch_size = self.BULK_CREATE_BATCHED_PIPELINE_SIZE
+        with transaction.atomic():
+            for record_class, queued_rows in self._pending_batched_creates.items():
+                if not queued_rows:
+                    continue
+                for offset in range(0, len(queued_rows), batch_size):
+                    chunk_rows = queued_rows[offset : offset + batch_size]
+                    dns_records = [
+                        record_class(**queued_row["record_data"])  # pylint: disable=not-callable
+                        for queued_row in chunk_rows
+                    ]
+                    created_records = record_class.objects.bulk_create(dns_records, batch_size=batch_size)
+                    tracking_rows = [
+                        DNSRuleRecord(
+                            rule_id=queued_row["rule_id"],
+                            content_type_id=queued_row["content_type_id"],
+                            object_id=queued_row["object_id"],
+                            dns_record_content_type_id=queued_row["dns_record_content_type_id"],
+                            dns_record_object_id=dns_record.id,
+                        )
+                        for queued_row, dns_record in zip(chunk_rows, created_records)
+                    ]
+                    DNSRuleRecord.objects.bulk_create(tracking_rows, batch_size=batch_size)
+
+    def _create_records_from_data_bulk_create_fast(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
+        """Fast-path create using Django bulk_create for records and tracking rows."""
+        if not record_data_list:
+            return []
+
+        record_class = self._get_record_class(rule.record_type)
+        source_content_type = ContentType.objects.get_for_model(source_obj)
+        dns_record_content_type = ContentType.objects.get_for_model(record_class)
+        dns_records = [record_class(**record_data) for record_data in record_data_list]  # pylint: disable=not-callable
+
+        try:
+            with transaction.atomic():
+                created_records = record_class.objects.bulk_create(dns_records, batch_size=1000)
+                tracking_rows = [
+                    DNSRuleRecord(
+                        rule=rule,
+                        content_type=source_content_type,
+                        object_id=source_obj.id,
+                        dns_record_content_type=dns_record_content_type,
+                        dns_record_object_id=dns_record.id,
+                    )
+                    for dns_record in created_records
+                ]
+                DNSRuleRecord.objects.bulk_create(tracking_rows, batch_size=1000)
+        except IntegrityError as exc:
+            self._log_record_create_failure(rule, source_obj, {}, exc, phase=phase)
+            return []
+
+        return created_records
 
     def _requires_ip_context(self, rule):
         """Production tuning: only resolve ip context when templates reference ip."""
@@ -402,6 +504,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             result = template_str.strip()
             if not result:
                 raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
+
             return result
 
         compiled_template = self._compiled_template_cache.get(template_str)
@@ -412,6 +515,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             self._compiled_template_cache[template_str] = compiled_template
 
         result = compiled_template.render(context)
+
         if not result:
             raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
 
@@ -640,19 +744,6 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             )
 
         skipped_create = len(records_to_create_by_identity) - len(created_records)
-        skipped_total = skipped_create + skipped_update
-        self._log_reconcile_summary(
-            rule=rule,
-            source_obj=source_obj,
-            counts={
-                "existing": len(existing_keys),
-                "desired": len(desired_keys),
-                "keep": keep_count,
-                "create": len(created_records),
-                "delete": len(records_to_delete_by_identity),
-                "skipped": skipped_total,
-            },
-        )
         return {
             "existing": len(existing_keys),
             "desired": len(desired_keys),
@@ -660,7 +751,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             "create": len(created_records),
             "delete": len(records_to_delete_by_identity),
             "update": updated_count,
-            "skipped": skipped_total,
+            "skipped": skipped_create + skipped_update,
             "changed_record_count": len(created_records) + len(records_to_delete_by_identity) + updated_count,
         }
 
@@ -682,7 +773,7 @@ class DNSRuleEngine(BaseDNSRuleEngine):
         target_ip_version = 4 if rule.record_type == "A" else 6
         prefetched = getattr(source_obj, "_prefetched_objects_cache", {}).get("ip_addresses")
         if prefetched is not None:
-            return any(getattr(ip_obj, "ip_version", None) == target_ip_version for ip_obj in prefetched)
+            return any(ip_obj.ip_version == target_ip_version for ip_obj in prefetched)
 
         return super()._object_needs_dns_records_for_rule(source_obj, rule)
 
@@ -904,24 +995,11 @@ class DNSRuleEngine(BaseDNSRuleEngine):
             )
 
         skipped_create = len(records_to_create_by_identity) - len(created_records)
-        skipped_total = skipped_create + skipped_update
-        self._log_reconcile_summary(
-            rule=rule,
-            source_obj=source_obj,
-            counts={
-                "existing": len(existing_identity_keys),
-                "desired": len(desired_identity_keys),
-                "keep": keep_count,
-                "create": len(created_records),
-                "delete": len(records_to_delete_by_identity),
-                "skipped": skipped_total,
-            },
-        )
         return {
             "create": len(created_records),
             "delete": len(records_to_delete_by_identity),
             "update": updated_count,
-            "skipped": skipped_total,
+            "skipped": skipped_create + skipped_update,
         }
 
     def _flush_bulk_rename_updates(

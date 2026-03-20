@@ -316,38 +316,6 @@ class BaseDNSRuleEngine(ABC):
             ),
         )
 
-    #
-    # XXX We may opt to nuke this; it's noisy. That said, it's only logging @ DEBUG so it
-    # XXX may be worth keeping around.
-    def _log_reconcile_summary(self, rule, source_obj, counts):
-        """Emit per-rule reconciliation outcome summary."""
-        logger.debug(
-            "dnsrule_reconcile_summary rule=%s source=%s:%s existing=%s desired=%s keep=%s create=%s delete=%s skipped=%s",
-            rule.name,
-            self._safe_model_label(source_obj),
-            source_obj.pk,
-            counts["existing"],
-            counts["desired"],
-            counts["keep"],
-            counts["create"],
-            counts["delete"],
-            counts["skipped"],
-            extra={
-                **self._build_log_extra(
-                    rule=rule,
-                    source_obj=source_obj,
-                    reason_code="RECONCILE_SUMMARY",
-                    phase=PHASE_UPDATE_RECONCILE,
-                ),
-                "existing_count": counts["existing"],
-                "desired_count": counts["desired"],
-                "keep_count": counts["keep"],
-                "create_count": counts["create"],
-                "delete_count": counts["delete"],
-                "skipped_count": counts["skipped"],
-            },
-        )
-
     def _object_needs_dns_records_for_rule(self, source_obj, rule):
         """
         Determine if an object needs DNS records for a specific rule.
@@ -675,27 +643,6 @@ class BaseDNSRuleEngine(ABC):
             rule=rule, content_type=ContentType.objects.get_for_model(source_obj), object_id=source_obj.id
         )
 
-    def _get_existing_records_by_rule_and_object(self, rule, source_obj):
-        tracking_records = self._get_existing_tracking_records(rule, source_obj)
-        existing_records_by_content = {}
-        for tracking_record in tracking_records:
-            dns_record = tracking_record.dns_record
-            content_key = self._get_record_content_key(dns_record)
-            # logger.debug(f"Existing record content key: '{content_key}'")
-            existing_records_by_content[content_key] = tracking_record
-
-        return existing_records_by_content
-
-    def _get_desired_records_by_rule_and_object(self, rule, source_obj):
-        desired_record_data = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_UPDATE_RECONCILE)
-        desired_records_by_content = {}
-        for record_data in desired_record_data:
-            content_key = self._get_record_content_key_from_data(record_data, rule.record_type)
-            logger.debug(f"Desired record content key: '{content_key}'")
-            desired_records_by_content[content_key] = record_data
-
-        return desired_records_by_content
-
     def _cleanup_records_for_rule(self, rule, source_obj):
         """Clean up all DNS records for a specific rule+object combination."""
         tracking_records = self._get_existing_tracking_records(rule, source_obj)
@@ -738,6 +685,8 @@ class BaseDNSRuleEngine(ABC):
     def _create_records_from_data(self, rule, source_obj, record_data_list, phase=PHASE_UNKNOWN):
         """Create DNS records and tracking records from prepared data, returning the created DNS records."""
         record_class = self._get_record_class(rule.record_type)
+        source_content_type = ContentType.objects.get_for_model(source_obj)
+        dns_record_content_type = ContentType.objects.get_for_model(record_class)
 
         created_records = []
 
@@ -750,9 +699,9 @@ class BaseDNSRuleEngine(ABC):
 
                     DNSRuleRecord.objects.create(
                         rule=rule,
-                        content_type=ContentType.objects.get_for_model(source_obj),
+                        content_type=source_content_type,
                         object_id=source_obj.id,
-                        dns_record_content_type=ContentType.objects.get_for_model(dns_record),
+                        dns_record_content_type=dns_record_content_type,
                         dns_record_object_id=dns_record.id,
                     )
             except (ValidationError, IntegrityError) as exc:
@@ -826,7 +775,7 @@ class BaseDNSRuleEngine(ABC):
 
         try:
             #
-            # Just delete the DNS record; the assciated tracking record is cascade-deleted
+            # Just delete the DNS record; the associated tracking record is cascade-deleted
             # via the GenericRelation on the DNSRecord model.
             tracking_record.dns_record.delete()
         except Exception as exc:
@@ -934,11 +883,5 @@ class BaseDNSRuleEngine(ABC):
         Raises:
             DNSTemplateEmptyError: If any required template renders empty
         """
-        # A/AAAA records are now handled in _get_record_data_variations_for_rule
-        # to support multiple IP addresses cleanly
-        if rule.record_type in ("A", "AAAA"):
-            # This method no longer handles A/AAAA - they're handled in the variations builder
-            pass
-
         if record_type_method := getattr(self, f"_add_record_type_fields_{rule.record_type}", None):
             record_type_method(rule, context, record_data)  # pylint: disable=not-callable
