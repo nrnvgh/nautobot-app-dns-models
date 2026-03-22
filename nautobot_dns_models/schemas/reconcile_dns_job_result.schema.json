@@ -73,14 +73,16 @@
         "processed_count",
         "success_count",
         "failure_count",
-        "skipped_scope_count"
+        "skipped_scope_count",
+        "runtime_seconds"
       ],
       "properties": {
         "targets_seen": { "type": "integer", "minimum": 0 },
         "processed_count": { "type": "integer", "minimum": 0 },
         "success_count": { "type": "integer", "minimum": 0 },
         "failure_count": { "type": "integer", "minimum": 0 },
-        "skipped_scope_count": { "type": "integer", "minimum": 0 }
+        "skipped_scope_count": { "type": "integer", "minimum": 0 },
+        "runtime_seconds": { "type": "number", "minimum": 0 }
       }
     },
     "reconciliation": {
