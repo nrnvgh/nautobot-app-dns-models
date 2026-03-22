@@ -443,7 +443,7 @@ class DNSRuleEngine:
                 delete_count += self._cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule.pk)
                 continue
 
-            reconcile_summary = self._reconcile_records_for_rule_with_desired(
+            reconcile_summary = self._reconcile_records_for_rule(
                 rule=rule,
                 source_obj=source_obj,
                 tracking_records=tracking_by_rule_id.get(rule.pk, []),
@@ -521,87 +521,25 @@ class DNSRuleEngine:
             "record_ops_delete_count": delete_count,
         }
 
-    def _reconcile_records_for_rule(self, rule, source_obj):
-        """Reconcile records for one rule/object pair."""
-        tracking_records = self._get_existing_tracking_records(rule, source_obj)
-        existing_records_by_content = {}
-        existing_records_by_identity = {}
-        for tracking_record in tracking_records:
-            dns_record = tracking_record.dns_record
-            content_key = self._get_record_content_key(dns_record)
-            identity_key = self._get_record_identity_key(dns_record)
-            existing_records_by_content[content_key] = tracking_record
-            existing_records_by_identity[identity_key] = tracking_record
-
-        desired_record_data = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_UPDATE_RECONCILE)
-        desired_records_by_content = {}
-        desired_records_by_identity = {}
-        for record_data in desired_record_data:
-            content_key = self._get_record_content_key_from_data(record_data, rule.record_type)
-            identity_key = self._get_record_identity_key_from_data(record_data, rule.record_type)
-            desired_records_by_content[content_key] = record_data
-            desired_records_by_identity[identity_key] = record_data
-
-        existing_keys = set(existing_records_by_content.keys())
-        desired_keys = set(desired_records_by_content.keys())
-        existing_identity_keys = set(existing_records_by_identity.keys())
-        desired_identity_keys = set(desired_records_by_identity.keys())
-
-        records_to_delete_by_identity = existing_identity_keys - desired_identity_keys
-        records_to_create_by_identity = desired_identity_keys - existing_identity_keys
-        records_to_check_for_update = existing_identity_keys & desired_identity_keys
-
-        for identity_key in records_to_delete_by_identity:
-            self._delete_tracking_and_dns_record(existing_records_by_identity[identity_key])
-
-        updated_count = 0
-        keep_count = 0
-        skipped_update = 0
-        for identity_key in records_to_check_for_update:
-            tracking_record = existing_records_by_identity[identity_key]
-            desired_record = desired_records_by_identity[identity_key]
-            update_result = self._update_tracking_record_dns_record(
-                rule=rule,
-                source_obj=source_obj,
-                tracking_record=tracking_record,
-                desired_record_data=desired_record,
-                phase=PHASE_UPDATE_RECONCILE,
-            )
-            if update_result == "updated":
-                updated_count += 1
-            elif update_result == "unchanged":
-                keep_count += 1
-            else:
-                skipped_update += 1
-
-        created_records = []
-        if records_to_create_by_identity:
-            records_to_create_data = [desired_records_by_identity[key] for key in records_to_create_by_identity]
-            created_records = self._create_records_from_data(
-                rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
-            )
-
-        skipped_create = len(records_to_create_by_identity) - len(created_records)
-        return {
-            "existing": len(existing_keys),
-            "desired": len(desired_keys),
-            "keep": keep_count,
-            "create": len(created_records),
-            "delete": len(records_to_delete_by_identity),
-            "update": updated_count,
-            "skipped": skipped_create + skipped_update,
-            "changed_record_count": len(created_records) + len(records_to_delete_by_identity) + updated_count,
-        }
-
-    def _reconcile_records_for_rule_with_desired(
+    def _reconcile_records_for_rule(
         self,
         rule,
         source_obj,
-        tracking_records,
-        desired_record_data,
+        tracking_records=None,
+        desired_record_data=None,
         bulk_update_collector=None,
     ):
-        """Reconcile one rule using caller-provided tracking rows and desired rows."""
+        """Reconcile records for one rule/object pair.
+
+        When tracking_records and desired_record_data are None, fetches them
+        from the database (per-object path).  When provided, uses the
+        caller-supplied data (pipeline path).
+        """
+        if tracking_records is None:
+            tracking_records = self._get_existing_tracking_records(rule, source_obj)
+        if desired_record_data is None:
+            desired_record_data = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_UPDATE_RECONCILE)
+
         def _resolve_dns_record(tracking_record):
             dns_record = getattr(tracking_record, "_prefetched_dns_record", None)
             if dns_record is None:
@@ -626,11 +564,11 @@ class DNSRuleEngine:
         existing_identity_keys = set(existing_records_by_identity.keys())
         desired_identity_keys = set(desired_records_by_identity.keys())
 
-        records_to_delete_by_identity = existing_identity_keys - desired_identity_keys
-        records_to_create_by_identity = desired_identity_keys - existing_identity_keys
+        records_to_delete = existing_identity_keys - desired_identity_keys
+        records_to_create = desired_identity_keys - existing_identity_keys
         records_to_check_for_update = existing_identity_keys & desired_identity_keys
 
-        for identity_key in records_to_delete_by_identity:
+        for identity_key in records_to_delete:
             self._delete_tracking_and_dns_record(existing_records_by_identity[identity_key])
 
         updated_count = 0
@@ -670,16 +608,16 @@ class DNSRuleEngine:
                     skipped_update += 1
 
         created_records = []
-        if records_to_create_by_identity:
-            records_to_create_data = [desired_records_by_identity[key] for key in records_to_create_by_identity]
+        if records_to_create:
+            records_to_create_data = [desired_records_by_identity[key] for key in records_to_create]
             created_records = self._create_records_from_data(
                 rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
             )
 
-        skipped_create = len(records_to_create_by_identity) - len(created_records)
+        skipped_create = len(records_to_create) - len(created_records)
         return {
             "create": len(created_records),
-            "delete": len(records_to_delete_by_identity),
+            "delete": len(records_to_delete),
             "update": updated_count,
             "skipped": skipped_create + skipped_update,
         }
