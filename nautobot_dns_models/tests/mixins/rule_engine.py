@@ -148,8 +148,3 @@ class BaseRuleEngineMixin:
         """Wrapper around engine object-tenant extraction."""
         # pylint: disable=protected-access
         return self.engine._get_object_tenant(obj)
-
-    def _get_applicable_rules(self, obj):
-        """Wrapper around engine applicable rule resolution."""
-        # pylint: disable=protected-access
-        return self.engine._get_applicable_rules(obj)

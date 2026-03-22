@@ -302,6 +302,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["execution"]["processed_count"], 8)
         self.assertEqual(result["reconciliation"]["objects_changed"], 8)
 
+
 class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
     """Validate SQL scope selection parity with engine semantics."""
 

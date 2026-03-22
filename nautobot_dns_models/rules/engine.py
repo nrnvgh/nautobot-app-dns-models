@@ -111,7 +111,7 @@ class DNSRuleEngine:
         """Process one source object against applicable rules."""
         summary = ObjectProcessingSummary()
         content_type = ContentType.objects.get_for_model(source_obj)
-        rules = self._get_applicable_rules(source_obj)
+        rules = self.get_applicable_rules(source_obj)
 
         if not rules:
             logger.debug(
@@ -270,7 +270,7 @@ class DNSRuleEngine:
         batch_address_ids = set()
 
         for source_obj in source_objects:
-            rules = self._get_applicable_rules(source_obj)
+            rules = self.get_applicable_rules(source_obj)
             desired_by_rule_id = {}
             failed_rule_ids = set()
             needed_rule_ids = set()
@@ -639,6 +639,7 @@ class DNSRuleEngine:
         for identity_key in records_to_check_for_update:
             tracking_record = existing_records_by_identity[identity_key]
             desired_record = desired_records_by_identity[identity_key]
+
             if bulk_update_collector is not None:
                 dns_record = _resolve_dns_record(tracking_record)
                 if dns_record is None:
@@ -910,7 +911,7 @@ class DNSRuleEngine:
     # Rule resolution
     #
 
-    def _get_applicable_rules(self, source_obj):
+    def get_applicable_rules(self, source_obj):
         """Scope-key cache for applicable-rule resolution."""
         content_type = ContentType.objects.get_for_model(source_obj)
         object_location = self._get_object_location(source_obj)
@@ -927,6 +928,7 @@ class DNSRuleEngine:
 
         selected_rules = self._resolve_applicable_rules_for_scope(content_type, object_location, object_tenant)
         self._applicable_rules_cache[cache_key] = selected_rules
+
         return selected_rules
 
     def _resolve_applicable_rules_for_scope(
@@ -988,6 +990,7 @@ class DNSRuleEngine:
                 # logger.debug(f"Using global rule for {source_obj} record type {record_type}")
 
         final_rule_pk_set = set(final_rule_pks)
+
         return [rule for rule in all_rules if rule.pk in final_rule_pk_set]
 
     def _object_needs_dns_records_for_rule(self, source_obj, rule):

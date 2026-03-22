@@ -763,9 +763,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             value_template="{{ obj.primary_ip4 }}",
         )
 
-        rules = self._get_applicable_rules(self.device)
-        self.assertEqual(rules.count(), 1)
-        self.assertEqual(rules.first(), location_rule)
+        rules = self.engine.get_applicable_rules(self.device)
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0], location_rule)
 
     def test_get_applicable_rules_global_fallback(self):
         """Test that global rules are used when no location-specific rules exist."""
@@ -857,7 +857,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             value_template="{{ obj.primary_ip4 }}",
         )
 
-        rules = self._get_applicable_rules(self.device)
+        rules = self.engine.get_applicable_rules(self.device)
 
         # Should get location-specific A rule + global AAAA rule (2 rules total)
         self.assertEqual(rules.count(), 2)
@@ -892,7 +892,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             value_template="{{ obj.primary_ip4 }}",
         )
 
-        rules = self._get_applicable_rules(self.device)
+        rules = self.engine.get_applicable_rules(self.device)
 
         # Should only get location-specific rule
         self.assertEqual(rules.count(), 1)
@@ -921,7 +921,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             value_template="{{ obj.primary_ip6 }}",
         )
 
-        rules = self._get_applicable_rules(self.device)
+        rules = self.engine.get_applicable_rules(self.device)
 
         # Should get both location-specific rules
         self.assertEqual(rules.count(), 2)
@@ -986,7 +986,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=Status.objects.get_for_model(Device).first(),
         )
 
-        rules = self._get_applicable_rules(device_with_both)
+        rules = self.engine.get_applicable_rules(device_with_both)
 
         # Should get the most specific rule (location+tenant)
         self.assertEqual(rules.count(), 1)
@@ -1028,7 +1028,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=Status.objects.get_for_model(Device).first(),
         )
 
-        rules = self._get_applicable_rules(device_with_both)
+        rules = self.engine.get_applicable_rules(device_with_both)
 
         # Should get both rules (different record types)
         self.assertEqual(rules.count(), 2)
