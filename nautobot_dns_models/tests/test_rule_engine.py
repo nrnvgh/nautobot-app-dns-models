@@ -8,6 +8,7 @@ Categories:
 # pylint: disable=too-many-lines
 
 import itertools
+import uuid
 from unittest import skip
 from unittest.mock import PropertyMock, patch
 
@@ -24,9 +25,15 @@ from nautobot.ipam.models import IPAddress, IPAddressToInterface, Prefix, Servic
 from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
-from nautobot_dns_models.exceptions import DNSTemplateEmptyError
+from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSTemplateEmptyError
 from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord, DNSView, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name
+from nautobot_dns_models.rules.engine import (
+    REASON_VIEW_NOT_FOUND,
+    REASON_VIEW_TEMPLATE_EMPTY,
+    REASON_ZONE_NOT_FOUND,
+    DNSRuleEngine,
+)
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
 from .mixins.rule_engine import BaseRuleEngineMixin
@@ -150,9 +157,10 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
 
     @override_settings(DEBUG=True)
     def test_render_template_method_catches_error_strings(self):
-        """Test detection of '{{ no such element:' error strings from DEBUG=True environments."""
-        # In DEBUG=True environments, Django uses jinja2.runtime.DebugUndefined which returns
-        # descriptive error strings like "{{ no such element: None['id'] }}" instead of empty strings.
+        """Test invalid DEBUG=True template output still raises DNSTemplateEmptyError."""
+        # Build a fresh engine inside the DEBUG override so its cached Jinja env
+        # uses DebugUndefined behavior for invalid attribute access.
+        test_engine = DNSRuleEngine()
 
         # Create interface with no role to test the real scenario
         interface_no_role = Interface.objects.create(
@@ -162,13 +170,16 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
             status=Status.objects.get_for_model(Interface).first(),
         )
 
-        # Test the template that should trigger the DEBUG=True error pattern
-        # The rule engine should catch the DebugUndefined error pattern and include it in the exception
+        # Test template with invalid attribute access under DEBUG=True.
         with self.assertRaises(DNSTemplateEmptyError) as context:
-            self._render_template("{{ obj.role.name }}", {"obj": wrap_for_template(interface_no_role)}, "test_field")
+            test_engine._render_template(
+                "{{ obj.role.name }}",
+                {"obj": wrap_for_template(interface_no_role)},
+                "test_field",
+            )
 
-        # In DEBUG=True with DebugUndefined, the error message should contain the pattern
-        self.assertIn("{{ no such element:", str(context.exception))
+        self.assertIn("no such element", str(context.exception))
+        self.assertIn("Template test_field rendered empty", str(context.exception))
 
     def test_service_basic_template_rendering(self):
         """Test basic Service template rendering for both device and VM-attached services."""
@@ -421,8 +432,8 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         results = self._calc_desired_record_data(rule, self.interface)
         self.assertEqual(len(results), 2)
         expected_zone_by_address = {
-            str(restricted_ip.id): restricted_zone.id,
-            str(internal_ip.id): internal_zone.id,
+            restricted_ip.id: restricted_zone.id,
+            internal_ip.id: internal_zone.id,
         }
         returned_zone_by_address = {result["address_id"]: result["zone"].id for result in results}
         self.assertEqual(returned_zone_by_address, expected_zone_by_address)
@@ -473,7 +484,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
 
         results = self._calc_desired_record_data(rule, self.interface)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["address_id"], str(restricted_ip.id))
+        self.assertEqual(results[0]["address_id"], restricted_ip.id)
         self.assertEqual(results[0]["zone"].id, restricted_zone.id)
 
     def test_view_template_unknown_view_skips_only_invalid_candidate(self):
@@ -524,7 +535,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
 
         results = self._calc_desired_record_data(rule, self.interface)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["address_id"], str(valid_ip.id))
+        self.assertEqual(results[0]["address_id"], valid_ip.id)
         self.assertEqual(results[0]["zone"].id, valid_zone.id)
 
     def test_zone_template_missing_in_selected_view_skips_only_invalid_candidate(self):
@@ -577,7 +588,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
 
         results = self._calc_desired_record_data(rule, self.interface)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["address_id"], str(valid_ip.id))
+        self.assertEqual(results[0]["address_id"], valid_ip.id)
         self.assertEqual(results[0]["zone"].id, valid_zone.id)
 
     def test_view_template_rendered_empty_skips_candidate(self):
@@ -781,9 +792,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             value_template="{{ obj.primary_ip4 }}",
         )
 
-        rules = self._get_applicable_rules(self.device)
-        self.assertEqual(rules.count(), 1)
-        self.assertEqual(rules.first(), global_rule)
+        rules = self.engine.get_applicable_rules(self.device)
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0], global_rule)
 
     def test_get_applicable_rules_no_location_gets_global(self):
         """Test that objects without location only get global rules."""
@@ -818,9 +829,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             value_template="192.168.1.1",
         )
 
-        rules = self._get_applicable_rules(vm)
-        self.assertEqual(rules.count(), 1)
-        self.assertEqual(rules.first(), global_rule)
+        rules = self.engine.get_applicable_rules(vm)
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0], global_rule)
 
     def test_get_applicable_rules_per_record_type_precedence_mixed_rules(self):
         """Test per-record-type precedence: location-specific A rule + global AAAA rule."""
@@ -860,7 +871,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         rules = self.engine.get_applicable_rules(self.device)
 
         # Should get location-specific A rule + global AAAA rule (2 rules total)
-        self.assertEqual(rules.count(), 2)
+        self.assertEqual(len(rules), 2)
 
         # Verify we got the correct rules
         rule_names = {rule.name for rule in rules}
@@ -895,8 +906,8 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         rules = self.engine.get_applicable_rules(self.device)
 
         # Should only get location-specific rule
-        self.assertEqual(rules.count(), 1)
-        self.assertEqual(rules.first().name, location_rule.name)
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0].name, location_rule.name)
 
     def test_get_applicable_rules_per_record_type_precedence_multiple_location_rules(self):
         """Test that multiple location-specific rules for different record types are all returned."""
@@ -924,7 +935,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         rules = self.engine.get_applicable_rules(self.device)
 
         # Should get both location-specific rules
-        self.assertEqual(rules.count(), 2)
+        self.assertEqual(len(rules), 2)
         rule_names = {rule.name for rule in rules}
         expected_names = {location_a_rule.name, location_aaaa_rule.name}
         self.assertEqual(rule_names, expected_names)
@@ -989,8 +1000,8 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         rules = self.engine.get_applicable_rules(device_with_both)
 
         # Should get the most specific rule (location+tenant)
-        self.assertEqual(rules.count(), 1)
-        self.assertEqual(rules.first().name, location_tenant_rule.name)
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0].name, location_tenant_rule.name)
 
     def test_get_applicable_rules_tenant_precedence_mixed_scoping(self):
         """Test that a Location A rule + Tenant AAAA rule are both applicable for same object."""
@@ -1031,7 +1042,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         rules = self.engine.get_applicable_rules(device_with_both)
 
         # Should get both rules (different record types)
-        self.assertEqual(rules.count(), 2)
+        self.assertEqual(len(rules), 2)
         rule_names = {rule.name for rule in rules}
         expected_names = {location_a_rule.name, tenant_aaaa_rule.name}
         self.assertEqual(rule_names, expected_names)
@@ -1060,9 +1071,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=Status.objects.get_for_model(Device).first(),
         )
 
-        rules = self._get_applicable_rules(device_location_only)
-        self.assertEqual(rules.count(), 1)
-        self.assertEqual(rules.first().name, global_rule.name)
+        rules = self.engine.get_applicable_rules(device_location_only)
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0].name, global_rule.name)
 
         # Test 2: Device with tenant but no location → should get global rule
         device_tenant_only = Device.objects.create(
@@ -1081,9 +1092,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         )
         device_tenant_only.save()
 
-        rules = self._get_applicable_rules(device_tenant_only)
-        self.assertEqual(rules.count(), 1)
-        self.assertEqual(rules.first().name, global_rule.name)
+        rules = self.engine.get_applicable_rules(device_tenant_only)
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0].name, global_rule.name)
 
     def test_service_location_extraction(self):
         """Test location extraction for both Service attachment types."""
@@ -1895,7 +1906,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         expected_name = f"{self.interface.name}.{self.device.name}"
         self.assertEqual(ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(), 0)
 
-        # Force DNSRuleRecord.objects.create to raise IntegrityError to simulate uniqueness failure
+        # Force tracking-row insert to fail to simulate uniqueness/constraint failure.
         with patch(
             "nautobot_dns_models.rules.engine.DNSRuleRecord.objects.create",
             side_effect=IntegrityError("dup"),
@@ -1905,6 +1916,97 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 
         # Assert DNSRecord was not persisted due to atomic rollback
         self.assertEqual(ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(), 0)
+
+    def test_atomicity_tracking_uniqueness_collision_rolls_back(self):
+        """
+        Validate rollback on real tracking-row uniqueness collision.
+
+        This pre-seeds a conflicting DNSRuleRecord tuple and then calls the fast bulk-create
+        method with a deterministic DNS record UUID to trigger a DB-enforced IntegrityError.
+        """
+
+        rule = DNSRule.objects.create(
+            name="iface-a-atomicity-no-patch",
+            description="Create A records for interfaces",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        source_content_type = ContentType.objects.get_for_model(self.interface)
+        dns_record_content_type = ContentType.objects.get_for_model(ARecord)
+        expected_name = f"{self.interface.name}.{self.device.name}"
+        forced_record_id = uuid.uuid4()
+
+        DNSRuleRecord.objects.create(
+            rule=rule,
+            content_type=source_content_type,
+            object_id=self.interface.id,
+            dns_record_content_type=dns_record_content_type,
+            dns_record_object_id=forced_record_id,
+        )
+
+        self.assertEqual(ARecord.objects.filter(id=forced_record_id).count(), 0)
+
+        created_records = self.engine._create_records_from_data_bulk_create_fast(
+            rule=rule,
+            source_obj=self.interface,
+            record_data_list=[
+                {
+                    "id": forced_record_id,
+                    "name": expected_name,
+                    "zone": self.dns_zone,
+                    "address": self.ip_addresses[0],
+                }
+            ],
+        )
+
+        # First, assert that no new ARecord was created in the database.
+        self.assertEqual(created_records, [])
+        self.assertEqual(ARecord.objects.filter(id=forced_record_id).count(), 0)
+
+        # Next, verify that no duplicate tracking row was created.
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(
+                content_type=source_content_type,
+                object_id=self.interface.id,
+                dns_record_content_type=dns_record_content_type,
+                dns_record_object_id=forced_record_id,
+            ).count(),
+            1,
+        )
+
+    def test_signal_path_does_not_use_bulk_create_fast(self):
+        """Signal-driven processing should not use the direct bulk_create fast path."""
+
+        self.interface.ip_addresses.set([])
+        DNSRule.objects.create(
+            name="singleton-signal-no-bulk-fast",
+            description="Validate signal path skips fast bulk create",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        expected_name = f"{self.interface.name}.{self.device.name}"
+        self.assertEqual(ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(), 0)
+
+        with patch.object(
+            type(self.engine),
+            "_create_records_from_data_bulk_create_fast",
+            autospec=True,
+            wraps=type(self.engine)._create_records_from_data_bulk_create_fast,
+        ) as bulk_create_fast_mock:
+            self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        bulk_create_fast_mock.assert_not_called()
+        self.assertEqual(ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(), 1)
 
     def test_interface_a_record_created_on_ip_addition_via_custom_method(self):
         """Test that A records are created when IP is added to interface via custom add_ip_addresses method."""
@@ -2792,7 +2894,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
             content_type=self.service_content_type,
             record_type="A",
             zone_template="example.com",
-            name_template="{{ obj.name }}",  # Uses service name
+            name_template="{{ obj.name }}",
             value_template="{{ obj.ip_addresses.all() }}",
         )
 
@@ -2800,29 +2902,29 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         self.service_device_attached.ip_addresses.add(self.ip_addresses[0])
 
         # Verify initial DNS record with original service name
-        initial_records = ARecord.objects.filter(name="web-service", zone=self.dns_zone)
-        self.assertEqual(initial_records.count(), 1, "Initial DNS record should be created")
+        dns_records_before_update = ARecord.objects.filter(name="web-service", zone=self.dns_zone)
+        self.assertEqual(dns_records_before_update.count(), 1, "Initial DNS record should be created")
 
-        #
-        # We need to store the ID of the initial record because it will be deleted when we save
-        # the service, rendeing the queryset useless
-        initial_record_id = initial_records.first().id
+        # Keep the initial record ID to verify update-in-place semantics
+        initial_record_id = dns_records_before_update.first().id
 
         # Change the service name
         self.service_device_attached.name = "api-gateway"
         self.service_device_attached.save()
 
-        # Verify original record UUID no longer exists
-        with self.assertRaises(ARecord.DoesNotExist):
-            ARecord.objects.get(id=initial_record_id)
+        # Verify no record remains under the original rendered name
+        self.assertEqual(ARecord.objects.filter(name="web-service", zone=self.dns_zone).count(), 0)
 
-        # Verify new DNS record is created with updated name
-        new_records = ARecord.objects.filter(name="api-gateway", zone=self.dns_zone)
-        self.assertEqual(new_records.count(), 1, "New DNS record should be created with updated name")
-        new_record = new_records.first()
+        # Verify a DNS record exists under the updated name
+        dns_records_after_update = ARecord.objects.filter(name="api-gateway", zone=self.dns_zone)
+        self.assertEqual(dns_records_after_update.count(), 1, "Updated name should resolve to exactly one DNS record")
+        new_record = dns_records_after_update.first()
 
-        # Verify it points to the same IP (delete+create behavior)
-        self.assertEqual(str(new_record.address_id), str(self.ip_addresses[0].id), "Should point to same IP")
+        # Verify it points to the same IP
+        self.assertEqual(new_record.address_id, self.ip_addresses[0].id, "Should point to same IP")
+
+        # Verify update-in-place behavior: record identity is preserved across rename
+        self.assertEqual(new_record.id, initial_record_id, "Record should be updated in place, not recreated")
 
         # Verify tracking record is updated to point to the new record
         rule_records = DNSRuleRecord.objects.filter(rule=service_rule, object_id=self.service_device_attached.id)
@@ -2998,12 +3100,38 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
             ValidationError({"zone_template": "Zone 'x' does not exist in selected DNS view(s): Default"}), "DEFAULT"
         )
 
-        self.assertEqual(view_empty_reason, "VIEW_TEMPLATE_EMPTY")
-        self.assertEqual(view_missing_reason, "VIEW_NOT_FOUND")
-        self.assertEqual(zone_missing_reason, "ZONE_NOT_FOUND")
+        self.assertEqual(view_empty_reason, REASON_VIEW_TEMPLATE_EMPTY)
+        self.assertEqual(view_missing_reason, REASON_VIEW_NOT_FOUND)
+        self.assertEqual(zone_missing_reason, REASON_ZONE_NOT_FOUND)
 
+    # TODO Is this test overkill?
     def test_update_path_top_level_template_error_logs_and_cleans_up(self):
-        """Top-level reconcile TemplateError should log and clean up for the rule."""
+        """
+        Verify defensive error handling when update reconciliation raises at top level.
+
+        What this test covers:
+        - The exception branch in ``_update_dns_records_for_object()`` where
+          ``_reconcile_records_for_rule()`` raises ``TemplateError``.
+        - Correct side effects for that branch:
+          1) orphan cleanup is still invoked,
+          2) rule-processing error is logged with update-phase metadata,
+          3) rule/object cleanup is executed.
+
+        Why this can happen in real runs:
+        - Most template/view/zone issues are handled per-candidate and skipped, but
+          unexpected errors can still escape from reconciliation orchestration (for
+          example, internal state drift, edge-case data, or behavior changes in
+          underlying model/query operations). This branch is the fail-safe path for
+          those escaped exceptions.
+
+        Why this uses mocks instead of a pure end-to-end setup:
+        - The exact top-level branch is hard to trigger deterministically through
+          public object mutations because normal candidate failures are intentionally
+          swallowed and converted into per-candidate skips.
+        - Mocking ``_reconcile_records_for_rule()`` gives a stable, focused unit test
+          of control flow and side effects without coupling to unrelated template/data
+          mechanics that are validated elsewhere by integration tests.
+        """
         rule = DNSRule.objects.create(
             name="logging-update-top-level-error",
             description="Top-level reconcile exception handling",
@@ -3015,11 +3143,13 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
             enabled=True,
         )
 
-        with patch.object(self.engine, "_cleanup_orphaned_records") as cleanup_orphaned_mock:
+        with patch.object(self.engine, "_cleanup_orphaned_records", return_value=0) as cleanup_orphaned_mock:
             with patch.object(self.engine, "_object_needs_dns_records_for_rule", return_value=True):
                 with patch.object(self.engine, "_reconcile_records_for_rule", side_effect=TemplateError("boom")):
                     with patch.object(self.engine, "_log_rule_processing_error") as log_error_mock:
-                        with patch.object(self.engine, "_cleanup_records_for_rule") as cleanup_rule_mock:
+                        with patch.object(
+                            self.engine, "_cleanup_records_for_rule", return_value=0
+                        ) as cleanup_rule_mock:
                             self.engine._update_dns_records_for_object(
                                 self.interface, DNSRule.objects.filter(pk=rule.pk)
                             )
@@ -3047,10 +3177,12 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
         context = {"obj": wrap_for_template(self.interface)}
 
         # pylint: disable=protected-access
-        with self.assertRaises(ValidationError) as exc:
+        with self.assertRaises(DNSRuleRenderedValueLookupError) as exc:
             self.engine._get_dns_views_for_rule(rule, context)
-        self.assertIn("view_template", exc.exception.message_dict)
-        self.assertIn("rendered no DNS view names", exc.exception.message_dict["view_template"][0])
+
+        self.assertEqual(exc.exception.field_name, "view_template")
+        self.assertEqual(exc.exception.reason_code, REASON_VIEW_TEMPLATE_EMPTY)
+        self.assertIn("rendered no DNS view names", str(exc.exception))
 
     def test_get_record_data_variations_for_rule_missing_value_template_raises(self):
         """A/AAAA rule without value_template should raise DNSTemplateEmptyError in variations builder."""
@@ -3570,7 +3702,7 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
 
         results = self._calc_desired_record_data(rule, self.interface)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["address_id"], str(self.ip_addresses[0].pk))
+        self.assertEqual(results[0]["address_id"], self.ip_addresses[0].pk)
 
     def test_interface_last_empty(self):
         """Interface last() should raise DNSTemplateEmptyError when no IPs exist."""
@@ -3605,7 +3737,7 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
         # Expect two records: one for first() and one for last()
         self.assertEqual(len(results), 2)
         returned_ids = {record["address_id"] for record in results}
-        expected_ids = {str(self.ip_addresses[0].pk), str(self.ip_addresses[1].pk)}
+        expected_ids = {self.ip_addresses[0].pk, self.ip_addresses[1].pk}
         self.assertEqual(returned_ids, expected_ids)
 
     def test_interface_filter_ipv4_only(self):
@@ -3622,7 +3754,7 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
 
         results = self._calc_desired_record_data(rule, self.interface)
         returned_ids = {record["address_id"] for record in results}
-        expected_ids = {str(self.ip_addresses[0].pk), str(self.ip_addresses[1].pk)}
+        expected_ids = {self.ip_addresses[0].pk, self.ip_addresses[1].pk}
         self.assertEqual(returned_ids, expected_ids)
 
     def test_service_filter_all(self):
@@ -3639,7 +3771,7 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
 
         results = self._calc_desired_record_data(rule, self.service_device_attached)
         returned_ids = {record["address_id"] for record in results}
-        expected_ids = {str(self.ip_addresses[0].pk), str(self.ip_addresses[1].pk)}
+        expected_ids = {self.ip_addresses[0].pk, self.ip_addresses[1].pk}
         self.assertEqual(returned_ids, expected_ids)
 
     def test_filter_skips_invalid_uuid_values(self):
@@ -3658,4 +3790,4 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
         results = self._calc_desired_record_data(rule, self.interface)
         # Only the valid UUID should produce a record
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["address_id"], str(self.ip_addresses[0].pk))
+        self.assertEqual(results[0]["address_id"], self.ip_addresses[0].pk)

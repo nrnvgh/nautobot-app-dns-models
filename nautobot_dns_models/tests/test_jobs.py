@@ -17,8 +17,8 @@ from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import Cluster, VirtualMachine, VMInterface
 
 from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileRunSummary
-from nautobot_dns_models.models import DNSRule
-from nautobot_dns_models.rules.engine import DNSRuleEngine
+from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord
+from nautobot_dns_models.rules.engine import DNSRuleEngine, ObjectProcessingSummary
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
 
@@ -36,7 +36,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.device.name }}-{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all | ip_address }}",
+            value_template="{{ obj.ip_addresses.all() }}",
         )
 
     def setUp(self):
@@ -49,7 +49,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def test_single_object_mode_processes_requested_object(self, MockDNSRuleEngine):
         """Single-object mode should call process_object exactly once."""
         selected_engine = MockDNSRuleEngine.return_value
-        selected_engine.process_object.return_value = {}
+        selected_engine.process_object.return_value = ObjectProcessingSummary()
         job = ReconcileDNSObjectJob()
 
         result = job.run(
@@ -72,7 +72,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def test_single_object_parent_mode_includes_supported_children(self, MockDNSRuleEngine):
         """Single-object parent mode should reconcile both parent and child objects when requested."""
         selected_engine = MockDNSRuleEngine.return_value
-        selected_engine.process_object.return_value = {}
+        selected_engine.process_object.return_value = ObjectProcessingSummary()
         DNSRule.objects.create(
             name="job-device-reconcile",
             content_type=ContentType.objects.get_for_model(Device),
@@ -112,22 +112,20 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         """Job output should aggregate per-object processing summary counters from the rule engine."""
         selected_engine = MockDNSRuleEngine.return_value
         selected_engine.process_object.side_effect = [
-            {
-                "had_existing_rule_records": True,
-                "existing_rule_record_count": 2,
-                "changed": True,
-                "changed_record_count": 1,
-                "record_ops_create_count": 1,
-                "record_ops_delete_count": 0,
-            },
-            {
-                "had_existing_rule_records": True,
-                "existing_rule_record_count": 3,
-                "changed": True,
-                "changed_record_count": 2,
-                "record_ops_create_count": 1,
-                "record_ops_delete_count": 1,
-            },
+            ObjectProcessingSummary(
+                had_existing_rule_records=True,
+                existing_rule_record_count=2,
+                changed_record_count=1,
+                record_ops_create_count=1,
+                record_ops_delete_count=0,
+            ),
+            ObjectProcessingSummary(
+                had_existing_rule_records=True,
+                existing_rule_record_count=3,
+                changed_record_count=2,
+                record_ops_create_count=1,
+                record_ops_delete_count=1,
+            ),
         ]
         job = ReconcileDNSObjectJob()
 
@@ -159,6 +157,36 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         schema_path = Path(__file__).resolve().parents[1] / "schemas" / "reconcile_dns_job_result.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         jsonschema.validate(instance=result, schema=schema)
+
+    def test_object_job_path_does_not_use_bulk_create_fast(self):
+        """Object reconcile job flow should not call direct bulk_create fast path."""
+        self.interface_rule.name_template = "{{ obj.device.name }}-{{ obj.name }}"
+        self.interface_rule.value_template = "{{ obj.ip_addresses.all() }}"
+        self.interface_rule.enabled = True
+        self.interface_rule.save(update_fields=["name_template", "value_template", "enabled"])
+        self.interface.ip_addresses.set([self.ip_addresses[0]])
+        expected_name = f"{self.device.name}-{self.interface.name}"
+        DNSRuleRecord.objects.filter(object_id=self.interface.id).delete()
+        ARecord.objects.filter(name=expected_name).delete()
+        self.assertEqual(ARecord.objects.filter(name=expected_name).count(), 0)
+        job = ReconcileDNSObjectJob()
+
+        with patch.object(
+            DNSRuleEngine,
+            "_create_records_from_data_bulk_create_fast",
+            autospec=True,
+            wraps=DNSRuleEngine._create_records_from_data_bulk_create_fast,
+        ) as bulk_create_fast_mock:
+            result = job.run(
+                dryrun=False,
+                object_model="dcim.interface",
+                object_id=str(self.interface.id),
+            )
+
+        bulk_create_fast_mock.assert_not_called()
+        self.assertEqual(ARecord.objects.filter(name=expected_name).count(), 1)
+        self.assertEqual(result["execution"]["processed_count"], 1)
+        self.assertEqual(result["execution"]["failure_count"], 0)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_dryrun_mode_does_not_apply_updates(self, MockDNSRuleEngine):
@@ -338,7 +366,6 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         """Return object IDs selected by the bulk job scope pipeline path."""
         tenant_ids = tenant_ids or set()
         job = ReconcileDNSBulkJob()
-        selected_engine = DNSRuleEngine()
         summary = ReconcileRunSummary()
         targets = list(
             job._iter_targets(  # pylint: disable=protected-access
@@ -349,13 +376,10 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 tenant_ids=tenant_ids,
             )
         )
-        selected_targets = job._build_pipeline_in_scope_targets(  # pylint: disable=protected-access
+        selected_targets = job._build_limited_target_list(  # pylint: disable=protected-access
             targets,
             summary=summary,
-            selected_engine=selected_engine,
             dryrun=True,
-            location_ids=location_ids,
-            tenant_ids=tenant_ids,
             limit=20000,
         )
         return {obj.id for _, obj in selected_targets}
@@ -545,7 +569,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 device.primary_ip6 = self.ipv6_addresses[0]
                 device.save(update_fields=["primary_ip4", "primary_ip6"])
 
-            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+            queryset = job._build_target_queryset(  # pylint: disable=protected-access
                 "dcim.device",
                 location_ids=set(),
                 tenant_ids=set(),
@@ -662,7 +686,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 vm.primary_ip6 = self.ipv6_addresses[0]
                 vm.save(update_fields=["primary_ip4", "primary_ip6"])
 
-            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+            queryset = job._build_target_queryset(  # pylint: disable=protected-access
                 "virtualization.virtualmachine",
                 location_ids=set(),
                 tenant_ids=set(),
@@ -851,7 +875,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 )
                 vm_interface.ip_addresses.set([self.ip_addresses[0]])
 
-            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+            queryset = job._build_target_queryset(  # pylint: disable=protected-access
                 "virtualization.vminterface",
                 location_ids=set(),
                 tenant_ids=set(),
@@ -958,9 +982,13 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         created_services = [
             self._create_service_only(name_prefix="service-tenant-device-in", device=device_in_scope),
             self._create_service_only(name_prefix="service-tenant-device-out", device=device_out_scope),
-            self._create_service_only(name_prefix="service-tenant-vm-fallback-in", virtual_machine=vm_fallback_in_scope),
+            self._create_service_only(
+                name_prefix="service-tenant-vm-fallback-in", virtual_machine=vm_fallback_in_scope
+            ),
             self._create_service_only(name_prefix="service-tenant-vm-direct-in", virtual_machine=vm_direct_in_scope),
-            self._create_service_only(name_prefix="service-tenant-vm-fallback-out", virtual_machine=vm_fallback_out_scope),
+            self._create_service_only(
+                name_prefix="service-tenant-vm-fallback-out", virtual_machine=vm_fallback_out_scope
+            ),
             self._create_service_only(name_prefix="service-tenant-vm-direct-out", virtual_machine=vm_direct_out_scope),
         ]
         location_ids = set()
@@ -1026,10 +1054,14 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         )
         created_services = [
             self._create_service_only(name_prefix="service-combo-device-in", device=device_in_scope),
-            self._create_service_only(name_prefix="service-combo-device-out-location", device=device_out_scope_location),
+            self._create_service_only(
+                name_prefix="service-combo-device-out-location", device=device_out_scope_location
+            ),
             self._create_service_only(name_prefix="service-combo-device-out-tenant", device=device_out_scope_tenant),
             self._create_service_only(name_prefix="service-combo-vm-in", virtual_machine=vm_in_scope),
-            self._create_service_only(name_prefix="service-combo-vm-out-location", virtual_machine=vm_out_scope_location),
+            self._create_service_only(
+                name_prefix="service-combo-vm-out-location", virtual_machine=vm_out_scope_location
+            ),
             self._create_service_only(
                 name_prefix="service-combo-vm-out-tenant-fallback",
                 virtual_machine=vm_out_scope_tenant_fallback,
@@ -1077,7 +1109,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 self._create_service_only(name_prefix=f"{count_prefix}-device-{index}", device=device)
                 self._create_service_only(name_prefix=f"{count_prefix}-vm-{index}", virtual_machine=vm)
 
-            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+            queryset = job._build_target_queryset(  # pylint: disable=protected-access
                 "ipam.service",
                 location_ids=set(),
                 tenant_ids=set(),
@@ -1343,7 +1375,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                     tenant=tenant,
                 )
 
-            queryset, _ = job._build_target_queryset(  # pylint: disable=protected-access
+            queryset = job._build_target_queryset(  # pylint: disable=protected-access
                 "dcim.interface",
                 location_ids=set(),
                 tenant_ids=set(),
