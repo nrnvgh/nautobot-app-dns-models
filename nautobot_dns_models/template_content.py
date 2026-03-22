@@ -70,7 +70,7 @@ class ReconcileDNSObjectButton(Button):
             return False
 
         try:
-            if rule_engine._get_applicable_rules(obj):  # pylint: disable=protected-access
+            if rule_engine.get_applicable_rules(obj):
                 return True
 
             relation = SUPPORTED_PARENT_CHILD_MODEL_RELATIONS.get(obj._meta.label_lower)
@@ -83,7 +83,7 @@ class ReconcileDNSObjectButton(Button):
                 return False
 
             for child_obj in child_manager.all():
-                if rule_engine._get_applicable_rules(child_obj):  # pylint: disable=protected-access
+                if rule_engine.get_applicable_rules(child_obj):
                     return True
 
             return False

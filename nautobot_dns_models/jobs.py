@@ -29,10 +29,10 @@ from nautobot_dns_models.constants.supported_models import (
 )
 from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSTemplateEmptyError
 from nautobot_dns_models.models import DNSRule
+from nautobot_dns_models.rules.engine import DNSRuleEngine
 from nautobot_dns_models.rules.scope_filters import BulkScopeFilterBuilder
-from nautobot_dns_models.rules.engine import DNSRuleEngine, ObjectProcessingSummary
 
-name = "DNS Reconciliation Jobs"    # pylint: disable=invalid-name
+name = "DNS Reconciliation Jobs"  # pylint: disable=invalid-name
 
 
 @dataclass
@@ -407,7 +407,9 @@ class ReconcileDNSBulkJob(Job):
             )
 
         if model_label == "virtualization.virtualmachine":
-            return queryset.select_related("cluster", "cluster__location", "cluster__tenant", "tenant", "primary_ip4", "primary_ip6")
+            return queryset.select_related(
+                "cluster", "cluster__location", "cluster__tenant", "tenant", "primary_ip4", "primary_ip6"
+            )
 
         if model_label == "virtualization.vminterface":
             return queryset.select_related(
@@ -472,28 +474,6 @@ class ReconcileDNSBulkJob(Job):
                 limit=limit,
             )
 
-    def _build_pipeline_in_scope_targets(
-        self,
-        object_batch,
-        *,
-        summary,
-        dryrun,
-        limit,
-    ):
-        """Mark targets seen and return in-scope pipeline targets."""
-        targets_in_scope = []
-        for model_label, obj in object_batch:
-            if _limit_reached(summary, limit):
-                break
-
-            summary.mark_target_seen()
-            targets_in_scope.append((model_label, obj))
-
-            if dryrun:
-                self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
-
-        return targets_in_scope
-
     def _process_pipeline_target_batch(
         self,
         object_batch,
@@ -504,7 +484,7 @@ class ReconcileDNSBulkJob(Job):
         limit,
     ):
         """Process one target batch using pipeline batch execution."""
-        targets_in_scope = self._build_pipeline_in_scope_targets(
+        targets_in_scope = self._build_limited_target_list(
             object_batch,
             summary=summary,
             dryrun=dryrun,
@@ -537,6 +517,28 @@ class ReconcileDNSBulkJob(Job):
 
             for obj, processing_summary in zip(model_objects, batch_summaries):
                 summary.mark_processed_success(processing_summary)
+
+    def _build_limited_target_list(
+        self,
+        object_batch,
+        *,
+        summary,
+        dryrun,
+        limit,
+    ):
+        """Build list of objects from batch, enforcing limit and recording each target in summary."""
+        targets_in_scope = []
+        for model_label, obj in object_batch:
+            if _limit_reached(summary, limit):
+                break
+
+            summary.mark_target_seen()
+            targets_in_scope.append((model_label, obj))
+
+            if dryrun:
+                self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
+
+        return targets_in_scope
 
 
 class ReconcileDNSObjectJob(Job):

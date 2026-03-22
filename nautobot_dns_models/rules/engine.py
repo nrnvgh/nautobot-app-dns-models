@@ -391,7 +391,9 @@ class DNSRuleEngine:
 
         try:
             for entry in prepared_entries:
-                summaries.append(self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates))
+                summaries.append(
+                    self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates)
+                )
 
             if self._batched_create_queue_active:
                 self._flush_batched_create_queue()
@@ -645,12 +647,45 @@ class DNSRuleEngine:
                 source_obj=source_obj,
                 record_data_list=record_data_list,
             )
-        return self._create_records_from_data_bulk_create_fast(
+
+        return self._create_records_for_object(
             rule=rule,
             source_obj=source_obj,
             record_data_list=record_data_list,
             phase=phase,
         )
+
+    def _create_records_for_object(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
+        """Singleton create path using per-record inserts (no bulk_create)."""
+        if not record_data_list:
+            return []
+
+        record_class = self._get_record_class(rule.record_type)
+        source_content_type = ContentType.objects.get_for_model(source_obj)
+        dns_record_content_type = ContentType.objects.get_for_model(record_class)
+        created_records = []
+
+        # Best-effort behavior: one invalid candidate should not block other
+        # valid candidates for the same rule/object evaluation.
+        for record_data in record_data_list:
+            try:
+                with transaction.atomic():
+                    dns_record = record_class(**record_data)  # pylint: disable=not-callable
+                    dns_record.validated_save()
+
+                    DNSRuleRecord.objects.create(
+                        rule=rule,
+                        content_type=source_content_type,
+                        object_id=source_obj.id,
+                        dns_record_content_type=dns_record_content_type,
+                        dns_record_object_id=dns_record.id,
+                    )
+                    created_records.append(dns_record)
+            except (ValidationError, IntegrityError) as exc:
+                self._log_record_create_failure(rule, source_obj, record_data, exc, phase=phase)
+                continue
+
+        return created_records
 
     def _create_records_from_data_bulk_create_fast(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
         """Fast-path create using Django bulk_create for records and tracking rows."""
@@ -817,9 +852,7 @@ class DNSRuleEngine:
     def _cleanup_orphaned_records(self, source_obj, applicable_rules):
         """Clean up DNS records from rules that are no longer applicable to the source object."""
         content_type = ContentType.objects.get_for_model(source_obj)
-        existing_tracking_records = DNSRuleRecord.objects.filter(
-            content_type=content_type, object_id=source_obj.pk
-        )
+        existing_tracking_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.pk)
 
         orphaned_records = existing_tracking_records.exclude(rule__in=applicable_rules)
         deleted_count = 0
@@ -1118,6 +1151,7 @@ class DNSRuleEngine:
         if not result:
             raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
 
+        # This should only happen when DEBUG=True and Django uses jinja2.runtime.DebugUndefined.
         if "{{ no such element:" in result:
             raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
 
@@ -1275,7 +1309,9 @@ class DNSRuleEngine:
         found_view_ids = {zone.dns_view_id for zone in zones}
         missing_view_ids = set(view_ids) - found_view_ids
         if missing_view_ids:
-            missing_view_names = list(dns_models.DNSView.objects.filter(id__in=missing_view_ids).values_list("name", flat=True))
+            missing_view_names = list(
+                dns_models.DNSView.objects.filter(id__in=missing_view_ids).values_list("name", flat=True)
+            )
             raise DNSRuleRenderedValueLookupError(
                 field_name="zone_template",
                 message=(
