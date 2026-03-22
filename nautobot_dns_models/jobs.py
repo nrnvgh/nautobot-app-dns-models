@@ -108,6 +108,7 @@ class ReconcileRunSummary:
 # Module-level helpers shared by both job classes.
 #
 
+
 def _limit_reached(summary, limit):
     """Return whether in-scope processing limit has been reached."""
     return bool(limit) and summary.targets_seen >= limit
@@ -117,7 +118,6 @@ def _build_result_payload(
     summary,
     *,
     dryrun,
-    engine_key,
     single_object,
     include_children,
     selected_model_labels,
@@ -132,7 +132,6 @@ def _build_result_payload(
         "schema_version": 1,
         "mode": {
             "dryrun": bool(dryrun),
-            "engine_key": engine_key,
             "single_object": bool(single_object),
             "include_children": bool(include_children),
         },
@@ -293,7 +292,6 @@ class ReconcileDNSBulkJob(Job):
         result = _build_result_payload(
             summary,
             dryrun=bool(dryrun),
-            engine_key="default",
             single_object=False,
             include_children=False,
             selected_model_labels=selected_model_labels,
@@ -625,7 +623,6 @@ class ReconcileDNSObjectJob(Job):
         result = _build_result_payload(
             summary,
             dryrun=bool(dryrun),
-            engine_key="default",
             single_object=True,
             include_children=bool(include_children),
             selected_model_labels=set(),
@@ -637,6 +634,7 @@ class ReconcileDNSObjectJob(Job):
         )
         result["execution"]["runtime_seconds"] = round(perf_counter() - started_at, 3)
         _log_result_summary(self.logger, result)
+
         return result
 
     #
@@ -672,6 +670,7 @@ class ReconcileDNSObjectJob(Job):
         for model_label, obj in targets:
             if _limit_reached(summary, limit):
                 break
+
             object_batch.append((model_label, obj))
             if len(object_batch) >= batch_size:
                 self._process_target_batch(
