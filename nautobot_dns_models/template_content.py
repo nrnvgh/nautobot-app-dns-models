@@ -143,12 +143,14 @@ class ForwardDNSRecordsTablePanel(ObjectsTablePanel):
         show_panel = constance_config.nautobot_dns_models__SHOW_FORWARD_PANEL
         if show_panel == "never":
             return False
+
         if show_panel == "if_present":
             ip_address = get_obj_from_context(context)
             if ip_address.ip_version == 4:
                 return ARecord.objects.filter(address=ip_address).exists()
             if ip_address.ip_version == 6:
                 return AAAARecord.objects.filter(address=ip_address).exists()
+
         return True
 
     def get_extra_context(self, context):
