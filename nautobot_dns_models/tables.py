@@ -216,7 +216,6 @@ class CNAMERecordTable(DNSRecordTable):
             "description",
             "actions",
             "source_object",
-            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -253,7 +252,6 @@ class MXRecordTable(DNSRecordTable):
             "description",
             "actions",
             "source_object",
-            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -290,7 +288,6 @@ class TXTRecordTable(DNSRecordTable):
             "description",
             "actions",
             "source_object",
-            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -327,7 +324,6 @@ class PTRRecordTable(DNSRecordTable):
             "description",
             "actions",
             "source_object",
-            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -366,7 +362,6 @@ class SRVRecordTable(DNSRecordTable):
             "description",
             "actions",
             "source_object",
-            "dns_rule",
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -389,7 +384,6 @@ class DNSRuleTable(BaseTable):
     name = tables.LinkColumn()
     enabled = BooleanColumn()
     content_type = tables.Column()
-    view_template = tables.Column(verbose_name="View Template")
     location = tables.LinkColumn()
     tenant = TenantColumn()
     record_type = tables.Column()
@@ -405,7 +399,6 @@ class DNSRuleTable(BaseTable):
             "description",
             "enabled",
             "content_type",
-            "view_template",
             "location",
             "tenant",
             "record_type",
