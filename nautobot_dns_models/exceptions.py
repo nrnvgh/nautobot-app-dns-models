@@ -1,11 +1,11 @@
 """DNS Models Plugin Exception Classes."""
 
 
-class DNSProcessingError(Exception):
+class DNSRuleProcessingError(Exception):
     """Base exception for DNS rule processing errors."""
 
 
-class DNSTemplateEmptyError(DNSProcessingError):
+class DNSRuleTemplateRenderedEmptyError(DNSRuleProcessingError):
     """Template rendered empty result - data missing for DNS processing."""
 
     def __init__(self, field_name, template_str, context_keys=None):
@@ -24,7 +24,7 @@ class DNSTemplateEmptyError(DNSProcessingError):
         super().__init__(f"Template {field_name} rendered empty: {template_str}")
 
 
-class DNSRuleEngineIntegrityError(DNSProcessingError):
+class DNSRuleEngineIntegrityError(DNSRuleProcessingError):
     """Base exception for unrecoverable DNS rule engine integrity failures."""
 
 
@@ -32,7 +32,7 @@ class DNSRecordContentTypeResolutionError(DNSRuleEngineIntegrityError):
     """Raised when a DNS record ContentType cannot be resolved to a model class."""
 
 
-class DNSRuleRenderedValueLookupError(DNSProcessingError):
+class DNSRuleRenderedValueLookupError(DNSRuleProcessingError):
     """
     Rendered DNS rule value could not be resolved to required database objects.
 

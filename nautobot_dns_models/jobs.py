@@ -27,7 +27,7 @@ from nautobot_dns_models.constants.supported_models import (
     SUPPORTED_SOURCE_MODEL_CHOICES,
     SUPPORTED_SOURCE_MODEL_MAP,
 )
-from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSTemplateEmptyError
+from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule
 from nautobot_dns_models.rules.engine import DNSRuleEngine
 from nautobot_dns_models.rules.scope_filters import BulkScopeFilterBuilder
@@ -504,7 +504,7 @@ class ReconcileDNSBulkJob(Job):
             except DNSRuleEngineIntegrityError:
                 raise
             except (
-                DNSTemplateEmptyError,
+                DNSRuleTemplateRenderedEmptyError,
                 ValidationError,
                 ValueError,
             ) as exc:
@@ -725,7 +725,7 @@ class ReconcileDNSObjectJob(Job):
                 summary.mark_processed_success(processing_summary)
             except DNSRuleEngineIntegrityError:
                 raise
-            except (DNSTemplateEmptyError, ValidationError, ValueError) as exc:
+            except (DNSRuleTemplateRenderedEmptyError, ValidationError, ValueError) as exc:
                 summary.mark_processed_failure()
                 self.logger.error(
                     "reconcile failure target=%s:%s error=%s", model_label, obj.pk, exc, extra={"object": obj}

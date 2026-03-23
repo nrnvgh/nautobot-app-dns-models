@@ -25,7 +25,7 @@ from nautobot.ipam.models import IPAddress, IPAddressToInterface, Prefix, Servic
 from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
-from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSTemplateEmptyError
+from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord, DNSView, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.engine import (
@@ -70,7 +70,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
     def test_render_template_method_with_undefined_variable(self):
         """Test _render_template method behavior with undefined variables."""
         # render_jinja2 returns empty string for undefined variables, which our method treats as an error
-        with self.assertRaises(DNSTemplateEmptyError):
+        with self.assertRaises(DNSRuleTemplateRenderedEmptyError):
             self._render_template("{{ undefined_var }}", {}, "test_field")
 
     def test_render_template_method_with_syntax_error(self):
@@ -82,7 +82,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         """Test _render_template method behavior when accessing attributes on None."""
         # This is the real-world case: when an IP is removed, obj.primary_ip4 becomes None
         # render_jinja2 returns empty string, which our method treats as an error
-        with self.assertRaises(DNSTemplateEmptyError):
+        with self.assertRaises(DNSRuleTemplateRenderedEmptyError):
             self._render_template(
                 "{{ obj.primary_ip4 }}",
                 {"obj": wrap_for_template(self.device)},
@@ -108,12 +108,12 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
             type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             status=Status.objects.get_for_model(Interface).first(),
         )
-        with self.assertRaises(DNSTemplateEmptyError) as context:
+        with self.assertRaises(DNSRuleTemplateRenderedEmptyError) as context:
             self._render_template(
                 "{{ obj.ip_addresses.all()[0] }}", {"obj": wrap_for_template(empty_interface)}, "test_field"
             )
 
-        # When accessing index 0 on empty queryset, Jinja2 renders empty string, triggering DNSTemplateEmptyError
+        # When accessing index 0 on empty queryset, Jinja2 renders empty string, triggering DNSRuleTemplateRenderedEmptyError
         self.assertIn("Template test_field rendered empty", str(context.exception))
         self.assertIn("obj.ip_addresses.all()[0]", str(context.exception))
 
@@ -128,7 +128,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
 
         for template, context in test_cases:
             with self.subTest(template=template, context=context):
-                with self.assertRaises(DNSTemplateEmptyError):
+                with self.assertRaises(DNSRuleTemplateRenderedEmptyError):
                     self._render_template(template, context, "test_field")
 
     def test_render_template_method_valid_non_empty_result(self):
@@ -148,7 +148,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         """Test that our _render_template method catches empty results from template failures."""
         # Test case where template renders to empty string (most common failure mode)
         # Use real device object without primary_ip4 set
-        with self.assertRaises(DNSTemplateEmptyError) as context:
+        with self.assertRaises(DNSRuleTemplateRenderedEmptyError) as context:
             self._render_template("{{ obj.primary_ip4 }}", {"obj": wrap_for_template(self.device)}, "test_field")
 
         # The error should mention that template rendered empty
@@ -157,7 +157,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
 
     @override_settings(DEBUG=True)
     def test_render_template_method_catches_error_strings(self):
-        """Test invalid DEBUG=True template output still raises DNSTemplateEmptyError."""
+        """Test invalid DEBUG=True template output still raises DNSRuleTemplateRenderedEmptyError."""
         # Build a fresh engine inside the DEBUG override so its cached Jinja env
         # uses DebugUndefined behavior for invalid attribute access.
         test_engine = DNSRuleEngine()
@@ -171,7 +171,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         # Test template with invalid attribute access under DEBUG=True.
-        with self.assertRaises(DNSTemplateEmptyError) as context:
+        with self.assertRaises(DNSRuleTemplateRenderedEmptyError) as context:
             test_engine._render_template(
                 "{{ obj.role.name }}",
                 {"obj": wrap_for_template(interface_no_role)},
@@ -3185,7 +3185,7 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
         self.assertIn("rendered no DNS view names", str(exc.exception))
 
     def test_get_record_data_variations_for_rule_missing_value_template_raises(self):
-        """A/AAAA rule without value_template should raise DNSTemplateEmptyError in variations builder."""
+        """A/AAAA rule without value_template should raise DNSRuleTemplateRenderedEmptyError in variations builder."""
         rule = DNSRule.objects.create(
             name="missing-value-template-runtime",
             description="Missing value template runtime path",
@@ -3200,7 +3200,7 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
         base_record_data = {"name": "eth0.test-device"}
 
         # pylint: disable=protected-access
-        with self.assertRaises(DNSTemplateEmptyError) as exc:
+        with self.assertRaises(DNSRuleTemplateRenderedEmptyError) as exc:
             self.engine._get_record_data_variations_for_rule(rule, context, base_record_data)
         self.assertIn("Template value_template rendered empty", str(exc.exception))
 
@@ -3705,7 +3705,7 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
         self.assertEqual(results[0]["address_id"], self.ip_addresses[0].pk)
 
     def test_interface_last_empty(self):
-        """Interface last() should raise DNSTemplateEmptyError when no IPs exist."""
+        """Interface last() should raise DNSRuleTemplateRenderedEmptyError when no IPs exist."""
         rule = DNSRule.objects.create(
             name="interface-last-empty",
             content_type=self.interface_content_type,
@@ -3716,7 +3716,7 @@ class RuleEngineTemplateProxyIntegrationTest(BaseRuleEngineMixin, TestCase):
         )
         self.interface.ip_addresses.clear()
 
-        with self.assertRaises(DNSTemplateEmptyError) as context:
+        with self.assertRaises(DNSRuleTemplateRenderedEmptyError) as context:
             self._calc_desired_record_data(rule, self.interface)
 
         self.assertIn("Template value_template rendered empty", str(context.exception))

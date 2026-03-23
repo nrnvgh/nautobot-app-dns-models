@@ -23,7 +23,7 @@ from nautobot_dns_models import models as dns_models
 from nautobot_dns_models.exceptions import (
     DNSRecordContentTypeResolutionError,
     DNSRuleRenderedValueLookupError,
-    DNSTemplateEmptyError,
+    DNSRuleTemplateRenderedEmptyError,
 )
 from nautobot_dns_models.models import (
     DNSRecord,
@@ -304,7 +304,7 @@ class DNSRuleEngine:
                             "requires_ip_context": requires_ip_context,
                         }
                     )
-                except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
+                except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                     self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True)
                     failed_rule_ids.add(rule.pk)
 
@@ -372,7 +372,7 @@ class DNSRuleEngine:
                             all_record_data.append({**record_data, "zone": zone})
 
                     except (
-                        DNSTemplateEmptyError,
+                        DNSRuleTemplateRenderedEmptyError,
                         DNSRuleRenderedValueLookupError,
                         TemplateError,
                         ValueError,
@@ -484,7 +484,7 @@ class DNSRuleEngine:
             try:
                 created_records = self._create_dns_record_from_rule(rule, source_obj)
                 changed_record_count += len(created_records)
-            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
+            except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                 self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_CREATE, cleanup=False)
                 continue
 
@@ -510,7 +510,7 @@ class DNSRuleEngine:
                 create_count += reconcile_summary["create"]
                 delete_count += reconcile_summary["delete"]
                 update_count += reconcile_summary.get("update", 0)
-            except (TemplateError, DNSTemplateEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
+            except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                 self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True)
                 delete_count += self._cleanup_records_for_rule(rule, source_obj)
 
@@ -1135,7 +1135,7 @@ class DNSRuleEngine:
         if "{{" not in template_str and "{%" not in template_str and "{#" not in template_str:
             result = template_str.strip()
             if not result:
-                raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
+                raise DNSRuleTemplateRenderedEmptyError(field_name, template_str, list(context.keys()))
 
             return result
 
@@ -1149,11 +1149,11 @@ class DNSRuleEngine:
         result = compiled_template.render(context)
 
         if not result:
-            raise DNSTemplateEmptyError(field_name, template_str, list(context.keys()))
+            raise DNSRuleTemplateRenderedEmptyError(field_name, template_str, list(context.keys()))
 
         # This should only happen when DEBUG=True and Django uses jinja2.runtime.DebugUndefined.
         if "{{ no such element:" in result:
-            raise DNSTemplateEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
+            raise DNSRuleTemplateRenderedEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
 
         return result
 
@@ -1182,7 +1182,7 @@ class DNSRuleEngine:
                 zones = self._get_zones_for_rule(rule, record_context, selected_views)
                 for zone in zones:
                     all_record_data.append({**record_data, "zone": zone})
-            except (DNSTemplateEmptyError, DNSRuleRenderedValueLookupError, TemplateError, ValueError) as exc:
+            except (DNSRuleTemplateRenderedEmptyError, DNSRuleRenderedValueLookupError, TemplateError, ValueError) as exc:
                 self._log_candidate_skip(rule, source_obj, record_data, exc, phase=phase)
                 continue
 
@@ -1202,7 +1202,7 @@ class DNSRuleEngine:
 
                 return self._build_record_variations(rule, base_record_data, address_ids)
 
-            raise DNSTemplateEmptyError("value_template", "missing", [])
+            raise DNSRuleTemplateRenderedEmptyError("value_template", "missing", [])
 
         record_data = base_record_data.copy()
         self._add_record_type_fields_single(rule, context, record_data)
@@ -1480,7 +1480,7 @@ class DNSRuleEngine:
                 return exc.reason_code
             return default_reason
 
-        if isinstance(exc, DNSTemplateEmptyError):
+        if isinstance(exc, DNSRuleTemplateRenderedEmptyError):
             message = str(exc)
             if "view_template" in message:
                 return REASON_VIEW_TEMPLATE_EMPTY
