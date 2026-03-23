@@ -14,7 +14,7 @@ from nautobot.extras.models import Role, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from nautobot.tenancy.models import Tenant
 
-from nautobot_dns_models.choices import DNSRecordTypeChoices
+from nautobot_dns_models.choices import DNSRuleRecordTypeChoices
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
@@ -1022,8 +1022,8 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         self.assertIn("already exists", context.exception.message_dict["name"][0])
 
     def test_dnsrule_record_type_choices(self):
-        """Test that DNSRule record_type validates against DNSRecordTypeChoices."""
-        valid_types = [choice[0] for choice in DNSRecordTypeChoices.CHOICES]
+        """Test that DNSRule record_type validates against DNSRuleRecordTypeChoices."""
+        valid_types = [choice[0] for choice in DNSRuleRecordTypeChoices.CHOICES]
 
         # Test valid record types
         for record_type in valid_types:
@@ -1576,7 +1576,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
     def test_whitespace_disallowed_all_record_types(self):
         """Whitespace is disallowed in all templates for all supported record types."""
 
-        record_types = [x[0] for x in DNSRecordTypeChoices.CHOICES]
+        record_types = [x[0] for x in DNSRuleRecordTypeChoices.CHOICES]
 
         # Base valid (no-whitespace) templates
         base_kwargs = {

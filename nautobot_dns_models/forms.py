@@ -16,7 +16,7 @@ from nautobot.ipam.models import Prefix
 from nautobot.tenancy.forms import TenancyFilterForm, TenancyForm
 
 from nautobot_dns_models import models
-from nautobot_dns_models.choices import DNSRecordTypeChoices
+from nautobot_dns_models.choices import DNSRuleRecordTypeChoices
 from nautobot_dns_models.queries import DNSRuleContentTypeQuery
 
 
@@ -465,7 +465,7 @@ class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
         help_text="Type of object this rule applies to",
     )
     record_type = forms.ChoiceField(
-        choices=add_blank_choice(DNSRecordTypeChoices),
+        choices=add_blank_choice(DNSRuleRecordTypeChoices),
         widget=StaticSelect2(),
         help_text="Type of DNS record this rule creates",
     )
@@ -532,7 +532,7 @@ class DNSRuleFilterForm(LocatableModelFilterFormMixin, TenancyFilterForm, Nautob
     )
 
     record_type = forms.ChoiceField(
-        choices=add_blank_choice(DNSRecordTypeChoices),
+        choices=add_blank_choice(DNSRuleRecordTypeChoices),
         required=False,
         label="Record Type",
         widget=StaticSelect2(),

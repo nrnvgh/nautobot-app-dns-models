@@ -3,7 +3,7 @@
 from nautobot.apps.choices import ChoiceSet
 
 
-class DNSRecordTypeChoices(ChoiceSet):
+class DNSRuleRecordTypeChoices(ChoiceSet):
     """Choices for DNS record types."""
 
     A = "A"
