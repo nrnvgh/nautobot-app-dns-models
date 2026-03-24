@@ -4,18 +4,17 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from time import perf_counter
 
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.forms import widgets
-from nautobot.apps.forms import StaticSelect2, StaticSelect2Multiple, add_blank_choice
 from nautobot.apps.jobs import (
     BooleanVar,
-    ChoiceVar,
     DryRunVar,
     IntegerVar,
     Job,
-    MultiChoiceVar,
     MultiObjectVar,
+    ObjectVar,
     StringVar,
     register_jobs,
 )
@@ -24,8 +23,9 @@ from nautobot.tenancy.models import Tenant
 
 from nautobot_dns_models.constants.supported_models import (
     SUPPORTED_PARENT_CHILD_MODEL_RELATIONS,
-    SUPPORTED_SOURCE_MODEL_CHOICES,
     SUPPORTED_SOURCE_MODEL_MAP,
+    SUPPORTED_SOURCE_MODELS,
+    get_content_type_query_params,
 )
 from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule
@@ -197,16 +197,17 @@ class ReconcileDNSBulkJob(Job):
     _bulk_scope_filter_builder = BulkScopeFilterBuilder()
 
     dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
-    source_models = MultiChoiceVar(
-        choices=SUPPORTED_SOURCE_MODEL_CHOICES,
+    source_models = MultiObjectVar(
+        model=ContentType,
+        query_params=get_content_type_query_params(),
         required=False,
         description="Optional source model filter for bulk runs.",
-        widget=StaticSelect2Multiple(),
     )
     rules = MultiObjectVar(
         model=DNSRule,
         required=False,
         description="Optional rule filter; defaults to all enabled rules.",
+        query_params={"content_type": "$source_models"},
     )
     locations = MultiObjectVar(
         model=Location,
@@ -261,6 +262,20 @@ class ReconcileDNSBulkJob(Job):
                 "invalid_source_models": sorted(invalid_model_labels),
             }
 
+        mismatched_rules = self._get_rules_mismatched_to_source_models(rules, selected_model_labels)
+        if mismatched_rules:
+            mismatched_rule_ids = sorted(str(rule.pk) for rule in mismatched_rules)
+            self.fail(
+                "Selected rules are not valid for selected source_models. "
+                f"Mismatched rule IDs: {', '.join(mismatched_rule_ids)}."
+            )
+            return {
+                "dryrun": bool(dryrun),
+                "error": "rules_source_model_mismatch",
+                "invalid_rule_ids": mismatched_rule_ids,
+                "selected_source_models": sorted(selected_model_labels),
+            }
+
         target_labels = self._resolve_target_models(selected_rules=rules, selected_model_labels=selected_model_labels)
         targets = self._iter_targets(
             target_labels=target_labels,
@@ -271,6 +286,7 @@ class ReconcileDNSBulkJob(Job):
         )
         summary = ReconcileRunSummary()
         summary.scanned_model_labels.update(target_labels)
+
         try:
             self._process_pipeline_targets_in_batches(
                 targets,
@@ -314,14 +330,23 @@ class ReconcileDNSBulkJob(Job):
 
     @staticmethod
     def _normalize_model_labels(source_models):
-        """Return `(valid_labels, invalid_labels)` for selected source-model labels."""
+        """Return `(valid_labels, invalid_labels)` for selected source-model content types."""
         if not source_models:
             return set(), set()
 
-        requested_labels = set(source_models)
-        valid_labels = requested_labels & set(SUPPORTED_SOURCE_MODEL_MAP.keys())
-        invalid_labels = requested_labels - valid_labels
-        return valid_labels, invalid_labels
+        requested_labels = set()
+        invalid_labels = set()
+
+        for content_type in source_models:
+            model_class = content_type.model_class()
+            model_label = f"{content_type.app_label}.{content_type.model}"
+            if model_class in SUPPORTED_SOURCE_MODELS:
+                requested_labels.add(model_label)
+                continue
+
+            invalid_labels.add(model_label)
+
+        return requested_labels, invalid_labels
 
     def _resolve_target_models(self, selected_rules, selected_model_labels):
         """Resolve which model labels should be scanned in bulk mode."""
@@ -332,6 +357,18 @@ class ReconcileDNSBulkJob(Job):
             if f"{rule.content_type.app_label}.{rule.content_type.model}" in SUPPORTED_SOURCE_MODEL_MAP
         }
         return sorted(labels)
+
+    @staticmethod
+    def _get_rules_mismatched_to_source_models(selected_rules, selected_model_labels):
+        """Return selected rules whose content type isn't in selected source-model labels."""
+        if not selected_rules or not selected_model_labels:
+            return []
+
+        return [
+            rule
+            for rule in selected_rules
+            if f"{rule.content_type.app_label}.{rule.content_type.model}" not in selected_model_labels
+        ]
 
     def _get_rule_queryset(self, selected_rules, selected_model_labels):
         """Build enabled-rule queryset constrained by explicit rule/model filters."""
@@ -554,11 +591,11 @@ class ReconcileDNSObjectJob(Job):
         has_sensitive_variables = False
 
     dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
-    object_model = ChoiceVar(
-        choices=add_blank_choice(SUPPORTED_SOURCE_MODEL_CHOICES),
+    object_model = ObjectVar(
+        model=ContentType,
+        query_params=get_content_type_query_params(),
+        label="Object Model",
         required=True,
-        description="Object model label (for example dcim.device).",
-        widget=StaticSelect2(),
     )
     object_id = StringVar(
         required=True,
@@ -587,20 +624,22 @@ class ReconcileDNSObjectJob(Job):
         """Execute single-object DNS reconciliation."""
         started_at = perf_counter()
         del object_name  # Display-only field; not used in reconciliation logic.
-        model_class = SUPPORTED_SOURCE_MODEL_MAP.get(object_model)
-        if model_class is None:
-            self.fail(f"Unsupported object_model '{object_model}'.")
+
+        object_model_label = f"{object_model.app_label}.{object_model.model}"
+        model_class = object_model.model_class()
+        if model_class not in SUPPORTED_SOURCE_MODELS:
+            self.fail(f"Unsupported object_model '{object_model_label}'.")
             return {}
 
         try:
             obj = model_class.objects.get(pk=object_id)
         except model_class.DoesNotExist:  # pylint: disable=protected-access
-            self.fail(f"Object '{object_model}:{object_id}' was not found.")
+            self.fail(f"Object '{object_model_label}:{object_id}' was not found.")
             return {}
 
         targets = list(
             self._expand_object_with_children(
-                object_model=object_model,
+                object_model=object_model_label,
                 obj=obj,
                 include_children=bool(include_children),
             )

@@ -1182,7 +1182,12 @@ class DNSRuleEngine:
                 zones = self._get_zones_for_rule(rule, record_context, selected_views)
                 for zone in zones:
                     all_record_data.append({**record_data, "zone": zone})
-            except (DNSRuleTemplateRenderedEmptyError, DNSRuleRenderedValueLookupError, TemplateError, ValueError) as exc:
+            except (
+                DNSRuleTemplateRenderedEmptyError,
+                DNSRuleRenderedValueLookupError,
+                TemplateError,
+                ValueError,
+            ) as exc:
                 self._log_candidate_skip(rule, source_obj, record_data, exc, phase=phase)
                 continue
 

@@ -140,7 +140,7 @@ class ARecordTable(DNSRecordTable):
             "description",
             "actions",
             "source_object",
-            "dns_rule",
+            # "dns_rule",   # TODO: Determine whether to include this
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -179,7 +179,7 @@ class AAAARecordTable(DNSRecordTable):
             "description",
             "actions",
             "source_object",
-            "dns_rule",
+            # "dns_rule",  # TODO: Determine whether to include this
         )
 
         # Option for modifying the columns that show up in the list view by default:

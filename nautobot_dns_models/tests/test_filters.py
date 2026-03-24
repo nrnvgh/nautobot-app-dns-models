@@ -34,6 +34,7 @@ from nautobot_dns_models.models import (
     SRVRecord,
     TXTRecord,
 )
+from nautobot_dns_models.queries import DNSRuleContentTypeQuery
 
 
 class DNSViewFilterTestCase(TestCase):
@@ -664,11 +665,11 @@ class DNSRuleFilterTestCase(TestCase):
     @classmethod
     def setUpTestData(cls):
         """Setup test data for DNSRule search behavior."""
-        interface_content_type = ContentType.objects.get_for_model(Interface)
+        cls.interface_content_type = ContentType.objects.get_for_model(Interface)
         DNSRule.objects.create(
             name="api-q-match-name",
             description="rule one",
-            content_type=interface_content_type,
+            content_type=cls.interface_content_type,
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name }}",
@@ -677,7 +678,7 @@ class DNSRuleFilterTestCase(TestCase):
         DNSRule.objects.create(
             name="api-q-second",
             description="match-on-description",
-            content_type=interface_content_type,
+            content_type=cls.interface_content_type,
             record_type="AAAA",
             zone_template="example.com",
             name_template="{{ obj.name }}",
@@ -689,3 +690,15 @@ class DNSRuleFilterTestCase(TestCase):
         self.assertEqual(self.filterset({"q": "api-q-match-name"}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"q": "match-on-description"}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"q": "api-q"}, self.queryset).qs.count(), 2)
+
+    def test_content_type_filter_uses_supported_queryset(self):
+        """Test that DNSRule content_type filter choices are limited to supported source content types."""
+        filterset = self.filterset({}, self.queryset)
+        actual_ids = set(filterset.filters["content_type"].field.queryset.values_list("id", flat=True))
+        expected_ids = set(DNSRuleContentTypeQuery.as_queryset().values_list("id", flat=True))
+        self.assertEqual(actual_ids, expected_ids)
+
+    def test_content_type_filter(self):
+        """Test filtering DNSRule by content_type."""
+        params = {"content_type": [self.interface_content_type.id]}
+        self.assertEqual(self.filterset(params, self.queryset).qs.count(), 2)

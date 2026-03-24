@@ -3,12 +3,20 @@
 import django_filters
 from django.db.models import F
 from django.db.models.functions import Coalesce
-from nautobot.apps.filters import BaseFilterSet, ContentTypeFilter, NautobotFilterSet, SearchFilter
+from nautobot.apps.filters import (
+    BaseFilterSet,
+    ContentTypeFilter,
+    NautobotFilterSet,
+    SearchFilter,
+)
+from nautobot.core.forms import DynamicModelMultipleChoiceField
 from nautobot.dcim.filters import LocatableModelFilterSetMixin
 from nautobot.tenancy.filters import TenancyModelFilterSetMixin
 from netaddr import IPAddress as NetIPAddress
 
 from nautobot_dns_models import models
+from nautobot_dns_models.constants.supported_models import get_content_type_query_params
+from nautobot_dns_models.queries import DNSRuleContentTypeQuery
 
 
 class DNSViewFilterSet(NautobotFilterSet):
@@ -238,6 +246,18 @@ class SRVRecordFilterSet(DNSRecordFilterSet):
         fields = "__all__"
 
 
+class DNSRuleContentTypeModelMultipleChoiceFilter(django_filters.ModelMultipleChoiceFilter):
+    """ModelMultipleChoiceFilter variant that accepts query_params on its field."""
+
+    field_class = DynamicModelMultipleChoiceField
+
+    def __init__(self, *args, **kwargs):
+        """Default to DNSRule-supported content types for both validation and API option loading."""
+        kwargs.setdefault("queryset", DNSRuleContentTypeQuery.as_queryset())
+        kwargs.setdefault("query_params", get_content_type_query_params())
+        super().__init__(*args, **kwargs)
+
+
 class DNSRuleFilterSet(NautobotFilterSet, LocatableModelFilterSetMixin, TenancyModelFilterSetMixin):
     """Filter for DNSRule."""
 
@@ -247,6 +267,8 @@ class DNSRuleFilterSet(NautobotFilterSet, LocatableModelFilterSetMixin, TenancyM
             "description": "icontains",
         }
     )
+
+    content_type = DNSRuleContentTypeModelMultipleChoiceFilter()
 
     class Meta:
         """Meta attributes for filter."""

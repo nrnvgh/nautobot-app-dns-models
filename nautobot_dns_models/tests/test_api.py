@@ -1,11 +1,14 @@
 """Unit tests for nautobot_dns_models."""
 
+from unittest import mock
+
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
 from nautobot.apps.testing import APITestCase, APIViewTestCases
 from nautobot.dcim.models import Device, DeviceType, Location, LocationType, Manufacturer
-from nautobot.extras.models import Role
+from nautobot.extras.jobs import get_job
+from nautobot.extras.models import Job, Role
 from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from rest_framework import status
@@ -1072,3 +1075,113 @@ class RuleEngineDeviceIPAssignmentV6APITestCase(RuleEngineDeviceIPAssignmentAPIM
         )
 
         self.device_ip_field = "primary_ip6"
+
+
+class ReconcileDNSJobsAPITestCase(APITestCase):
+    """API tests for reconciliation job run endpoints."""
+
+    object_job_class_path = "nautobot_dns_models.jobs.ReconcileDNSObjectJob"
+    bulk_job_class_path = "nautobot_dns_models.jobs.ReconcileDNSBulkJob"
+    run_success_response_status = status.HTTP_201_CREATED
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        location_type = LocationType.objects.create(name="API Job Test Location Type")
+        location_type.content_types.add(ContentType.objects.get_for_model(Device))
+        location = Location.objects.create(
+            name="API Job Test Location",
+            location_type=location_type,
+            status=Status.objects.get_for_model(Location).first(),
+        )
+        manufacturer = Manufacturer.objects.create(name="API Job Test Manufacturer")
+        device_type = DeviceType.objects.create(manufacturer=manufacturer, model="API Job Test Device Type")
+        device_role = Role.objects.create(name="API Job Test Device Role")
+        device_role.content_types.add(ContentType.objects.get_for_model(Device))
+        cls.device = Device.objects.create(
+            name="api-job-test-device",
+            device_type=device_type,
+            location=location,
+            role=device_role,
+            status=Status.objects.get_for_model(Device).first(),
+        )
+        cls.interface_rule = DNSRule.objects.create(
+            name="api-job-interface-reconcile",
+            content_type=ContentType.objects.get_for_model(Device),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.address.ip }}",
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.add_permissions("extras.run_job")
+        self.object_job_model = Job.objects.get_for_class_path(self.object_job_class_path)
+        self.bulk_job_model = Job.objects.get_for_class_path(self.bulk_job_class_path)
+        for job_model in (self.object_job_model, self.bulk_job_model):
+            job_model.enabled = True
+            job_model.validated_save()
+
+    def get_run_url(self, class_path):
+        """Return API run URL for a job class path."""
+        return reverse("extras-api:job-run", kwargs={"pk": Job.objects.get_for_class_path(class_path).pk})
+
+    @mock.patch("nautobot.extras.api.views.get_worker_count")
+    @mock.patch("nautobot.extras.models.jobs.JobResult.enqueue_job")
+    def test_object_job_run_api_serializes_objectvar(self, mock_enqueue_job, mock_get_worker_count):
+        """Object reconcile job API run should serialize ObjectVar as ContentType PK."""
+        mock_get_worker_count.return_value = 1
+        mock_enqueue_job.return_value = None
+        job_data = {
+            "dryrun": True,
+            "object_model": str(ContentType.objects.get_for_model(Device).pk),
+            "object_id": str(self.device.pk),
+            "include_children": False,
+        }
+        job_class = get_job(self.object_job_class_path)
+        cleaned_data = job_class.validate_data(job_data)
+        cleaned_data = job_class.prepare_job_kwargs(cleaned_data)
+        expected_enqueue_job_kwargs = {
+            "job_queue": self.object_job_model.default_job_queue,
+            **job_class.serialize_data(cleaned_data),
+        }
+
+        response = self.client.post(
+            self.get_run_url(self.object_job_class_path), {"data": job_data}, format="json", **self.header
+        )
+
+        self.assertHttpStatus(response, self.run_success_response_status)
+        self.assertIn("scheduled_job", response.data)
+        self.assertIn("job_result", response.data)
+        mock_enqueue_job.assert_called_with(self.object_job_model, self.user, **expected_enqueue_job_kwargs)
+
+    @mock.patch("nautobot.extras.api.views.get_worker_count")
+    @mock.patch("nautobot.extras.models.jobs.JobResult.enqueue_job")
+    def test_bulk_job_run_api_serializes_multiobjectvars(self, mock_enqueue_job, mock_get_worker_count):
+        """Bulk reconcile job API run should serialize source_models and rules by PK."""
+        mock_get_worker_count.return_value = 1
+        mock_enqueue_job.return_value = None
+        job_data = {
+            "dryrun": True,
+            "source_models": [str(ContentType.objects.get_for_model(Device).pk)],
+            "rules": [str(self.interface_rule.pk)],
+            "batch_size": 10,
+            "limit": 1,
+        }
+        job_class = get_job(self.bulk_job_class_path)
+        cleaned_data = job_class.validate_data(job_data)
+        cleaned_data = job_class.prepare_job_kwargs(cleaned_data)
+        expected_enqueue_job_kwargs = {
+            "job_queue": self.bulk_job_model.default_job_queue,
+            **job_class.serialize_data(cleaned_data),
+        }
+
+        response = self.client.post(
+            self.get_run_url(self.bulk_job_class_path), {"data": job_data}, format="json", **self.header
+        )
+
+        self.assertHttpStatus(response, self.run_success_response_status)
+        self.assertIn("scheduled_job", response.data)
+        self.assertIn("job_result", response.data)
+        mock_enqueue_job.assert_called_with(self.bulk_job_model, self.user, **expected_enqueue_job_kwargs)

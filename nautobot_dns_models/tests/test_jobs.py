@@ -54,7 +54,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         result = job.run(
             dryrun=False,
-            object_model="dcim.interface",
+            object_model=ContentType.objects.get_for_model(Interface),
             object_id=str(self.interface.id),
         )
 
@@ -85,7 +85,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         result = job.run(
             dryrun=False,
-            object_model="dcim.device",
+            object_model=ContentType.objects.get_for_model(Device),
             object_id=str(self.device.id),
             include_children=True,
         )
@@ -131,7 +131,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         result = job.run(
             dryrun=False,
-            object_model="dcim.device",
+            object_model=ContentType.objects.get_for_model(Device),
             object_id=str(self.device.id),
             include_children=True,
         )
@@ -150,7 +150,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         job = ReconcileDNSObjectJob()
         result = job.run(
             dryrun=True,
-            object_model="dcim.interface",
+            object_model=ContentType.objects.get_for_model(Interface),
             object_id=str(self.interface.id),
         )
 
@@ -179,7 +179,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         ) as bulk_create_fast_mock:
             result = job.run(
                 dryrun=False,
-                object_model="dcim.interface",
+                object_model=ContentType.objects.get_for_model(Interface),
                 object_id=str(self.interface.id),
             )
 
@@ -196,7 +196,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         result = job.run(
             dryrun=True,
-            object_model="dcim.interface",
+            object_model=ContentType.objects.get_for_model(Interface),
             object_id=str(self.interface.id),
         )
 
@@ -222,30 +222,47 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def test_invalid_source_model_marks_job_failed(self, MockDNSRuleEngine):
         """Submitting an unsupported source model should fail and skip processing."""
         selected_engine = MockDNSRuleEngine.return_value
-        job_result = create_job_result_and_run_job(
-            "nautobot_dns_models.jobs",
-            "ReconcileDNSBulkJob",
+        unsupported_content_type = ContentType.objects.get_for_model(Location)
+        unsupported_label = f"{unsupported_content_type.app_label}.{unsupported_content_type.model}"
+        result = ReconcileDNSBulkJob().run(
             dryrun=True,
-            source_models=["not_a_real.contenttype"],
+            source_models=[unsupported_content_type],
         )
 
         # Invalid source model input should fail during validation before any object processing is attempted.
         selected_engine.process_object.assert_not_called()
 
-        self.assertJobResultStatus(job_result, JobResultStatusChoices.STATUS_FAILURE)
-        self.assertIn("error", job_result.result)
-        self.assertEqual(job_result.result["error"], "invalid_source_models")
-        self.assertEqual(job_result.result["invalid_source_models"], ["not_a_real.contenttype"])
+        self.assertIn("error", result)
+        self.assertEqual(result["error"], "invalid_source_models")
+        self.assertEqual(result["invalid_source_models"], [unsupported_label])
 
     def test_invalid_source_model_job_run_reports_failure_status(self):
         """Job helper execution should report STATUS_FAILURE for invalid source model input."""
+        unsupported_content_type = ContentType.objects.get_for_model(Location)
+        unsupported_label = f"{unsupported_content_type.app_label}.{unsupported_content_type.model}"
         job_result = create_job_result_and_run_job(
             "nautobot_dns_models.jobs",
             "ReconcileDNSBulkJob",
             dryrun=True,
-            source_models=["not_a_real.contenttype"],
+            source_models=[str(unsupported_content_type.pk)],
         )
         self.assertJobResultStatus(job_result, JobResultStatusChoices.STATUS_FAILURE)
+        self.assertEqual(job_result.result["error"], "invalid_source_models")
+        self.assertEqual(job_result.result["invalid_source_models"], [unsupported_label])
+
+    def test_bulk_rule_source_model_mismatch_fails_fast(self):
+        """Bulk mode should fail when selected rules don't match selected source models."""
+        result = ReconcileDNSBulkJob().run(
+            dryrun=True,
+            source_models=[ContentType.objects.get_for_model(Device)],
+            rules=[self.interface_rule],
+            batch_size=10,
+            limit=1,
+        )
+
+        self.assertEqual(result["error"], "rules_source_model_mismatch")
+        self.assertEqual(result["invalid_rule_ids"], [str(self.interface_rule.pk)])
+        self.assertEqual(result["selected_source_models"], ["dcim.device"])
 
     def test_bulk_location_scope_updates_all_interfaces_in_scoped_location(self):
         """Location-scoped reconcile should update all matching interfaces, not only early PK window rows."""
@@ -306,7 +323,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         # Prime DNSRuleRecord rows so the second run is a true update-path reconcile.
         primer = ReconcileDNSBulkJob().run(
             dryrun=False,
-            source_models=["dcim.interface"],
+            source_models=[ContentType.objects.get_for_model(Interface)],
             rules=[scoped_rule],
             locations=[scoped_location],
             limit=None,
@@ -320,7 +337,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         # Limit is intentionally smaller than total interfaces so this exercises in-scope limit semantics.
         result = ReconcileDNSBulkJob().run(
             dryrun=False,
-            source_models=["dcim.interface"],
+            source_models=[ContentType.objects.get_for_model(Interface)],
             rules=[scoped_rule],
             locations=[scoped_location],
             limit=20,

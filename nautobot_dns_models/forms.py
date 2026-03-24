@@ -1,15 +1,14 @@
 """Forms for nautobot_dns_models."""
 
 from django import forms
-from django.contrib.contenttypes.models import ContentType
 from nautobot.apps.forms import (
     DynamicModelMultipleChoiceField,
     NautobotBulkEditForm,
     NautobotModelForm,
     TagsBulkEditFormMixin,
 )
-from nautobot.core.forms import add_blank_choice
-from nautobot.core.forms.widgets import StaticSelect2
+from nautobot.core.forms import BOOLEAN_WITH_BLANK_CHOICES, add_blank_choice
+from nautobot.core.forms.widgets import StaticSelect2, StaticSelect2Multiple
 from nautobot.dcim.form_mixins import LocatableModelFilterFormMixin, LocatableModelFormMixin
 from nautobot.extras.forms import NautobotFilterForm
 from nautobot.ipam.models import Prefix
@@ -514,7 +513,7 @@ class DNSRuleBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         ]
 
 
-class DNSRuleFilterForm(LocatableModelFilterFormMixin, TenancyFilterForm, NautobotFilterForm):
+class DNSRuleFilterForm(NautobotFilterForm, LocatableModelFilterFormMixin, TenancyFilterForm):
     """Filter form for DNSRule searches."""
 
     q = forms.CharField(
@@ -522,13 +521,13 @@ class DNSRuleFilterForm(LocatableModelFilterFormMixin, TenancyFilterForm, Nautob
         label="Search",
         help_text="Search within Name and Description.",
     )
-    name = forms.CharField(required=False, label="Name")
-    enabled = forms.NullBooleanField(required=False, label="Enabled")
-    content_type = forms.ModelChoiceField(
-        queryset=ContentType.objects.all().order_by("app_label", "model"),
+    name = forms.CharField(required=False)
+    enabled = forms.NullBooleanField(required=False, widget=StaticSelect2(choices=BOOLEAN_WITH_BLANK_CHOICES))
+    content_type = forms.ModelMultipleChoiceField(
+        queryset=DNSRuleContentTypeQuery.as_queryset(),
         required=False,
         label="Content Type",
-        widget=StaticSelect2(),
+        widget=StaticSelect2Multiple(),
     )
 
     record_type = forms.ChoiceField(
@@ -541,11 +540,10 @@ class DNSRuleFilterForm(LocatableModelFilterFormMixin, TenancyFilterForm, Nautob
     model = models.DNSRule
 
     # Define the fields above for ordering and widget purposes
-    fields = [
+    field_order = [
         "q",
         "name",
         "enabled",
         "content_type",
-        "location",
         "record_type",
     ]
