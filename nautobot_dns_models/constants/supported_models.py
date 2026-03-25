@@ -14,13 +14,12 @@ SUPPORTED_SOURCE_MODELS = (
 )
 
 SUPPORTED_SOURCE_MODEL_MAP = {model._meta.label_lower: model for model in SUPPORTED_SOURCE_MODELS}
-SUPPORTED_SOURCE_MODEL_CHOICES = tuple((label, label) for label in sorted(SUPPORTED_SOURCE_MODEL_MAP.keys()))
 
 # Parent source-model labels that should optionally cascade reconciliation to child objects.
-# Tuple values are: (child_model_label, related_manager_name)
+# Tuple values are: (child_model_class, related_manager_name)
 SUPPORTED_PARENT_CHILD_MODEL_RELATIONS = {
-    Device._meta.label_lower: (Interface._meta.label_lower, "interfaces"),
-    VirtualMachine._meta.label_lower: (VMInterface._meta.label_lower, "interfaces"),
+    Device: (Interface, "interfaces"),
+    VirtualMachine: (VMInterface, "interfaces"),
 }
 
 

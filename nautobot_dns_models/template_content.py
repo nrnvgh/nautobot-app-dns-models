@@ -54,7 +54,7 @@ class ReconcileDNSObjectButton(Button):
         parent_object_name = self._get_parent_object_name(obj)
         if parent_object_name:
             query_params["parent_object_name"] = parent_object_name
-        if obj._meta.label_lower in SUPPORTED_PARENT_CHILD_MODEL_RELATIONS:
+        if obj.__class__ in SUPPORTED_PARENT_CHILD_MODEL_RELATIONS:
             query_params["include_children"] = "true"
         query = urlencode(query_params)
         return f"{reverse('extras:job_run_by_class_path', kwargs={'class_path': 'nautobot_dns_models.jobs.ReconcileDNSObjectJob'})}?{query}"
@@ -73,11 +73,11 @@ class ReconcileDNSObjectButton(Button):
             if rule_engine.get_applicable_rules(obj):
                 return True
 
-            relation = SUPPORTED_PARENT_CHILD_MODEL_RELATIONS.get(obj._meta.label_lower)
+            relation = SUPPORTED_PARENT_CHILD_MODEL_RELATIONS.get(obj.__class__)
             if relation is None:
                 return False
 
-            _child_model_label, related_manager_name = relation
+            _child_model_class, related_manager_name = relation
             child_manager = getattr(obj, related_manager_name, None)
             if child_manager is None:
                 return False

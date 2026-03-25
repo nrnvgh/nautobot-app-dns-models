@@ -379,14 +379,14 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
             expected_ids.add(obj.id)
         return expected_ids
 
-    def _scope_actual_ids(self, *, target_label, location_ids, tenant_ids=None):
+    def _scope_actual_ids(self, *, target_model_class, location_ids, tenant_ids=None):
         """Return object IDs selected by the bulk job scope pipeline path."""
         tenant_ids = tenant_ids or set()
         job = ReconcileDNSBulkJob()
         summary = ReconcileRunSummary()
         targets = list(
             job._iter_targets(  # pylint: disable=protected-access
-                target_labels=[target_label],
+                target_models=[target_model_class],
                 batch_size=1000,
                 limit=20000,
                 location_ids=location_ids,
@@ -492,7 +492,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         expected_ids = {obj.id for obj in devices_in_scope}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_devices, location_ids)
-        actual_ids = self._scope_actual_ids(target_label="dcim.device", location_ids=location_ids) & {
+        actual_ids = self._scope_actual_ids(target_model_class=Device, location_ids=location_ids) & {
             obj.id for obj in created_devices
         }
         self.assertSetEqual(actual_ids, expected_ids)
@@ -516,7 +516,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {obj.id for obj in devices_in_scope}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_devices, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="dcim.device",
+            target_model_class=Device,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {obj.id for obj in created_devices}
@@ -560,7 +560,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_devices, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="dcim.device",
+            target_model_class=Device,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {obj.id for obj in created_devices}
@@ -587,7 +587,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 device.save(update_fields=["primary_ip4", "primary_ip6"])
 
             queryset = job._build_target_queryset(  # pylint: disable=protected-access
-                "dcim.device",
+                Device,
                 location_ids=set(),
                 tenant_ids=set(),
             )
@@ -629,7 +629,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         expected_ids = {obj.id for obj in vms_in_scope}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vms, location_ids)
-        actual_ids = self._scope_actual_ids(target_label="virtualization.virtualmachine", location_ids=location_ids) & {
+        actual_ids = self._scope_actual_ids(target_model_class=VirtualMachine, location_ids=location_ids) & {
             obj.id for obj in created_vms
         }
         self.assertSetEqual(actual_ids, expected_ids)
@@ -676,7 +676,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {vm_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vms, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="virtualization.virtualmachine",
+            target_model_class=VirtualMachine,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {obj.id for obj in created_vms}
@@ -704,7 +704,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 vm.save(update_fields=["primary_ip4", "primary_ip6"])
 
             queryset = job._build_target_queryset(  # pylint: disable=protected-access
-                "virtualization.virtualmachine",
+                VirtualMachine,
                 location_ids=set(),
                 tenant_ids=set(),
             )
@@ -760,7 +760,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {vmi_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vm_interfaces, location_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="virtualization.vminterface",
+            target_model_class=VMInterface,
             location_ids=location_ids,
         ) & {obj.id for obj in created_vm_interfaces}
         self.assertSetEqual(actual_ids, expected_ids)
@@ -805,7 +805,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {created_vm_interfaces[0].id, created_vm_interfaces[1].id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vm_interfaces, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="virtualization.vminterface",
+            target_model_class=VMInterface,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {obj.id for obj in created_vm_interfaces}
@@ -863,7 +863,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {vmi_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vm_interfaces, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="virtualization.vminterface",
+            target_model_class=VMInterface,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {obj.id for obj in created_vm_interfaces}
@@ -893,7 +893,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 vm_interface.ip_addresses.set([self.ip_addresses[0]])
 
             queryset = job._build_target_queryset(  # pylint: disable=protected-access
-                "virtualization.vminterface",
+                VMInterface,
                 location_ids=set(),
                 tenant_ids=set(),
             )
@@ -952,7 +952,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {created_services[0].id, created_services[1].id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_services, location_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="ipam.service",
+            target_model_class=Service,
             location_ids=location_ids,
         ) & {obj.id for obj in created_services}
         self.assertSetEqual(actual_ids, expected_ids)
@@ -1014,7 +1014,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {created_services[0].id, created_services[2].id, created_services[3].id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_services, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="ipam.service",
+            target_model_class=Service,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {obj.id for obj in created_services}
@@ -1094,7 +1094,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {created_services[0].id, created_services[3].id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_services, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="ipam.service",
+            target_model_class=Service,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {obj.id for obj in created_services}
@@ -1127,7 +1127,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 self._create_service_only(name_prefix=f"{count_prefix}-vm-{index}", virtual_machine=vm)
 
             queryset = job._build_target_queryset(  # pylint: disable=protected-access
-                "ipam.service",
+                Service,
                 location_ids=set(),
                 tenant_ids=set(),
             )
@@ -1190,7 +1190,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {vm_fallback_in_scope.id, vm_direct_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_vms, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="virtualization.virtualmachine",
+            target_model_class=VirtualMachine,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {obj.id for obj in created_vms}
@@ -1294,7 +1294,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         expected_ids = {interface_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids)
-        actual_ids = self._scope_actual_ids(target_label="dcim.interface", location_ids=location_ids) & {
+        actual_ids = self._scope_actual_ids(target_model_class=Interface, location_ids=location_ids) & {
             interface.id for interface in created_interfaces
         }
         self.assertSetEqual(actual_ids, expected_ids)
@@ -1325,7 +1325,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {interface_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="dcim.interface",
+            target_model_class=Interface,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {interface.id for interface in created_interfaces}
@@ -1369,7 +1369,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         expected_ids = {interface_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids, tenant_ids)
         actual_ids = self._scope_actual_ids(
-            target_label="dcim.interface",
+            target_model_class=Interface,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         ) & {interface.id for interface in created_interfaces}
@@ -1393,7 +1393,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 )
 
             queryset = job._build_target_queryset(  # pylint: disable=protected-access
-                "dcim.interface",
+                Interface,
                 location_ids=set(),
                 tenant_ids=set(),
             )
@@ -1442,7 +1442,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         expected_ids = {child_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids)
-        actual_ids = self._scope_actual_ids(target_label="dcim.interface", location_ids=location_ids) & {
+        actual_ids = self._scope_actual_ids(target_model_class=Interface, location_ids=location_ids) & {
             interface.id for interface in created_interfaces
         }
         self.assertSetEqual(actual_ids, expected_ids)
@@ -1476,7 +1476,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         expected_ids = {module_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids)
-        actual_ids = self._scope_actual_ids(target_label="dcim.interface", location_ids=location_ids) & {
+        actual_ids = self._scope_actual_ids(target_model_class=Interface, location_ids=location_ids) & {
             interface.id for interface in created_interfaces
         }
         self.assertSetEqual(actual_ids, expected_ids)
@@ -1514,7 +1514,7 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         expected_ids = {nested_in_scope.id}
         expected_ids_from_engine = self._scope_expected_ids_from_engine(created_interfaces, location_ids)
-        actual_ids = self._scope_actual_ids(target_label="dcim.interface", location_ids=location_ids) & {
+        actual_ids = self._scope_actual_ids(target_model_class=Interface, location_ids=location_ids) & {
             interface.id for interface in created_interfaces
         }
         self.assertSetEqual(actual_ids, expected_ids)

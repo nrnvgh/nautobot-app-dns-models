@@ -18,8 +18,10 @@ from nautobot.apps.jobs import (
     StringVar,
     register_jobs,
 )
-from nautobot.dcim.models import Location
+from nautobot.dcim.models import Device, Interface, Location
+from nautobot.ipam.models import Service
 from nautobot.tenancy.models import Tenant
+from nautobot.virtualization.models import VirtualMachine, VMInterface
 
 from nautobot_dns_models.constants.supported_models import (
     SUPPORTED_PARENT_CHILD_MODEL_RELATIONS,
@@ -114,13 +116,18 @@ def _limit_reached(summary, limit):
     return bool(limit) and summary.targets_seen >= limit
 
 
+def _model_label(model_class):
+    """Return canonical lower-case model label for a model class."""
+    return model_class._meta.label_lower
+
+
 def _build_result_payload(
     summary,
     *,
     dryrun,
     single_object,
     include_children,
-    selected_model_labels,
+    selected_model_classes,
     rules=None,
     location_ids=None,
     tenant_ids=None,
@@ -138,7 +145,7 @@ def _build_result_payload(
         "scope": {
             "scanned_models": sorted(summary.scanned_model_labels),
             "filters": {
-                "source_models": sorted(selected_model_labels),
+                "source_models": sorted(_model_label(model_class) for model_class in selected_model_classes),
                 "rule_ids": sorted(str(rule.pk) for rule in (rules or [])),
                 "location_ids": sorted(str(location_id) for location_id in (location_ids or set())),
                 "tenant_ids": sorted(str(tenant_id) for tenant_id in (tenant_ids or set())),
@@ -249,7 +256,7 @@ class ReconcileDNSBulkJob(Job):
         location_ids = {location.id for location in (locations or [])}
         tenant_ids = {tenant.id for tenant in (tenants or [])}
 
-        selected_model_labels, invalid_model_labels = self._normalize_model_labels(source_models)
+        selected_model_classes, invalid_model_labels = self._normalize_model_classes(source_models)
         if invalid_model_labels:
             self.fail(
                 "Unsupported source_models: "
@@ -262,7 +269,7 @@ class ReconcileDNSBulkJob(Job):
                 "invalid_source_models": sorted(invalid_model_labels),
             }
 
-        mismatched_rules = self._get_rules_mismatched_to_source_models(rules, selected_model_labels)
+        mismatched_rules = self._get_rules_mismatched_to_source_models(rules, selected_model_classes)
         if mismatched_rules:
             mismatched_rule_ids = sorted(str(rule.pk) for rule in mismatched_rules)
             self.fail(
@@ -273,19 +280,21 @@ class ReconcileDNSBulkJob(Job):
                 "dryrun": bool(dryrun),
                 "error": "rules_source_model_mismatch",
                 "invalid_rule_ids": mismatched_rule_ids,
-                "selected_source_models": sorted(selected_model_labels),
+                "selected_source_models": sorted(_model_label(model_class) for model_class in selected_model_classes),
             }
 
-        target_labels = self._resolve_target_models(selected_rules=rules, selected_model_labels=selected_model_labels)
+        target_model_classes = self._resolve_target_models(
+            selected_rules=rules, selected_model_classes=selected_model_classes
+        )
         targets = self._iter_targets(
-            target_labels=target_labels,
+            target_models=target_model_classes,
             batch_size=batch_size,
             limit=limit,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         )
         summary = ReconcileRunSummary()
-        summary.scanned_model_labels.update(target_labels)
+        summary.scanned_model_labels.update(_model_label(model_class) for model_class in target_model_classes)
 
         try:
             self._process_pipeline_targets_in_batches(
@@ -310,7 +319,7 @@ class ReconcileDNSBulkJob(Job):
             dryrun=bool(dryrun),
             single_object=False,
             include_children=False,
-            selected_model_labels=selected_model_labels,
+            selected_model_classes=selected_model_classes,
             rules=rules,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
@@ -329,81 +338,94 @@ class ReconcileDNSBulkJob(Job):
     #
 
     @staticmethod
-    def _normalize_model_labels(source_models):
-        """Return `(valid_labels, invalid_labels)` for selected source-model content types."""
+    def _normalize_model_classes(source_models):
+        """Return `(valid_model_classes, invalid_labels)` for selected source-model content types."""
         if not source_models:
             return set(), set()
 
-        requested_labels = set()
+        selected_model_classes = set()
         invalid_labels = set()
 
         for content_type in source_models:
             model_class = content_type.model_class()
             model_label = f"{content_type.app_label}.{content_type.model}"
             if model_class in SUPPORTED_SOURCE_MODELS:
-                requested_labels.add(model_label)
+                selected_model_classes.add(model_class)
                 continue
 
             invalid_labels.add(model_label)
 
-        return requested_labels, invalid_labels
+        return selected_model_classes, invalid_labels
 
-    def _resolve_target_models(self, selected_rules, selected_model_labels):
-        """Resolve which model labels should be scanned in bulk mode."""
-        filtered_rules = self._get_rule_queryset(selected_rules, selected_model_labels)
-        labels = {
-            f"{rule.content_type.app_label}.{rule.content_type.model}"
-            for rule in filtered_rules
-            if f"{rule.content_type.app_label}.{rule.content_type.model}" in SUPPORTED_SOURCE_MODEL_MAP
-        }
-        return sorted(labels)
+    def _resolve_target_models(self, selected_rules, selected_model_classes):
+        """Resolve which model classes should be scanned in bulk mode."""
+        filtered_rules = self._get_rule_queryset(selected_rules, selected_model_classes)
+
+        model_classes = set()
+        for rule in filtered_rules:
+            model_class = rule.content_type.model_class()
+            if model_class not in SUPPORTED_SOURCE_MODELS:
+                continue
+            model_classes.add(model_class)
+
+        return sorted(model_classes, key=_model_label)
 
     @staticmethod
-    def _get_rules_mismatched_to_source_models(selected_rules, selected_model_labels):
-        """Return selected rules whose content type isn't in selected source-model labels."""
-        if not selected_rules or not selected_model_labels:
+    def _get_rules_mismatched_to_source_models(selected_rules, selected_model_classes):
+        """Return selected rules whose content type isn't in selected source-model classes."""
+        if not selected_rules or not selected_model_classes:
             return []
 
         return [
             rule
             for rule in selected_rules
-            if f"{rule.content_type.app_label}.{rule.content_type.model}" not in selected_model_labels
+            if rule.content_type.model_class() not in selected_model_classes
         ]
 
-    def _get_rule_queryset(self, selected_rules, selected_model_labels):
+    def _get_rule_queryset(self, selected_rules, selected_model_classes):
         """Build enabled-rule queryset constrained by explicit rule/model filters."""
         queryset = DNSRule.objects.filter(enabled=True).select_related("content_type")
 
         if selected_rules:
             queryset = queryset.filter(pk__in=[rule.pk for rule in selected_rules])
 
-        if selected_model_labels:
+        if selected_model_classes:
             conditions = Q()
-            for model_label in selected_model_labels:
-                app_label, model_name = model_label.split(".", maxsplit=1)
-                conditions |= Q(content_type__app_label=app_label, content_type__model=model_name)
+            for model_class in selected_model_classes:
+                conditions |= Q(content_type__app_label=model_class._meta.app_label, content_type__model=model_class._meta.model_name)
             queryset = queryset.filter(conditions)
 
         return queryset
 
     def _iter_targets(
         self,
-        target_labels,
+        target_models,
         batch_size,
         limit=None,
         location_ids=None,
         tenant_ids=None,
     ):
-        """Yield `(model_label, object)` tuples for reconciliation."""
+        """Iterate reconciliation targets across selected models.
+
+        Args:
+            target_models (Iterable[type]): Source model classes to scan.
+            batch_size (int): Chunk size used for queryset iterator() pagination.
+            limit (int | None): Optional cap on total yielded objects.
+            location_ids (set | None): Optional source-object location IDs to scope by.
+            tenant_ids (set | None): Optional source-object tenant IDs to scope by.
+
+        Yields:
+            tuple[type, object]: `(model_class, obj)` for each in-scope target object.
+        """
         remaining = limit
         location_ids = location_ids or set()
         tenant_ids = tenant_ids or set()
-        for model_label in target_labels:
+        for model_class in target_models:
             if remaining is not None and remaining <= 0:
                 break
 
             queryset = self._build_target_queryset(
-                model_label,
+                model_class,
                 location_ids=location_ids,
                 tenant_ids=tenant_ids,
             )
@@ -412,43 +434,42 @@ class ReconcileDNSBulkJob(Job):
                 queryset = queryset[:remaining]
 
             for obj in queryset.iterator(chunk_size=batch_size):
-                yield model_label, obj
+                yield model_class, obj
                 if remaining is not None:
                     remaining -= 1
                     if remaining <= 0:
                         break
 
-    def _build_target_queryset(self, model_label, *, location_ids, tenant_ids):
-        """Build scoped and optimized queryset for one target model label."""
-        model_class = SUPPORTED_SOURCE_MODEL_MAP[model_label]
+    def _build_target_queryset(self, model_class, *, location_ids, tenant_ids):
+        """Build scoped and optimized queryset for one target model class."""
         queryset = model_class.objects.order_by("pk")
         queryset = self._bulk_scope_filter_builder.apply(
-            model_label,
+            _model_label(model_class),
             queryset,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
         )
-        queryset = self._apply_target_queryset_optimizations(model_label, queryset)
+        queryset = self._apply_target_queryset_optimizations(model_class, queryset)
 
         return queryset
 
     @staticmethod
-    def _apply_target_queryset_optimizations(model_label, queryset):
+    def _apply_target_queryset_optimizations(model_class, queryset):
         """Apply model-specific queryset eager-loading optimizations."""
-        if model_label == "dcim.device":
+        if model_class is Device:
             return queryset.select_related("location", "tenant", "primary_ip4", "primary_ip6")
 
-        if model_label == "dcim.interface":
+        if model_class is Interface:
             return queryset.select_related("device", "device__tenant", "device__location").prefetch_related(
                 "ip_addresses"
             )
 
-        if model_label == "virtualization.virtualmachine":
+        if model_class is VirtualMachine:
             return queryset.select_related(
                 "cluster", "cluster__location", "cluster__tenant", "tenant", "primary_ip4", "primary_ip6"
             )
 
-        if model_label == "virtualization.vminterface":
+        if model_class is VMInterface:
             return queryset.select_related(
                 "virtual_machine",
                 "virtual_machine__tenant",
@@ -457,7 +478,7 @@ class ReconcileDNSBulkJob(Job):
                 "virtual_machine__cluster__tenant",
             ).prefetch_related("ip_addresses")
 
-        if model_label == "ipam.service":
+        if model_class is Service:
             return queryset.select_related(
                 "device",
                 "device__location",
@@ -487,11 +508,11 @@ class ReconcileDNSBulkJob(Job):
     ):
         """Process iterator of targets as full batches plus one trailing flush."""
         object_batch = []
-        for model_label, obj in targets:
+        for model_class, obj in targets:
             if _limit_reached(summary, limit):
                 break
 
-            object_batch.append((model_label, obj))
+            object_batch.append((model_class, obj))
             if len(object_batch) >= batch_size:
                 self._process_pipeline_target_batch(
                     object_batch,
@@ -531,11 +552,12 @@ class ReconcileDNSBulkJob(Job):
         if dryrun or not targets_in_scope:
             return
 
-        targets_by_model_label = defaultdict(list)
-        for model_label, obj in targets_in_scope:
-            targets_by_model_label[model_label].append(obj)
+        targets_by_model_class = defaultdict(list)
+        for model_class, obj in targets_in_scope:
+            targets_by_model_class[model_class].append(obj)
 
-        for model_label, model_objects in targets_by_model_label.items():
+        for model_class, model_objects in targets_by_model_class.items():
+            model_label = _model_label(model_class)
             try:
                 batch_summaries = selected_engine.process_objects_pipeline(model_objects, created=False)
             except DNSRuleEngineIntegrityError:
@@ -565,14 +587,15 @@ class ReconcileDNSBulkJob(Job):
     ):
         """Build list of objects from batch, enforcing limit and recording each target in summary."""
         targets_in_scope = []
-        for model_label, obj in object_batch:
+        for model_class, obj in object_batch:
             if _limit_reached(summary, limit):
                 break
 
             summary.mark_target_seen()
-            targets_in_scope.append((model_label, obj))
+            targets_in_scope.append((model_class, obj))
 
             if dryrun:
+                model_label = _model_label(model_class)
                 self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
 
         return targets_in_scope
@@ -639,7 +662,7 @@ class ReconcileDNSObjectJob(Job):
 
         targets = list(
             self._expand_object_with_children(
-                object_model=object_model_label,
+                object_model_class=model_class,
                 obj=obj,
                 include_children=bool(include_children),
             )
@@ -659,14 +682,14 @@ class ReconcileDNSObjectJob(Job):
                 "exception_type": type(exc).__name__,
                 "message": str(exc),
             }
-        summary.scanned_model_labels.update({model_label for model_label, _ in targets})
+        summary.scanned_model_labels.update({_model_label(model_class) for model_class, _ in targets})
 
         result = _build_result_payload(
             summary,
             dryrun=bool(dryrun),
             single_object=True,
             include_children=bool(include_children),
-            selected_model_labels=set(),
+            selected_model_classes=set(),
             rules=[],
             location_ids=set(),
             tenant_ids=set(),
@@ -683,24 +706,24 @@ class ReconcileDNSObjectJob(Job):
     #
 
     @staticmethod
-    def _expand_object_with_children(object_model, obj, include_children=False):
-        """Yield `(model_label, object)` targets for the source object and optional children."""
-        yield object_model, obj
+    def _expand_object_with_children(object_model_class, obj, include_children=False):
+        """Yield `(model_class, object)` targets for the source object and optional children."""
+        yield object_model_class, obj
 
         if not include_children:
             return
 
-        relation = SUPPORTED_PARENT_CHILD_MODEL_RELATIONS.get(object_model)
+        relation = SUPPORTED_PARENT_CHILD_MODEL_RELATIONS.get(object_model_class)
         if relation is None:
             return
 
-        child_model_label, related_manager_name = relation
+        child_model_class, related_manager_name = relation
         child_manager = getattr(obj, related_manager_name, None)
         if child_manager is None:
             return
 
         for child_obj in child_manager.all():
-            yield child_model_label, child_obj
+            yield child_model_class, child_obj
 
     def _process_targets(self, targets, *, dryrun, limit, batch_size):
         """Process target iterator and return aggregated execution/reconciliation summary."""
@@ -708,11 +731,11 @@ class ReconcileDNSObjectJob(Job):
         selected_engine = DNSRuleEngine()
 
         object_batch = []
-        for model_label, obj in targets:
+        for model_class, obj in targets:
             if _limit_reached(summary, limit):
                 break
 
-            object_batch.append((model_label, obj))
+            object_batch.append((model_class, obj))
             if len(object_batch) >= batch_size:
                 self._process_target_batch(
                     object_batch,
@@ -745,20 +768,22 @@ class ReconcileDNSObjectJob(Job):
     ):
         """Process one buffered target batch."""
         targets_in_scope = []
-        for model_label, obj in object_batch:
+        for model_class, obj in object_batch:
             if _limit_reached(summary, limit):
                 break
 
             summary.mark_target_seen()
-            targets_in_scope.append((model_label, obj))
+            targets_in_scope.append((model_class, obj))
 
             if dryrun:
+                model_label = _model_label(model_class)
                 self.logger.info("dryrun target=%s:%s", model_label, obj.pk)
 
         if dryrun or not targets_in_scope:
             return
 
-        for model_label, obj in targets_in_scope:
+        for model_class, obj in targets_in_scope:
+            model_label = _model_label(model_class)
             try:
                 processing_summary = selected_engine.process_object(obj, created=False)
                 summary.mark_processed_success(processing_summary)
