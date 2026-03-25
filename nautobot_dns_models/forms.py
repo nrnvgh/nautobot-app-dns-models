@@ -493,6 +493,7 @@ class DNSRuleForm(LocatableModelFormMixin, TenancyForm, NautobotModelForm):
 
         if "location" in self.fields:
             self.fields["location"].help_text = "Apply this rule only to objects in this location"
+
         if "tenant" in self.fields:
             self.fields["tenant"].help_text = "Apply this rule only to objects in this tenant"
 
