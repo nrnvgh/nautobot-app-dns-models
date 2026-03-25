@@ -407,7 +407,7 @@ Change implemented:
   - `result.mode.pipeline_stage_metrics`.
 
 Single-run validation snapshot (`limit=1000`):
-- `stage_seconds`:
+- `stage_metrics`:
   - fetch: `0.0230s`
   - planning: `0.1005s`
   - apply: `0.0348s`

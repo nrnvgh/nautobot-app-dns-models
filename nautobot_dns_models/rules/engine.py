@@ -6,7 +6,8 @@ import logging
 import re
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from time import perf_counter
 
 from django.contrib.contenttypes.models import ContentType
@@ -66,6 +67,99 @@ class ObjectProcessingSummary:
     record_ops_delete_count: int = 0
 
 
+@dataclass
+class PipelineStageMetrics:
+    """Accumulate elapsed seconds for each pipeline stage."""
+
+    fetch: float = 0.0
+    planning: float = 0.0
+    apply: float = 0.0
+    bulk_flush: float = 0.0
+    total: float = 0.0
+
+    def add(self, stage_name, seconds):
+        """Add elapsed seconds to one named stage."""
+        if not hasattr(self, stage_name):
+            raise ValueError(f"Unknown pipeline stage '{stage_name}'.")
+        setattr(self, stage_name, getattr(self, stage_name) + seconds)
+
+    def as_dict(self, rounded=False):
+        """Return stage seconds as a plain dictionary."""
+        data = {
+            "fetch": self.fetch,
+            "planning": self.planning,
+            "apply": self.apply,
+            "bulk_flush": self.bulk_flush,
+            "total": self.total,
+        }
+        if not rounded:
+            return data
+        return {stage_name: round(value, 3) for stage_name, value in data.items()}
+
+
+@dataclass
+class PipelineBatchMetrics:
+    """Per-batch counters and stage timing prior to accumulation."""
+
+    objects: int = 0
+    tracking_rows: int = 0
+    pending_rule_calculations: int = 0
+    pending_bulk_updates: int = 0
+    stage_metrics: PipelineStageMetrics = field(default_factory=PipelineStageMetrics)
+
+    @contextmanager
+    def time_stage(self, stage_name):
+        """Context manager that accumulates stage elapsed time."""
+        started_at = perf_counter()
+        try:
+            yield
+        finally:
+            self.stage_metrics.add(stage_name, perf_counter() - started_at)
+
+
+@dataclass
+class PipelineMetrics:
+    """Cumulative pipeline metrics across all processed batches."""
+
+    batches: int = 0
+    objects_total: int = 0
+    tracking_rows_total: int = 0
+    pending_rule_calculations_total: int = 0
+    pending_bulk_updates_total: int = 0
+    stage_metrics: PipelineStageMetrics = field(default_factory=PipelineStageMetrics)
+
+    def record_batch(self, batch_metrics):
+        """Accumulate one batch into running totals."""
+        self.batches += 1
+        self.objects_total += batch_metrics.objects
+        self.tracking_rows_total += batch_metrics.tracking_rows
+        self.pending_rule_calculations_total += batch_metrics.pending_rule_calculations
+        self.pending_bulk_updates_total += batch_metrics.pending_bulk_updates
+        for stage_name, value in batch_metrics.stage_metrics.as_dict().items():
+            self.stage_metrics.add(stage_name, value)
+
+    def as_report(self):
+        """Serialize cumulative totals and per-batch averages."""
+        stage_metrics = self.stage_metrics.as_dict(rounded=True)
+        metrics = {
+            "batches": self.batches,
+            "objects_total": self.objects_total,
+            "tracking_rows_total": self.tracking_rows_total,
+            "pending_rule_calculations_total": self.pending_rule_calculations_total,
+            "pending_bulk_updates_total": self.pending_bulk_updates_total,
+            "stage_metrics": stage_metrics,
+        }
+        batches = metrics["batches"] or 1
+        metrics["avg_per_batch"] = {
+            "objects": round(metrics["objects_total"] / batches, 3),
+            "tracking_rows": round(metrics["tracking_rows_total"] / batches, 3),
+            "pending_rule_calculations": round(metrics["pending_rule_calculations_total"] / batches, 3),
+            "pending_bulk_updates": round(metrics["pending_bulk_updates_total"] / batches, 3),
+            "stage_metrics": {k: round(v / batches, 3) for k, v in stage_metrics.items()},
+        }
+        return metrics
+
+
 class DNSRuleEngine:
     """Primary engine that reconciles DNS records in explicit batch phases."""
 
@@ -88,20 +182,7 @@ class DNSRuleEngine:
         self._jinja_env = django_template_engines["jinja"].env
         self._pending_batched_creates = defaultdict(list)
         self._batched_create_queue_active = False
-        self._pipeline_stage_metrics = {
-            "batches": 0,
-            "objects_total": 0,
-            "tracking_rows_total": 0,
-            "pending_rule_calculations_total": 0,
-            "pending_bulk_updates_total": 0,
-            "stage_seconds": {
-                "fetch": 0.0,
-                "planning": 0.0,
-                "apply": 0.0,
-                "bulk_flush": 0.0,
-                "total": 0.0,
-            },
-        }
+        self._pipeline_stage_metrics = PipelineMetrics()
 
     #
     # Public API
@@ -151,31 +232,7 @@ class DNSRuleEngine:
 
     def get_pipeline_stage_metrics(self):
         """Return cumulative and per-batch stage metrics for current run."""
-
-        def _round_metric(value):
-            return round(value, 3) if isinstance(value, float) else value
-
-        stage_seconds = {
-            stage_name: _round_metric(value)
-            for stage_name, value in self._pipeline_stage_metrics["stage_seconds"].items()
-        }
-        metrics = {
-            "batches": self._pipeline_stage_metrics["batches"],
-            "objects_total": self._pipeline_stage_metrics["objects_total"],
-            "tracking_rows_total": self._pipeline_stage_metrics["tracking_rows_total"],
-            "pending_rule_calculations_total": self._pipeline_stage_metrics["pending_rule_calculations_total"],
-            "pending_bulk_updates_total": self._pipeline_stage_metrics["pending_bulk_updates_total"],
-            "stage_seconds": stage_seconds,
-        }
-        batches = metrics["batches"] or 1
-        metrics["avg_per_batch"] = {
-            "objects": _round_metric(metrics["objects_total"] / batches),
-            "tracking_rows": _round_metric(metrics["tracking_rows_total"] / batches),
-            "pending_rule_calculations": _round_metric(metrics["pending_rule_calculations_total"] / batches),
-            "pending_bulk_updates": _round_metric(metrics["pending_bulk_updates_total"] / batches),
-            "stage_seconds": {k: _round_metric(v / batches) for k, v in metrics["stage_seconds"].items()},
-        }
-        return metrics
+        return self._pipeline_stage_metrics.as_report()
 
     #
     # Pipeline internals
@@ -189,57 +246,42 @@ class DNSRuleEngine:
         if created:
             return [self.process_object(source_obj, created=True) for source_obj in source_objects]
 
+        batch_metrics = PipelineBatchMetrics(objects=len(source_objects))
         total_started_at = perf_counter()
-        fetch_seconds = 0.0
-        planning_seconds = 0.0
-        apply_seconds = 0.0
-        bulk_flush_seconds = 0.0
 
         # Stage 1: Fetch tracking rows
-        fetch_started_at = perf_counter()
-        fetch_result = self._fetch_tracking_data(source_objects)
-        fetch_seconds += perf_counter() - fetch_started_at
+        with batch_metrics.time_stage("fetch"):
+            fetch_result = self._fetch_tracking_data(source_objects)
 
         # Stage 2: Build work plan
-        planning_started_at = perf_counter()
-        plan_result = self._plan_work(
-            source_objects=source_objects,
-            tracking_by_object_id=fetch_result["tracking_by_object_id"],
-        )
-        # Stage 3: Materialize desired data from work plan
-        self._materialize_desired_data(
-            rule_work_items=plan_result["rule_work_items"],
-            prepared_entry_by_object_id=plan_result["prepared_entry_by_object_id"],
-            batch_address_ids=plan_result["batch_address_ids"],
-        )
-        planning_seconds += perf_counter() - planning_started_at
+        with batch_metrics.time_stage("planning"):
+            plan_result = self._plan_work(
+                source_objects=source_objects,
+                tracking_by_object_id=fetch_result["tracking_by_object_id"],
+            )
+            # Stage 3: Materialize desired data from work plan
+            self._materialize_desired_data(
+                rule_work_items=plan_result["rule_work_items"],
+                prepared_entry_by_object_id=plan_result["prepared_entry_by_object_id"],
+                batch_address_ids=plan_result["batch_address_ids"],
+            )
 
         # Stage 4: Apply reconciled changes
-        apply_started_at = perf_counter()
-        apply_result = self._apply_changes(plan_result["prepared_entries"])
-        apply_seconds += perf_counter() - apply_started_at
+        with batch_metrics.time_stage("apply"):
+            apply_result = self._apply_changes(plan_result["prepared_entries"])
 
         # Stage 5: Flush queued rename updates
-        bulk_flush_started_at = perf_counter()
-        self._flush_bulk_rename_updates(apply_result["pending_rename_updates"])
-        bulk_flush_seconds += perf_counter() - bulk_flush_started_at
-        self._record_pipeline_stage_metrics(
-            {
-                "objects": len(source_objects),
-                "tracking_rows": len(fetch_result["tracking_rows"]),
-                "pending_rule_calculations": plan_result["pending_rule_calculations"],
-                "pending_bulk_updates": sum(
-                    len(entries) for entries in apply_result["pending_rename_updates"].values()
-                ),
-                "stage_seconds": {
-                    "fetch": fetch_seconds,
-                    "planning": planning_seconds,
-                    "apply": apply_seconds,
-                    "bulk_flush": bulk_flush_seconds,
-                    "total": perf_counter() - total_started_at,
-                },
-            }
+        with batch_metrics.time_stage("bulk_flush"):
+            self._flush_bulk_rename_updates(apply_result["pending_rename_updates"])
+
+        batch_metrics.stage_metrics.total = perf_counter() - total_started_at
+        batch_metrics.tracking_rows = len(fetch_result["tracking_rows"])
+        batch_metrics.pending_rule_calculations = plan_result["pending_rule_calculations"]
+        batch_metrics.pending_bulk_updates = sum(
+            len(entries) for entries in apply_result["pending_rename_updates"].values()
         )
+        self._pipeline_stage_metrics.record_batch(batch_metrics)
+
         return apply_result["summaries"]
 
     def _fetch_tracking_data(self, source_objects):
@@ -459,17 +501,8 @@ class DNSRuleEngine:
         summary.changed_record_count = create_count + delete_count + update_count
         summary.record_ops_create_count = create_count
         summary.record_ops_delete_count = delete_count
-        return summary
 
-    def _record_pipeline_stage_metrics(self, batch_metrics):
-        """Accumulate one batch worth of stage metrics into engine totals."""
-        self._pipeline_stage_metrics["batches"] += 1
-        self._pipeline_stage_metrics["objects_total"] += batch_metrics["objects"]
-        self._pipeline_stage_metrics["tracking_rows_total"] += batch_metrics["tracking_rows"]
-        self._pipeline_stage_metrics["pending_rule_calculations_total"] += batch_metrics["pending_rule_calculations"]
-        self._pipeline_stage_metrics["pending_bulk_updates_total"] += batch_metrics["pending_bulk_updates"]
-        for stage_name, value in batch_metrics["stage_seconds"].items():
-            self._pipeline_stage_metrics["stage_seconds"][stage_name] += value
+        return summary
 
     #
     # Per-object reconciliation
