@@ -41,35 +41,31 @@ class ReconcileRunSummary:
     """Mutable accumulator for reconciliation execution and outcome counters."""
 
     scanned_model_labels: set[str] = field(default_factory=set)
-    targets_seen: int = 0
-    processed_count: int = 0
-    success_count: int = 0
-    failure_count: int = 0
-    skipped_scope_count: int = 0
+    targets_selected_count: int = 0
+    targets_processed_count: int = 0
+    targets_succeeded_count: int = 0
+    targets_failed_count: int = 0
     objects_with_existing_rule_records: int = 0
     existing_rule_record_count: int = 0
     objects_changed: int = 0
     changed_record_count: int = 0
     record_ops_create_count: int = 0
     record_ops_delete_count: int = 0
+    targets_noop_count: int = 0
 
-    def mark_scope_skipped(self):
-        """Increment count for targets skipped by location/tenant scope filters."""
-        self.skipped_scope_count += 1
-
-    def mark_target_seen(self):
-        """Increment count for in-scope targets encountered."""
-        self.targets_seen += 1
+    def mark_target_selected(self):
+        """Increment count for selected targets encountered."""
+        self.targets_selected_count += 1
 
     def mark_processed_failure(self):
         """Increment counters for a failed processing attempt."""
-        self.processed_count += 1
-        self.failure_count += 1
+        self.targets_processed_count += 1
+        self.targets_failed_count += 1
 
     def mark_processed_success(self, processing_summary):
         """Increment success counters and apply engine-provided reconciliation metrics."""
-        self.processed_count += 1
-        self.success_count += 1
+        self.targets_processed_count += 1
+        self.targets_succeeded_count += 1
 
         if processing_summary.had_existing_rule_records:
             self.objects_with_existing_rule_records += 1
@@ -82,14 +78,20 @@ class ReconcileRunSummary:
         self.record_ops_create_count += processing_summary.record_ops_create_count
         self.record_ops_delete_count += processing_summary.record_ops_delete_count
 
+        if (
+            processing_summary.changed_record_count == 0
+            and processing_summary.record_ops_create_count == 0
+            and processing_summary.record_ops_delete_count == 0
+        ):
+            self.targets_noop_count += 1
+
     def as_execution_dict(self):
         """Serialize execution counters for job result output."""
         return {
-            "targets_seen": self.targets_seen,
-            "processed_count": self.processed_count,
-            "success_count": self.success_count,
-            "failure_count": self.failure_count,
-            "skipped_scope_count": self.skipped_scope_count,
+            "targets_selected_count": self.targets_selected_count,
+            "targets_processed_count": self.targets_processed_count,
+            "targets_succeeded_count": self.targets_succeeded_count,
+            "targets_failed_count": self.targets_failed_count,
         }
 
     def as_reconciliation_dict(self):
@@ -102,6 +104,7 @@ class ReconcileRunSummary:
             "record_ops_delete_count": self.record_ops_delete_count,
             "record_ops_total_count": self.record_ops_create_count + self.record_ops_delete_count,
             "changed_record_count": self.changed_record_count,
+            "targets_noop_count": self.targets_noop_count,
         }
 
 
@@ -112,7 +115,7 @@ class ReconcileRunSummary:
 
 def _limit_reached(summary, limit):
     """Return whether in-scope processing limit has been reached."""
-    return bool(limit) and summary.targets_seen >= limit
+    return bool(limit) and summary.targets_selected_count >= limit
 
 
 def _model_label(model_class):
@@ -169,17 +172,16 @@ def _log_result_summary(logger, result):
             "Reconciliation results: "
             "mode=%s "
             "models=[%s] "
-            "seen=%d processed=%d success=%d failure=%d skipped_scope=%d "
+            "seen=%d processed=%d success=%d failure=%d "
             "objects_changed=%d record_ops(create=%d delete=%d total=%d) "
             "runtime_s=%.3f"
         ),
         "dryrun" if mode["dryrun"] else "apply",
         ",".join(result["scope"]["scanned_models"]) or "-",
-        execution["targets_seen"],
-        execution["processed_count"],
-        execution["success_count"],
-        execution["failure_count"],
-        execution["skipped_scope_count"],
+        execution["targets_selected_count"],
+        execution["targets_processed_count"],
+        execution["targets_succeeded_count"],
+        execution["targets_failed_count"],
         reconciliation["objects_changed"],
         reconciliation["record_ops_create_count"],
         reconciliation["record_ops_delete_count"],
@@ -591,7 +593,7 @@ class ReconcileDNSBulkJob(Job):
             if _limit_reached(summary, limit):
                 break
 
-            summary.mark_target_seen()
+            summary.mark_target_selected()
             targets_in_scope.append((model_class, obj))
 
             if dryrun:
@@ -772,7 +774,7 @@ class ReconcileDNSObjectJob(Job):
             if _limit_reached(summary, limit):
                 break
 
-            summary.mark_target_seen()
+            summary.mark_target_selected()
             targets_in_scope.append((model_class, obj))
 
             if dryrun:

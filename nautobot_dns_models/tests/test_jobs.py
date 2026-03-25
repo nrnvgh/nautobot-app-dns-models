@@ -60,13 +60,14 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         selected_engine.process_object.assert_called_once_with(self.interface, created=False)
         self.assertEqual(result["schema_version"], 1)
-        self.assertEqual(result["execution"]["targets_seen"], 1)
-        self.assertEqual(result["execution"]["processed_count"], 1)
-        self.assertEqual(result["execution"]["failure_count"], 0)
+        self.assertEqual(result["execution"]["targets_selected_count"], 1)
+        self.assertEqual(result["execution"]["targets_processed_count"], 1)
+        self.assertEqual(result["execution"]["targets_failed_count"], 0)
         self.assertEqual(result["reconciliation"]["objects_with_existing_rule_records"], 0)
         self.assertEqual(result["reconciliation"]["existing_rule_record_count"], 0)
         self.assertEqual(result["reconciliation"]["objects_changed"], 0)
         self.assertEqual(result["reconciliation"]["record_ops_total_count"], 0)
+        self.assertEqual(result["reconciliation"]["targets_noop_count"], 1)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_single_object_parent_mode_includes_supported_children(self, MockDNSRuleEngine):
@@ -99,13 +100,14 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         )
         self.assertEqual(selected_engine.process_object.call_count, 2)
         self.assertEqual(result["scope"]["scanned_models"], ["dcim.device", "dcim.interface"])
-        self.assertEqual(result["execution"]["targets_seen"], 2)
-        self.assertEqual(result["execution"]["processed_count"], 2)
-        self.assertEqual(result["execution"]["failure_count"], 0)
+        self.assertEqual(result["execution"]["targets_selected_count"], 2)
+        self.assertEqual(result["execution"]["targets_processed_count"], 2)
+        self.assertEqual(result["execution"]["targets_failed_count"], 0)
         self.assertEqual(result["reconciliation"]["objects_with_existing_rule_records"], 0)
         self.assertEqual(result["reconciliation"]["existing_rule_record_count"], 0)
         self.assertEqual(result["reconciliation"]["objects_changed"], 0)
         self.assertEqual(result["reconciliation"]["record_ops_total_count"], 0)
+        self.assertEqual(result["reconciliation"]["targets_noop_count"], 2)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_job_aggregates_engine_processing_summary(self, MockDNSRuleEngine):
@@ -136,7 +138,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             include_children=True,
         )
 
-        self.assertEqual(result["execution"]["processed_count"], 2)
+        self.assertEqual(result["execution"]["targets_processed_count"], 2)
         self.assertEqual(result["reconciliation"]["objects_with_existing_rule_records"], 2)
         self.assertEqual(result["reconciliation"]["existing_rule_record_count"], 5)
         self.assertEqual(result["reconciliation"]["objects_changed"], 2)
@@ -144,6 +146,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["record_ops_create_count"], 2)
         self.assertEqual(result["reconciliation"]["record_ops_delete_count"], 1)
         self.assertEqual(result["reconciliation"]["record_ops_total_count"], 3)
+        self.assertEqual(result["reconciliation"]["targets_noop_count"], 0)
 
     def test_result_matches_json_schema(self):
         """Successful job output should validate against the published JSON schema."""
@@ -185,8 +188,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         bulk_create_fast_mock.assert_not_called()
         self.assertEqual(ARecord.objects.filter(name=expected_name).count(), 1)
-        self.assertEqual(result["execution"]["processed_count"], 1)
-        self.assertEqual(result["execution"]["failure_count"], 0)
+        self.assertEqual(result["execution"]["targets_processed_count"], 1)
+        self.assertEqual(result["execution"]["targets_failed_count"], 0)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_dryrun_mode_does_not_apply_updates(self, MockDNSRuleEngine):
@@ -202,8 +205,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
         selected_engine.process_object.assert_not_called()
         self.assertTrue(result["mode"]["dryrun"])
-        self.assertEqual(result["execution"]["targets_seen"], 1)
-        self.assertEqual(result["execution"]["processed_count"], 0)
+        self.assertEqual(result["execution"]["targets_selected_count"], 1)
+        self.assertEqual(result["execution"]["targets_processed_count"], 0)
 
     def test_bulk_mode_resolves_target_model_from_enabled_rule_selection(self):
         """Bulk mode should scan only models covered by selected enabled rules."""
@@ -329,7 +332,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             limit=None,
             batch_size=1000,
         )
-        self.assertEqual(primer["execution"]["targets_seen"], 8)
+        self.assertEqual(primer["execution"]["targets_selected_count"], 8)
 
         scoped_rule.name_template = "{{ obj.device.name }}-{{ obj.name }}-updated"
         scoped_rule.save()
@@ -343,8 +346,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             limit=20,
             batch_size=1000,
         )
-        self.assertEqual(result["execution"]["targets_seen"], 8)
-        self.assertEqual(result["execution"]["processed_count"], 8)
+        self.assertEqual(result["execution"]["targets_selected_count"], 8)
+        self.assertEqual(result["execution"]["targets_processed_count"], 8)
         self.assertEqual(result["reconciliation"]["objects_changed"], 8)
 
 
