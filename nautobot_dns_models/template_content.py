@@ -10,7 +10,7 @@ from netutils.ip import ipaddress_address
 
 from nautobot_dns_models.constants.supported_models import (
     SUPPORTED_PARENT_CHILD_MODEL_RELATIONS,
-    SUPPORTED_SOURCE_MODEL_MAP,
+    SUPPORTED_SOURCE_MODELS,
 )
 from nautobot_dns_models.models import (
     AAAARecord,
@@ -66,7 +66,7 @@ class ReconcileDNSObjectButton(Button):
 
         obj = get_obj_from_context(context)
         rule_engine = DNSRuleEngine()
-        if obj._meta.label_lower not in SUPPORTED_SOURCE_MODEL_MAP:
+        if obj.__class__ not in SUPPORTED_SOURCE_MODELS:
             return False
 
         try:

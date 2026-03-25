@@ -25,7 +25,6 @@ from nautobot.virtualization.models import VirtualMachine, VMInterface
 
 from nautobot_dns_models.constants.supported_models import (
     SUPPORTED_PARENT_CHILD_MODEL_RELATIONS,
-    SUPPORTED_SOURCE_MODEL_MAP,
     SUPPORTED_SOURCE_MODELS,
     get_content_type_query_params,
 )
@@ -258,10 +257,11 @@ class ReconcileDNSBulkJob(Job):
 
         selected_model_classes, invalid_model_labels = self._normalize_model_classes(source_models)
         if invalid_model_labels:
+            supported_model_labels = sorted(_model_label(model_class) for model_class in SUPPORTED_SOURCE_MODELS)
             self.fail(
                 "Unsupported source_models: "
                 f"{', '.join(sorted(invalid_model_labels))}. "
-                f"Supported values: {', '.join(sorted(SUPPORTED_SOURCE_MODEL_MAP.keys()))}"
+                f"Supported values: {', '.join(supported_model_labels)}"
             )
             return {
                 "dryrun": bool(dryrun),

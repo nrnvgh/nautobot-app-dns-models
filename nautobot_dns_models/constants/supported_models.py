@@ -13,8 +13,6 @@ SUPPORTED_SOURCE_MODELS = (
     VMInterface,
 )
 
-SUPPORTED_SOURCE_MODEL_MAP = {model._meta.label_lower: model for model in SUPPORTED_SOURCE_MODELS}
-
 # Parent source-model labels that should optionally cascade reconciliation to child objects.
 # Tuple values are: (child_model_class, related_manager_name)
 SUPPORTED_PARENT_CHILD_MODEL_RELATIONS = {
