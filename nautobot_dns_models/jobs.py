@@ -446,7 +446,7 @@ class ReconcileDNSBulkJob(Job):
         """Build scoped and optimized queryset for one target model class."""
         queryset = model_class.objects.order_by("pk")
         queryset = self._bulk_scope_filter_builder.apply(
-            _model_label(model_class),
+            model_class,
             queryset,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
