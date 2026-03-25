@@ -7,26 +7,17 @@ from nautobot.dcim.constants import MODULE_RECURSION_DEPTH_LIMIT
 class BulkScopeFilterBuilder:
     """Build model-specific SQL scope filters for bulk job target querysets."""
 
-    _MODEL_SCOPE_METHODS = {
-        "dcim.device": "_apply_device",
-        "dcim.interface": "_apply_interface",
-        "ipam.service": "_apply_service",
-        "virtualization.virtualmachine": "_apply_virtualmachine",
-        "virtualization.vminterface": "_apply_vminterface",
-    }
-
-    def apply(self, model_label, queryset, *, location_ids, tenant_ids):
-        """Return scope-filtered queryset for requested model label."""
-        method_name = self._MODEL_SCOPE_METHODS.get(model_label)
-        if not method_name:
+    def apply(self, model_class, queryset, *, location_ids, tenant_ids):
+        """Return scope-filtered queryset for requested model class."""
+        handler_name = f"_apply_{model_class._meta.app_label}_{model_class._meta.model_name}"
+        handler = getattr(self, handler_name, None)
+        if handler is None:
             return queryset
-
-        handler = getattr(self, method_name)
 
         return handler(queryset, location_ids=location_ids, tenant_ids=tenant_ids)
 
     @staticmethod
-    def _apply_device(queryset, *, location_ids, tenant_ids):
+    def _apply_dcim_device(queryset, *, location_ids, tenant_ids):
         """Apply direct device location/tenant filtering in SQL."""
         if location_ids:
             queryset = queryset.filter(location_id__in=location_ids)
@@ -36,7 +27,7 @@ class BulkScopeFilterBuilder:
 
         return queryset
 
-    def _apply_interface(self, queryset, *, location_ids, tenant_ids):
+    def _apply_dcim_interface(self, queryset, *, location_ids, tenant_ids):
         """Apply recursive interface location/tenant filtering in SQL."""
         scope_filter = Q()
 
@@ -54,7 +45,7 @@ class BulkScopeFilterBuilder:
         return queryset.filter(scope_filter)
 
     @staticmethod
-    def _apply_virtualmachine(queryset, *, location_ids, tenant_ids):
+    def _apply_virtualization_virtualmachine(queryset, *, location_ids, tenant_ids):
         """Apply virtual machine location/tenant filtering in SQL."""
         if location_ids:
             queryset = queryset.filter(cluster__location_id__in=location_ids)
@@ -67,7 +58,7 @@ class BulkScopeFilterBuilder:
         return queryset
 
     @staticmethod
-    def _apply_vminterface(queryset, *, location_ids, tenant_ids):
+    def _apply_virtualization_vminterface(queryset, *, location_ids, tenant_ids):
         """Apply VM interface location/tenant filtering in SQL."""
         if location_ids:
             queryset = queryset.filter(virtual_machine__cluster__location_id__in=location_ids)
@@ -81,7 +72,7 @@ class BulkScopeFilterBuilder:
         return queryset
 
     @staticmethod
-    def _apply_service(queryset, *, location_ids, tenant_ids):
+    def _apply_ipam_service(queryset, *, location_ids, tenant_ids):
         """Apply Service location/tenant filtering in SQL across device/VM attachment branches."""
         if location_ids:
             queryset = queryset.filter(
