@@ -1,8 +1,5 @@
 """Template-facing proxy wrappers for Nautobot objects."""
 
-# Needed for forward references until python 3.11
-from __future__ import annotations
-
 from functools import cached_property
 
 from django.db.models.query import QuerySet
@@ -43,8 +40,10 @@ class TemplateProxyBase:
         """Convert related values into template-friendly proxies."""
         if isinstance(value, TemplateProxyBase):
             return value
+
         if isinstance(value, IPAddress):
             return TemplateIPAddressProxy(value)
+
         if isinstance(value, QuerySet) and value.model is IPAddress:
             return TemplateIPAddressQuerySetProxy(value)
 
@@ -143,6 +142,7 @@ class TemplateIPAddressQuerySetProxy:
         attr = getattr(self._queryset, name)
         if callable(attr):
             return self._wrap_callable(attr)
+
         return attr
 
     @staticmethod
@@ -150,8 +150,10 @@ class TemplateIPAddressQuerySetProxy:
         """Wrap queryset or model results as template proxies."""
         if isinstance(result, QuerySet) and result.model is IPAddress:
             return TemplateIPAddressQuerySetProxy(result)
+
         if isinstance(result, IPAddress):
             return TemplateIPAddressProxy(result)
+
         return result
 
     def _wrap_callable(self, func):
@@ -207,6 +209,7 @@ class TemplateIPAddressManagerProxy:
         attr = getattr(self._manager, name)
         if callable(attr):
             return self._wrap_callable(attr)
+
         return attr
 
     @staticmethod
@@ -214,8 +217,10 @@ class TemplateIPAddressManagerProxy:
         """Wrap manager results into template proxies."""
         if isinstance(result, QuerySet) and result.model is IPAddress:
             return TemplateIPAddressQuerySetProxy(result)
+
         if isinstance(result, IPAddress):
             return TemplateIPAddressProxy(result)
+
         return result
 
     def _wrap_callable(self, func):
@@ -277,8 +282,11 @@ def wrap_for_template(obj):
     """Return a template proxy for supported Nautobot objects."""
     if isinstance(obj, (Device, VirtualMachine)):
         return DeviceTemplateProxy(obj)
+
     if isinstance(obj, (Interface, VMInterface)):
         return InterfaceTemplateProxy(obj)
+
     if isinstance(obj, Service):
         return ServiceTemplateProxy(obj)
+
     return obj
