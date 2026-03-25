@@ -45,6 +45,30 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         type(self).setUpTestData()
         BaseRuleEngineMixin.setUp(self)
 
+    def _create_module_bay_interface_for_device(self, *, name_prefix, parent_device):
+        """Create one module-bay-backed interface associated with a parent device."""
+        module_status = Status.objects.get_for_model(Module).first()
+        module_type = ModuleType.objects.create(
+            manufacturer=self.manufacturer,
+            model=f"{name_prefix}-module-type",
+        )
+        parent_bay = ModuleBay.objects.create(
+            parent_device=parent_device,
+            name=f"{name_prefix}-module-bay0",
+        )
+        module = Module.objects.create(
+            module_type=module_type,
+            parent_module_bay=parent_bay,
+            status=module_status,
+        )
+        return Interface.objects.create(
+            name=f"{name_prefix}-module-eth0",
+            module=module,
+            device=None,
+            type=self.interface.type,
+            status=self.interface_status,
+        )
+
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_single_object_mode_processes_requested_object(self, MockDNSRuleEngine):
         """Single-object mode should call process_object exactly once."""
@@ -108,6 +132,29 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["objects_changed"], 0)
         self.assertEqual(result["reconciliation"]["record_ops_total_count"], 0)
         self.assertEqual(result["reconciliation"]["targets_noop_count"], 2)
+
+    @patch("nautobot_dns_models.jobs.DNSRuleEngine")
+    def test_single_object_parent_mode_includes_module_bay_interfaces(self, MockDNSRuleEngine):
+        """Single-object parent mode should include interfaces installed on modules in module bays."""
+        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine.process_object.return_value = ObjectProcessingSummary()
+
+        module_interface = self._create_module_bay_interface_for_device(
+            name_prefix="object-include-children",
+            parent_device=self.device,
+        )
+
+        job = ReconcileDNSObjectJob()
+        result = job.run(
+            dryrun=False,
+            object_model=ContentType.objects.get_for_model(Device),
+            object_id=str(self.device.id),
+            include_children=True,
+        )
+
+        processed_objects = [call_args.args[0] for call_args in selected_engine.process_object.call_args_list]
+        self.assertIn(module_interface, processed_objects)
+        self.assertIn("dcim.interface", result["scope"]["scanned_models"])
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_job_aggregates_engine_processing_summary(self, MockDNSRuleEngine):

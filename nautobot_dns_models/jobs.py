@@ -720,6 +720,17 @@ class ReconcileDNSObjectJob(Job):
             return
 
         child_model_class, related_manager_name = relation
+
+        # Include interfaces installed on modules in module bays. Be aware that using .all_interfaces means
+        # the traversal code in core limits depth to MODULE_RECURSION_DEPTH_LIMIT. Modules nested deeper
+        # than that will not be processed.
+        if object_model_class is Device and child_model_class is Interface:
+            # Sort by (name, pk) for human-friendly and deterministic processing order.
+            for interface in sorted(obj.all_interfaces, key=lambda interface: (interface.name, interface.pk)):
+                yield child_model_class, interface
+
+            return
+
         child_manager = getattr(obj, related_manager_name, None)
         if child_manager is None:
             return
