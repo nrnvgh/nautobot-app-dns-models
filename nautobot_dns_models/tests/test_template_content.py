@@ -89,11 +89,13 @@ class ReconcileButtonTemplateContentTestCase(TestCase):
         query = parse_qs(parsed.query)
 
         self.assertIn("/extras/jobs/nautobot_dns_models.jobs.ReconcileDNSObjectJob/run/", parsed.path)
-        self.assertEqual(query["object_model"], ["dcim.device"])
+        self.assertEqual(query["object_model"], [str(ContentType.objects.get_for_model(Device).pk)])
+        self.assertEqual(query["object_model_label"], ["dcim.device"])
         self.assertEqual(query["object_id"], [str(self.device.pk)])
         self.assertEqual(query["object_name"], [str(self.device)])
         self.assertEqual(query["object_url"], [self.device.get_absolute_url()])
-        self.assertEqual(query["include_children"], ["true"])
+        self.assertEqual(query["include_interfaces"], ["true"])
+        self.assertEqual(query["object_has_populated_device_bays"], ["false"])
 
     def test_button_renders_for_parent_when_child_rule_is_in_scope(self):
         """Device button should render when only Interface rules are in scope."""
@@ -132,3 +134,4 @@ class ReconcileButtonTemplateContentTestCase(TestCase):
         parsed = urlparse(link)
         query = parse_qs(parsed.query)
         self.assertEqual(query["parent_object_name"], [str(self.device)])
+        self.assertEqual(query["parent_object_url"], [self.device.get_absolute_url()])

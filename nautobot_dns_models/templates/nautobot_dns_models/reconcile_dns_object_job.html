@@ -22,7 +22,13 @@
             {% include "nautobot_dns_models/inc/manual_context.html" %}
         {% endif %}
         {% render_field job_form.dryrun %}
-        {% render_field job_form.include_children %}
+        {{ job_form.object_has_populated_device_bays.as_hidden }}
+        <div id="include-child-devices-wrapper" style="display: none;">
+            {% render_field job_form.include_child_devices %}
+        </div>
+        <div id="include-interfaces-wrapper" style="display: none;">
+            {% render_field job_form.include_interfaces %}
+        </div>
     {% endwith %}
 {% endblock %}
 
@@ -30,25 +36,47 @@
     {{ block.super }}
     <script type="text/javascript">
         (function() {
-            function toggleIncludeChildren() {
-                var parentModels = new Set(["dcim.device", "virtualization.virtualmachine"]);
-                var modelValue = $("#id_object_model").val();
-                var includeChildren = $("#id_include_children");
-                if (!includeChildren.length) {
+            function parseBooleanValue(value) {
+                var normalized = String(value || "").toLowerCase();
+                return normalized === "true" || normalized === "1" || normalized === "yes";
+            }
+
+            function setFieldVisibility($wrapper, $field, shouldShow) {
+                if (!$wrapper.length || !$field.length) {
                     return;
                 }
-                var includeChildrenGroup = includeChildren.closest(".form-group");
-                var isParent = parentModels.has(modelValue);
-                includeChildren.prop("disabled", !isParent);
-                if (!isParent) {
-                    includeChildren.prop("checked", false);
+                $field.prop("disabled", !shouldShow);
+                if (!shouldShow) {
+                    $field.prop("checked", false);
                 }
-                includeChildrenGroup.css("opacity", isParent ? "1" : "0.6");
+                $wrapper.toggle(shouldShow);
+            }
+
+            function toggleIncludeOptions() {
+                var modelValue = $("#id_object_model").val();
+                var modelLabel = $("#id_object_model_label").val();
+                if (!modelLabel) {
+                    modelLabel = modelValue;
+                }
+
+                var hasPopulatedDeviceBays = parseBooleanValue($("#id_object_has_populated_device_bays").val());
+                var hasInterfaces = parseBooleanValue($("#id_object_has_interfaces").val());
+
+                setFieldVisibility(
+                    $("#include-child-devices-wrapper"),
+                    $("#id_include_child_devices"),
+                    hasPopulatedDeviceBays
+                );
+                setFieldVisibility(
+                    $("#include-interfaces-wrapper"),
+                    $("#id_include_interfaces"),
+                    hasInterfaces
+                );
             }
 
             $(document).ready(function() {
-                $("#id_object_model").change(toggleIncludeChildren);
-                toggleIncludeChildren();
+                $("#id_object_model").change(toggleIncludeOptions);
+                toggleIncludeOptions();
 
                 // Job run pages don't initialize clipboard helpers by default.
                 if (typeof ClipboardJS !== "undefined") {

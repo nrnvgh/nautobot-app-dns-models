@@ -13,13 +13,6 @@ SUPPORTED_SOURCE_MODELS = (
     VMInterface,
 )
 
-# Parent source-model labels that should optionally cascade reconciliation to child objects.
-# Tuple values are: (child_model_class, related_manager_name)
-SUPPORTED_PARENT_CHILD_MODEL_RELATIONS = {
-    Device: (Interface, "interfaces"),
-    VirtualMachine: (VMInterface, "interfaces"),
-}
-
 
 def get_app_model_pairs():
     """Build supported source-model `(app_label, model_name)` pairs.

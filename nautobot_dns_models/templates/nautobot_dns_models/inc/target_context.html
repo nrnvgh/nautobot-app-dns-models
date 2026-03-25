@@ -1,6 +1,8 @@
 <input type="hidden" id="id_object_model" name="object_model" value="{{ obj_model }}">
 <input type="hidden" id="id_object_id" name="object_id" value="{{ obj_id }}">
 <input type="hidden" id="id_object_name" name="object_name" value="{{ obj_name }}">
+<input type="hidden" id="id_object_model_label" value="{{ request.GET.object_model_label|default:'' }}">
+<input type="hidden" id="id_object_has_interfaces" value="{{ request.GET.object_has_interfaces|default:'' }}">
 
 <div class="alert alert-info">
     <i class="mdi mdi-information-outline"></i>
@@ -9,7 +11,7 @@
         <tbody>
             <tr>
                 <td style="padding: 2px 10px 2px 0;"><strong>Model:</strong></td>
-                <td style="padding: 2px 0;">{{ obj_model }}</td>
+                <td style="padding: 2px 0;">{{ request.GET.object_model_label|default:obj_model }}</td>
             </tr>
             <tr>
                 <td style="padding: 2px 10px 2px 0;"><strong>Object:</strong></td>
@@ -38,8 +40,14 @@
             </tr>
             {% if request.GET.parent_object_name %}
                 <tr>
-                    <td style="padding: 2px 10px 2px 0;"><strong>Parent:</strong></td>
-                    <td style="padding: 2px 0;">{{ request.GET.parent_object_name }}</td>
+                    <td style="padding: 2px 10px 2px 0;"><strong>Parent {% if request.GET.parent_object_type %}{{ request.GET.parent_object_type }}{% endif %}:</strong></td>
+                    <td style="padding: 2px 0;">
+                        {% if request.GET.parent_object_url %}
+                            <a href="{{ request.GET.parent_object_url }}">{{ request.GET.parent_object_name }}</a>
+                        {% else %}
+                            {{ request.GET.parent_object_name }}
+                        {% endif %}
+                    </td>
                 </tr>
             {% endif %}
         </tbody>

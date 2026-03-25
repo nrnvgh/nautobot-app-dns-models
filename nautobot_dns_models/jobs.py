@@ -24,7 +24,6 @@ from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
 from nautobot_dns_models.constants.supported_models import (
-    SUPPORTED_PARENT_CHILD_MODEL_RELATIONS,
     SUPPORTED_SOURCE_MODELS,
     get_content_type_query_params,
 )
@@ -123,12 +122,79 @@ def _model_label(model_class):
     return model_class._meta.label_lower
 
 
+def _iter_child_devices(parent_device):
+    """Return child devices installed under the parent device (deterministic order)."""
+    return sorted(parent_device.get_children(), key=lambda child_device: (child_device.name, child_device.pk))
+
+
+def _iter_device_include_children_targets(device, *, include_child_devices=False, include_interfaces=False):
+    """Yield additional `(model_class, object)` targets for Device include-children expansion."""
+    if not include_child_devices and not include_interfaces:
+        return
+
+    child_devices = _iter_child_devices(device)
+
+    if include_child_devices:
+        for child_device in child_devices:
+            yield Device, child_device
+
+    if not include_interfaces:
+        return
+
+    seen_interface_ids = set()
+    devices_for_interface_expansion = [device]
+    if include_child_devices:
+        devices_for_interface_expansion.extend(child_devices)
+
+    for device_in_tree in devices_for_interface_expansion:
+        for interface in sorted(device_in_tree.all_interfaces, key=lambda interface: (interface.name, interface.pk)):
+            if interface.pk in seen_interface_ids:
+                continue
+            seen_interface_ids.add(interface.pk)
+            yield Interface, interface
+
+
+def _expand_object_with_children_targets(
+    object_model_class,
+    obj,
+    *,
+    include_child_devices=False,
+    include_interfaces=False,
+):
+    """Yield `(model_class, object)` targets for the source object and optional children."""
+    yield object_model_class, obj
+
+    if not include_child_devices and not include_interfaces:
+        return
+
+    if object_model_class is Device:
+        for expanded_model_class, expanded_obj in _iter_device_include_children_targets(
+            obj,
+            include_child_devices=include_child_devices,
+            include_interfaces=include_interfaces,
+        ):
+            yield expanded_model_class, expanded_obj
+        return
+
+    if not include_interfaces:
+        return
+
+    child_manager = getattr(obj, "interfaces", None)
+    if child_manager is None:
+        return
+
+    child_model_class = child_manager.model
+    for child_obj in child_manager.all():
+        yield child_model_class, child_obj
+
+
 def _build_result_payload(
     summary,
     *,
     dryrun,
     single_object,
-    include_children,
+    include_child_devices,
+    include_interfaces,
     selected_model_classes,
     rules=None,
     location_ids=None,
@@ -142,7 +208,8 @@ def _build_result_payload(
         "mode": {
             "dryrun": bool(dryrun),
             "single_object": bool(single_object),
-            "include_children": bool(include_children),
+            "include_child_devices": bool(include_child_devices),
+            "include_interfaces": bool(include_interfaces),
         },
         "scope": {
             "scanned_models": sorted(summary.scanned_model_labels),
@@ -227,6 +294,16 @@ class ReconcileDNSBulkJob(Job):
         required=False,
         description="Optional source-object tenant filter.",
     )
+    include_child_devices = BooleanVar(
+        required=False,
+        default=False,
+        description="Reconcile child devices in populated device bays.",
+    )
+    include_interfaces = BooleanVar(
+        required=False,
+        default=False,
+        description="Reconcile interfaces.",
+    )
     limit = IntegerVar(
         required=False,
         min_value=1,
@@ -246,6 +323,8 @@ class ReconcileDNSBulkJob(Job):
         rules=None,
         locations=None,
         tenants=None,
+        include_child_devices=False,
+        include_interfaces=False,
         limit=None,
         batch_size=500,
     ):  # pylint: disable=too-many-arguments,arguments-differ
@@ -294,6 +373,8 @@ class ReconcileDNSBulkJob(Job):
             limit=limit,
             location_ids=location_ids,
             tenant_ids=tenant_ids,
+            include_child_devices=bool(include_child_devices),
+            include_interfaces=bool(include_interfaces),
         )
         summary = ReconcileRunSummary()
         summary.scanned_model_labels.update(_model_label(model_class) for model_class in target_model_classes)
@@ -320,7 +401,8 @@ class ReconcileDNSBulkJob(Job):
             summary,
             dryrun=bool(dryrun),
             single_object=False,
-            include_children=False,
+            include_child_devices=bool(include_child_devices),
+            include_interfaces=bool(include_interfaces),
             selected_model_classes=selected_model_classes,
             rules=rules,
             location_ids=location_ids,
@@ -378,11 +460,7 @@ class ReconcileDNSBulkJob(Job):
         if not selected_rules or not selected_model_classes:
             return []
 
-        return [
-            rule
-            for rule in selected_rules
-            if rule.content_type.model_class() not in selected_model_classes
-        ]
+        return [rule for rule in selected_rules if rule.content_type.model_class() not in selected_model_classes]
 
     def _get_rule_queryset(self, selected_rules, selected_model_classes):
         """Build enabled-rule queryset constrained by explicit rule/model filters."""
@@ -394,7 +472,10 @@ class ReconcileDNSBulkJob(Job):
         if selected_model_classes:
             conditions = Q()
             for model_class in selected_model_classes:
-                conditions |= Q(content_type__app_label=model_class._meta.app_label, content_type__model=model_class._meta.model_name)
+                conditions |= Q(
+                    content_type__app_label=model_class._meta.app_label,
+                    content_type__model=model_class._meta.model_name,
+                )
             queryset = queryset.filter(conditions)
 
         return queryset
@@ -406,6 +487,8 @@ class ReconcileDNSBulkJob(Job):
         limit=None,
         location_ids=None,
         tenant_ids=None,
+        include_child_devices=False,
+        include_interfaces=False,
     ):
         """Iterate reconciliation targets across selected models.
 
@@ -415,6 +498,8 @@ class ReconcileDNSBulkJob(Job):
             limit (int | None): Optional cap on total yielded objects.
             location_ids (set | None): Optional source-object location IDs to scope by.
             tenant_ids (set | None): Optional source-object tenant IDs to scope by.
+            include_child_devices (bool): Expand Device targets to include child devices.
+            include_interfaces (bool): Expand parent targets to include interface children.
 
         Yields:
             tuple[type, object]: `(model_class, obj)` for each in-scope target object.
@@ -422,6 +507,7 @@ class ReconcileDNSBulkJob(Job):
         remaining = limit
         location_ids = location_ids or set()
         tenant_ids = tenant_ids or set()
+        seen_targets = set()
         for model_class in target_models:
             if remaining is not None and remaining <= 0:
                 break
@@ -432,15 +518,34 @@ class ReconcileDNSBulkJob(Job):
                 tenant_ids=tenant_ids,
             )
 
-            if remaining is not None:
+            if remaining is not None and not (include_child_devices or include_interfaces):
                 queryset = queryset[:remaining]
 
             for obj in queryset.iterator(chunk_size=batch_size):
-                yield model_class, obj
-                if remaining is not None:
-                    remaining -= 1
-                    if remaining <= 0:
-                        break
+                if include_child_devices or include_interfaces:
+                    expanded_targets = _expand_object_with_children_targets(
+                        object_model_class=model_class,
+                        obj=obj,
+                        include_child_devices=include_child_devices,
+                        include_interfaces=include_interfaces,
+                    )
+                else:
+                    expanded_targets = ((model_class, obj),)
+
+                for expanded_model_class, expanded_obj in expanded_targets:
+                    target_key = (expanded_model_class, expanded_obj.pk)
+                    if target_key in seen_targets:
+                        continue
+
+                    seen_targets.add(target_key)
+                    yield expanded_model_class, expanded_obj
+                    if remaining is not None:
+                        remaining -= 1
+                        if remaining <= 0:
+                            break
+
+                if remaining is not None and remaining <= 0:
+                    break
 
     def _build_target_queryset(self, model_class, *, location_ids, tenant_ids):
         """Build scoped and optimized queryset for one target model class."""
@@ -594,6 +699,7 @@ class ReconcileDNSBulkJob(Job):
                 break
 
             summary.mark_target_selected()
+            summary.scanned_model_labels.add(_model_label(model_class))
             targets_in_scope.append((model_class, obj))
 
             if dryrun:
@@ -632,10 +738,21 @@ class ReconcileDNSObjectJob(Job):
         description="Display name of the selected object (button-launch context).",
         widget=widgets.HiddenInput,
     )
-    include_children = BooleanVar(
+    object_has_populated_device_bays = BooleanVar(
         required=False,
         default=False,
-        description="For parent models: also reconcile supported child objects.",
+        description="Display-only UI hint indicating whether selected Device has child devices.",
+        widget=widgets.HiddenInput,
+    )
+    include_child_devices = BooleanVar(
+        required=False,
+        default=False,
+        description="Reconcile child devices in populated device bays.",
+    )
+    include_interfaces = BooleanVar(
+        required=False,
+        default=False,
+        description="Reconcile interfaces.",
     )
 
     def run(  # pylint: disable=arguments-differ
@@ -644,7 +761,9 @@ class ReconcileDNSObjectJob(Job):
         object_model=None,
         object_id=None,
         object_name="",
-        include_children=False,
+        object_has_populated_device_bays=False,  # noqa: ARG002 - display-only hidden form value
+        include_child_devices=False,
+        include_interfaces=False,
     ):
         """Execute single-object DNS reconciliation."""
         started_at = perf_counter()
@@ -666,7 +785,8 @@ class ReconcileDNSObjectJob(Job):
             self._expand_object_with_children(
                 object_model_class=model_class,
                 obj=obj,
-                include_children=bool(include_children),
+                include_child_devices=bool(include_child_devices),
+                include_interfaces=bool(include_interfaces),
             )
         )
         try:
@@ -690,7 +810,8 @@ class ReconcileDNSObjectJob(Job):
             summary,
             dryrun=bool(dryrun),
             single_object=True,
-            include_children=bool(include_children),
+            include_child_devices=bool(include_child_devices),
+            include_interfaces=bool(include_interfaces),
             selected_model_classes=set(),
             rules=[],
             location_ids=set(),
@@ -708,35 +829,14 @@ class ReconcileDNSObjectJob(Job):
     #
 
     @staticmethod
-    def _expand_object_with_children(object_model_class, obj, include_children=False):
+    def _expand_object_with_children(object_model_class, obj, *, include_child_devices=False, include_interfaces=False):
         """Yield `(model_class, object)` targets for the source object and optional children."""
-        yield object_model_class, obj
-
-        if not include_children:
-            return
-
-        relation = SUPPORTED_PARENT_CHILD_MODEL_RELATIONS.get(object_model_class)
-        if relation is None:
-            return
-
-        child_model_class, related_manager_name = relation
-
-        # Include interfaces installed on modules in module bays. Be aware that using .all_interfaces means
-        # the traversal code in core limits depth to MODULE_RECURSION_DEPTH_LIMIT. Modules nested deeper
-        # than that will not be processed.
-        if object_model_class is Device and child_model_class is Interface:
-            # Sort by (name, pk) for human-friendly and deterministic processing order.
-            for interface in sorted(obj.all_interfaces, key=lambda interface: (interface.name, interface.pk)):
-                yield child_model_class, interface
-
-            return
-
-        child_manager = getattr(obj, related_manager_name, None)
-        if child_manager is None:
-            return
-
-        for child_obj in child_manager.all():
-            yield child_model_class, child_obj
+        yield from _expand_object_with_children_targets(
+            object_model_class=object_model_class,
+            obj=obj,
+            include_child_devices=include_child_devices,
+            include_interfaces=include_interfaces,
+        )
 
     def _process_targets(self, targets, *, dryrun, limit, batch_size):
         """Process target iterator and return aggregated execution/reconciliation summary."""

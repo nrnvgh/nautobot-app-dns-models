@@ -69,6 +69,28 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             status=self.interface_status,
         )
 
+    def _create_child_device_with_interface(self, *, name_prefix, parent_device, location):
+        """Create one child device installed in parent device bay and one child interface."""
+        child_device = Device.objects.create(
+            name=f"{name_prefix}-child-device",
+            device_type=self.device_type,
+            location=location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        DeviceBay.objects.create(
+            device=parent_device,
+            name=f"{name_prefix}-child-bay0",
+            installed_device=child_device,
+        )
+        child_interface = Interface.objects.create(
+            name=f"{name_prefix}-child-eth0",
+            device=child_device,
+            type=self.interface.type,
+            status=self.interface_status,
+        )
+        return child_device, child_interface
+
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_single_object_mode_processes_requested_object(self, MockDNSRuleEngine):
         """Single-object mode should call process_object exactly once."""
@@ -112,7 +134,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             dryrun=False,
             object_model=ContentType.objects.get_for_model(Device),
             object_id=str(self.device.id),
-            include_children=True,
+            include_child_devices=True,
+            include_interfaces=True,
         )
 
         selected_engine.process_object.assert_has_calls(
@@ -149,11 +172,46 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             dryrun=False,
             object_model=ContentType.objects.get_for_model(Device),
             object_id=str(self.device.id),
-            include_children=True,
+            include_child_devices=True,
+            include_interfaces=True,
         )
 
         processed_objects = [call_args.args[0] for call_args in selected_engine.process_object.call_args_list]
         self.assertIn(module_interface, processed_objects)
+        self.assertIn("dcim.interface", result["scope"]["scanned_models"])
+
+    @patch("nautobot_dns_models.jobs.DNSRuleEngine")
+    def test_single_object_parent_mode_includes_child_devices_and_interfaces(self, MockDNSRuleEngine):
+        """Single-object parent mode should include child devices and their interfaces."""
+        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine.process_object.return_value = ObjectProcessingSummary()
+        DNSRule.objects.create(
+            name="job-device-ip-child-reconcile",
+            content_type=ContentType.objects.get_for_model(Device),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+        child_device, child_interface = self._create_child_device_with_interface(
+            name_prefix="object-child-device",
+            parent_device=self.device,
+            location=self.location,
+        )
+        job = ReconcileDNSObjectJob()
+
+        result = job.run(
+            dryrun=False,
+            object_model=ContentType.objects.get_for_model(Device),
+            object_id=str(self.device.id),
+            include_child_devices=True,
+            include_interfaces=True,
+        )
+
+        processed_objects = [call_args.args[0] for call_args in selected_engine.process_object.call_args_list]
+        self.assertIn(child_device, processed_objects)
+        self.assertIn(child_interface, processed_objects)
+        self.assertIn("dcim.device", result["scope"]["scanned_models"])
         self.assertIn("dcim.interface", result["scope"]["scanned_models"])
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
@@ -182,7 +240,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             dryrun=False,
             object_model=ContentType.objects.get_for_model(Device),
             object_id=str(self.device.id),
-            include_children=True,
+            include_child_devices=True,
+            include_interfaces=True,
         )
 
         self.assertEqual(result["execution"]["targets_processed_count"], 2)
@@ -238,6 +297,131 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["execution"]["targets_processed_count"], 1)
         self.assertEqual(result["execution"]["targets_failed_count"], 0)
 
+    def test_single_object_parent_include_child_devices_creates_parent_and_child_device_records(self):
+        """Single-object Device run with child-device expansion should create DNS records for parent and child devices."""
+        DNSRule.objects.create(
+            name="object-device-primary-ip-both",
+            content_type=ContentType.objects.get_for_model(Device),
+            record_type="A",
+            zone_template="example.com",
+            name_template="objjob-{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+        child_device, _child_interface = self._create_child_device_with_interface(
+            name_prefix="object-device-both",
+            parent_device=self.device,
+            location=self.location,
+        )
+
+        parent_ip = self.ip_addresses[1]
+        child_ip = IPAddress.objects.create(
+            address="192.168.1.99/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=self.prefix,
+        )
+        self.device.primary_ip4 = parent_ip
+        self.device.save(update_fields=["primary_ip4"])
+        child_device.primary_ip4 = child_ip
+        child_device.save(update_fields=["primary_ip4"])
+
+        parent_record_name = f"objjob-{self.device.name}"
+        child_record_name = f"objjob-{child_device.name}"
+        ARecord.objects.filter(name__in=[parent_record_name, child_record_name], zone=self.dns_zone).delete()
+
+        result = ReconcileDNSObjectJob().run(
+            dryrun=False,
+            object_model=ContentType.objects.get_for_model(Device),
+            object_id=str(self.device.id),
+            include_child_devices=True,
+            include_interfaces=False,
+        )
+
+        self.assertTrue(ARecord.objects.filter(name=parent_record_name, zone=self.dns_zone).exists())
+        self.assertTrue(ARecord.objects.filter(name=child_record_name, zone=self.dns_zone).exists())
+        self.assertEqual(result["execution"]["targets_processed_count"], 2)
+
+    def test_single_object_child_device_creates_dns_record(self):
+        """Single-object Device run should reconcile a child device directly and create DNS record."""
+        DNSRule.objects.create(
+            name="object-child-device-primary-ip",
+            content_type=ContentType.objects.get_for_model(Device),
+            record_type="A",
+            zone_template="example.com",
+            name_template="child-only-{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+        child_device, _child_interface = self._create_child_device_with_interface(
+            name_prefix="object-child-direct",
+            parent_device=self.device,
+            location=self.location,
+        )
+        child_ip = IPAddress.objects.create(
+            address="192.168.1.98/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=self.prefix,
+        )
+        child_device.primary_ip4 = child_ip
+        child_device.save(update_fields=["primary_ip4"])
+
+        record_name = f"child-only-{child_device.name}"
+        ARecord.objects.filter(name=record_name, zone=self.dns_zone).delete()
+
+        result = ReconcileDNSObjectJob().run(
+            dryrun=False,
+            object_model=ContentType.objects.get_for_model(Device),
+            object_id=str(child_device.id),
+            include_child_devices=False,
+            include_interfaces=False,
+        )
+
+        self.assertTrue(ARecord.objects.filter(name=record_name, zone=self.dns_zone).exists())
+        self.assertEqual(result["execution"]["targets_processed_count"], 1)
+
+    def test_single_object_parent_without_include_children_does_not_reconcile_child_device(self):
+        """Single-object Device run without child expansion should not create child-device DNS records."""
+        DNSRule.objects.create(
+            name="object-parent-no-childs",
+            content_type=ContentType.objects.get_for_model(Device),
+            record_type="A",
+            zone_template="example.com",
+            name_template="no-child-{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+        child_device, _child_interface = self._create_child_device_with_interface(
+            name_prefix="object-parent-no-children",
+            parent_device=self.device,
+            location=self.location,
+        )
+        parent_ip = self.ip_addresses[2]
+        child_ip = IPAddress.objects.create(
+            address="192.168.1.97/24",
+            status=self.ip_status,
+            namespace=self.namespace,
+            parent=self.prefix,
+        )
+        self.device.primary_ip4 = parent_ip
+        self.device.save(update_fields=["primary_ip4"])
+        child_device.primary_ip4 = child_ip
+        child_device.save(update_fields=["primary_ip4"])
+
+        parent_record_name = f"no-child-{self.device.name}"
+        child_record_name = f"no-child-{child_device.name}"
+        ARecord.objects.filter(name__in=[parent_record_name, child_record_name], zone=self.dns_zone).delete()
+
+        result = ReconcileDNSObjectJob().run(
+            dryrun=False,
+            object_model=ContentType.objects.get_for_model(Device),
+            object_id=str(self.device.id),
+            include_child_devices=False,
+            include_interfaces=False,
+        )
+
+        self.assertTrue(ARecord.objects.filter(name=parent_record_name, zone=self.dns_zone).exists())
+        self.assertFalse(ARecord.objects.filter(name=child_record_name, zone=self.dns_zone).exists())
+        self.assertEqual(result["execution"]["targets_processed_count"], 1)
+
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_dryrun_mode_does_not_apply_updates(self, MockDNSRuleEngine):
         """Dry-run should enumerate targets without calling process_object."""
@@ -267,6 +451,54 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         )
 
         self.assertEqual(result["scope"]["scanned_models"], ["dcim.interface"])
+
+    @patch("nautobot_dns_models.jobs.DNSRuleEngine")
+    def test_bulk_mode_include_children_includes_child_devices_and_interfaces(self, MockDNSRuleEngine):
+        """Bulk mode include-children should process child devices and their interfaces from in-scope parents."""
+        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine.process_objects_pipeline.side_effect = (
+            lambda model_objects, created=False: [ObjectProcessingSummary() for _ in model_objects]
+        )
+        out_of_scope_location = Location.objects.create(
+            name="Bulk Child Device Out-of-Scope",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        child_device, child_interface = self._create_child_device_with_interface(
+            name_prefix="bulk-child-device",
+            parent_device=self.device,
+            location=out_of_scope_location,
+        )
+        device_rule = DNSRule.objects.create(
+            name="bulk-device-ip-child-reconcile",
+            content_type=ContentType.objects.get_for_model(Device),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4.id }}",
+        )
+
+        result = ReconcileDNSBulkJob().run(
+            dryrun=False,
+            source_models=[ContentType.objects.get_for_model(Device)],
+            rules=[device_rule],
+            locations=[self.location],
+            include_child_devices=True,
+            include_interfaces=True,
+            limit=25,
+            batch_size=100,
+        )
+
+        processed_objects = []
+        for call_args in selected_engine.process_objects_pipeline.call_args_list:
+            processed_objects.extend(call_args.args[0])
+
+        self.assertIn(child_device, processed_objects)
+        self.assertIn(child_interface, processed_objects)
+        self.assertTrue(result["mode"]["include_child_devices"])
+        self.assertTrue(result["mode"]["include_interfaces"])
+        self.assertIn("dcim.device", result["scope"]["scanned_models"])
+        self.assertIn("dcim.interface", result["scope"]["scanned_models"])
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_invalid_source_model_marks_job_failed(self, MockDNSRuleEngine):

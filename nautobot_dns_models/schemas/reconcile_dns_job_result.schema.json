@@ -23,12 +23,14 @@
       "required": [
         "dryrun",
         "single_object",
-        "include_children"
+        "include_child_devices",
+        "include_interfaces"
       ],
       "properties": {
         "dryrun": { "type": "boolean" },
         "single_object": { "type": "boolean" },
-        "include_children": { "type": "boolean" },
+        "include_child_devices": { "type": "boolean" },
+        "include_interfaces": { "type": "boolean" },
         "pipeline_stage_metrics": {
           "type": "object",
           "additionalProperties": false,

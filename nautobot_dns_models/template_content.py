@@ -3,15 +3,14 @@
 from urllib.parse import urlencode
 
 from constance import config as constance_config
+from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
 from nautobot.apps.ui import Button, ButtonColorChoices, ObjectsTablePanel, SectionChoices, TemplateExtension
 from nautobot.core.views.utils import get_obj_from_context
+from nautobot.dcim.models import Device
 from netutils.ip import ipaddress_address
 
-from nautobot_dns_models.constants.supported_models import (
-    SUPPORTED_PARENT_CHILD_MODEL_RELATIONS,
-    SUPPORTED_SOURCE_MODELS,
-)
+from nautobot_dns_models.constants.supported_models import SUPPORTED_SOURCE_MODELS
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
@@ -30,33 +29,46 @@ class ReconcileDNSObjectButton(Button):
     """Object-detail button that links to single-object DNS reconciliation."""
 
     @staticmethod
-    def _get_parent_object_name(obj):
-        """Return parent object display name for child-source models, if available."""
+    def _get_parent_object(obj):
+        """Return parent object for child-source models, if available."""
         parent_device = getattr(obj, "device", None)
         if parent_device is not None:
-            return str(parent_device)
+            return parent_device
 
         parent_vm = getattr(obj, "virtual_machine", None)
         if parent_vm is not None:
-            return str(parent_vm)
+            return parent_vm
 
         return None
 
     def get_link(self, context):
         """Build run URL for reconciliation job with single-object inputs pre-populated."""
         obj = get_obj_from_context(context)
+        has_populated_device_bays = False
+        if obj.__class__ is Device:
+            has_populated_device_bays = obj.device_bays.filter(installed_device__isnull=False).exists()
+
         query_params = {
-            "object_model": obj._meta.label_lower,
+            "object_model": str(ContentType.objects.get_for_model(obj).pk),
+            "object_model_label": obj._meta.label_lower,
             "object_id": str(obj.pk),
             "object_name": str(obj),
             "object_url": obj.get_absolute_url(),
+            "object_has_populated_device_bays": str(has_populated_device_bays).lower(),
+            "object_has_interfaces": str(hasattr(obj, "interfaces")).lower(),
         }
-        parent_object_name = self._get_parent_object_name(obj)
-        if parent_object_name:
-            query_params["parent_object_name"] = parent_object_name
-        if obj.__class__ in SUPPORTED_PARENT_CHILD_MODEL_RELATIONS:
-            query_params["include_children"] = "true"
+
+        parent_object = self._get_parent_object(obj)
+        if parent_object is not None:
+            query_params["parent_object_type"] = parent_object.__class__.__name__
+            query_params["parent_object_name"] = str(parent_object)
+            query_params["parent_object_url"] = parent_object.get_absolute_url()
+
+        if hasattr(obj, "interfaces"):
+            query_params["include_interfaces"] = "true"
+
         query = urlencode(query_params)
+
         return f"{reverse('extras:job_run_by_class_path', kwargs={'class_path': 'nautobot_dns_models.jobs.ReconcileDNSObjectJob'})}?{query}"
 
     def should_render(self, context):
@@ -65,30 +77,26 @@ class ReconcileDNSObjectButton(Button):
             return False
 
         obj = get_obj_from_context(context)
-        rule_engine = DNSRuleEngine()
         if obj.__class__ not in SUPPORTED_SOURCE_MODELS:
             return False
 
-        try:
-            if rule_engine.get_applicable_rules(obj):
-                return True
+        rule_engine = DNSRuleEngine()
 
-            relation = SUPPORTED_PARENT_CHILD_MODEL_RELATIONS.get(obj.__class__)
-            if relation is None:
-                return False
+        # If there are any rules that apply to the object, return True.
+        if rule_engine.get_applicable_rules(obj):
+            return True
 
-            _child_model_class, related_manager_name = relation
-            child_manager = getattr(obj, related_manager_name, None)
-            if child_manager is None:
-                return False
-
-            for child_obj in child_manager.all():
-                if rule_engine.get_applicable_rules(child_obj):
-                    return True
-
+        # For sibling interfaces under one parent object, applicable-rule resolution is scope-based
+        # (content type + location + tenant), so one sampled interface is sufficient for this UI check.
+        child_object_manager = getattr(obj, "interfaces", None)
+        if child_object_manager is None:
             return False
-        except Exception:  # pylint: disable=broad-exception-caught
+
+        child_obj = child_object_manager.first()
+        if child_obj is None:
             return False
+
+        return bool(rule_engine.get_applicable_rules(child_obj))
 
 
 class _BaseReconcileDNSAction(TemplateExtension):  # pylint: disable=abstract-method
