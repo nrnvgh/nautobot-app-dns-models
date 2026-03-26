@@ -638,19 +638,32 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         result = self._get_object_location(self.device)
         self.assertEqual(result, self.location)
 
+    def test_get_object_tenant_device(self):
+        """Test _get_object_tenant returns device.tenant for Device objects."""
+        self.device.tenant = self.tenant
+        self.device.validated_save()
+
+        result = self._get_object_tenant(self.device)
+        self.assertEqual(result, self.tenant)
+
     def test_get_object_location_interface(self):
         """Test _get_object_location returns interface.device.location for Interface objects."""
         # Test location extraction from interface
         result = self._get_object_location(self.interface)
         self.assertEqual(result, self.location)
 
-    def test_get_object_location_and_tenant_interface_parent_fallback(self):
-        """Module-backed interface with no device should inherit from interface.parent Device."""
+    def test_get_object_tenant_interface(self):
+        """Test _get_object_tenant returns interface.device.tenant for Interface objects."""
         self.device.tenant = self.tenant
         self.device.validated_save()
 
-        child_interface = Interface(
-            name="eth0-child",
+        result = self._get_object_tenant(self.interface)
+        self.assertEqual(result, self.tenant)
+
+    def test_get_object_location_device_module_interface(self):
+        """Module-backed interface should resolve location from parent Device fallback."""
+        module_interface = Interface(
+            name="eth0-module-location",
             device=None,
             type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             status=self.interface_status,
@@ -663,10 +676,84 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
                 module_property.return_value = ModuleWithoutTenant()
                 parent_property.return_value = self.device
-                location = self._get_object_location(child_interface)
-                tenant = self._get_object_tenant(child_interface)
+                location = self._get_object_location(module_interface)
 
         self.assertEqual(location, self.location)
+
+    def test_get_object_tenant_device_module_interface(self):
+        """Module-backed interface should resolve tenant from parent Device when module tenant is absent."""
+        self.device.tenant = self.tenant
+        self.device.validated_save()
+
+        module_interface = Interface(
+            name="eth0-module-tenant",
+            device=None,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+
+        class ModuleWithoutTenant:
+            tenant = None
+
+        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
+            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
+                module_property.return_value = ModuleWithoutTenant()
+                parent_property.return_value = self.device
+                tenant = self._get_object_tenant(module_interface)
+
+        self.assertEqual(tenant, self.tenant)
+
+    def test_get_object_location_device_module_module_interface(self):
+        """Nested module-backed interface should resolve location from parent Device fallback."""
+        nested_module_interface = Interface(
+            name="eth0-nested-module-location",
+            device=None,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+
+        class ParentModule:
+            tenant = None
+            parent_module = None
+
+        class NestedModule:
+            tenant = None
+            parent_module = ParentModule()
+
+        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
+            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
+                module_property.return_value = NestedModule()
+                parent_property.return_value = self.device
+                location = self._get_object_location(nested_module_interface)
+
+        self.assertEqual(location, self.location)
+
+    def test_get_object_tenant_device_module_module_interface(self):
+        """Nested module-backed interface should resolve tenant from parent Device when module tenant is absent."""
+        self.device.tenant = self.tenant
+        self.device.validated_save()
+
+        nested_module_interface = Interface(
+            name="eth0-nested-module-tenant",
+            device=None,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+
+        class ParentModule:
+            tenant = None
+            parent_module = None
+
+        class NestedModule:
+            tenant = None
+            parent_module = ParentModule()
+
+        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
+            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
+                module_property.return_value = NestedModule()
+                parent_property.return_value = self.device
+                tenant = self._get_object_tenant(nested_module_interface)
+
         self.assertEqual(tenant, self.tenant)
 
     def test_get_object_tenant_interface_module_tenant_overrides_parent_device_tenant(self):
