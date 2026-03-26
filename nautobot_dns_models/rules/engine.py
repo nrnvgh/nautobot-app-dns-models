@@ -65,6 +65,7 @@ class ObjectProcessingSummary:
     changed_record_count: int = 0
     record_ops_create_count: int = 0
     record_ops_delete_count: int = 0
+    record_ops_update_count: int = 0
 
 
 @dataclass
@@ -215,6 +216,7 @@ class DNSRuleEngine:
         summary.changed_record_count = change_result["changed_record_count"]
         summary.record_ops_create_count = change_result["record_ops_create_count"]
         summary.record_ops_delete_count = change_result["record_ops_delete_count"]
+        summary.record_ops_update_count = change_result.get("record_ops_update_count", 0)
 
         return summary
 
@@ -501,6 +503,7 @@ class DNSRuleEngine:
         summary.changed_record_count = create_count + delete_count + update_count
         summary.record_ops_create_count = create_count
         summary.record_ops_delete_count = delete_count
+        summary.record_ops_update_count = update_count
 
         return summary
 
@@ -526,6 +529,7 @@ class DNSRuleEngine:
             "changed_record_count": changed_record_count,
             "record_ops_create_count": changed_record_count,
             "record_ops_delete_count": 0,
+            "record_ops_update_count": 0,
         }
 
     def _update_dns_records_for_object(self, source_obj, applicable_rules):
@@ -554,6 +558,7 @@ class DNSRuleEngine:
             "changed_record_count": changed_record_count,
             "record_ops_create_count": create_count,
             "record_ops_delete_count": delete_count,
+            "record_ops_update_count": update_count,
         }
 
     def _reconcile_records_for_rule(

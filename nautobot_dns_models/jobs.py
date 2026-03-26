@@ -50,6 +50,7 @@ class ReconcileRunSummary:
     changed_record_count: int = 0
     record_ops_create_count: int = 0
     record_ops_delete_count: int = 0
+    record_ops_update_count: int = 0
     targets_noop_count: int = 0
 
     def mark_target_selected(self):
@@ -76,11 +77,13 @@ class ReconcileRunSummary:
 
         self.record_ops_create_count += processing_summary.record_ops_create_count
         self.record_ops_delete_count += processing_summary.record_ops_delete_count
+        self.record_ops_update_count += processing_summary.record_ops_update_count
 
         if (
             processing_summary.changed_record_count == 0
             and processing_summary.record_ops_create_count == 0
             and processing_summary.record_ops_delete_count == 0
+            and processing_summary.record_ops_update_count == 0
         ):
             self.targets_noop_count += 1
 
@@ -101,7 +104,10 @@ class ReconcileRunSummary:
             "objects_changed": self.objects_changed,
             "record_ops_create_count": self.record_ops_create_count,
             "record_ops_delete_count": self.record_ops_delete_count,
-            "record_ops_total_count": self.record_ops_create_count + self.record_ops_delete_count,
+            "record_ops_update_count": self.record_ops_update_count,
+            "record_ops_total_count": (
+                self.record_ops_create_count + self.record_ops_delete_count + self.record_ops_update_count
+            ),
             "changed_record_count": self.changed_record_count,
             "targets_noop_count": self.targets_noop_count,
         }
@@ -224,7 +230,6 @@ def _build_result_payload(
         },
         "execution": summary.as_execution_dict(),
         "reconciliation": summary.as_reconciliation_dict(),
-        "errors": [],
     }
 
 
@@ -240,7 +245,7 @@ def _log_result_summary(logger, result):
             "mode=%s "
             "models=[%s] "
             "seen=%d processed=%d success=%d failure=%d "
-            "objects_changed=%d record_ops(create=%d delete=%d total=%d) "
+            "objects_changed=%d record_ops(create=%d delete=%d update=%d total=%d) "
             "runtime_s=%.3f"
         ),
         "dryrun" if mode["dryrun"] else "apply",
@@ -252,6 +257,7 @@ def _log_result_summary(logger, result):
         reconciliation["objects_changed"],
         reconciliation["record_ops_create_count"],
         reconciliation["record_ops_delete_count"],
+        reconciliation["record_ops_update_count"],
         reconciliation["record_ops_total_count"],
         float(runtime_seconds) if runtime_seconds is not None else 0.0,
     )

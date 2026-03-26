@@ -251,6 +251,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["changed_record_count"], 3)
         self.assertEqual(result["reconciliation"]["record_ops_create_count"], 2)
         self.assertEqual(result["reconciliation"]["record_ops_delete_count"], 1)
+        self.assertEqual(result["reconciliation"]["record_ops_update_count"], 0)
         self.assertEqual(result["reconciliation"]["record_ops_total_count"], 3)
         self.assertEqual(result["reconciliation"]["targets_noop_count"], 0)
 
