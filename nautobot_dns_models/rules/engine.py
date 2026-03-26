@@ -517,6 +517,7 @@ class DNSRuleEngine:
         for rule in applicable_rules:
             if not self._object_needs_dns_records_for_rule(source_obj, rule):
                 continue
+
             try:
                 created_records = self._create_dns_record_from_rule(rule, source_obj)
                 changed_record_count += len(created_records)
@@ -674,7 +675,6 @@ class DNSRuleEngine:
 
         created_records = self._create_records_from_data(rule, source_obj, desired_record_data_list, phase=PHASE_CREATE)
 
-        # logger.debug(f"Created {len(created_records)} DNS records from rule {rule.name} for {source_obj}")
         return created_records
 
     def _create_records_from_data(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
