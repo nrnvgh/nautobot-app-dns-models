@@ -1,0 +1,66 @@
+{% extends 'extras/job.html' %}
+{% load form_helpers %}
+
+{% block extra_styles %}
+    {{ block.super }}
+    <style>
+        .reconcile-option-disabled label,
+        .reconcile-option-disabled .help-block {
+            opacity: 0.6;
+        }
+    </style>
+{% endblock %}
+
+{% block job_form %}
+    {% for field in job_form.hidden_fields %}
+        {{ field }}
+    {% endfor %}
+    {% for field in job_form.visible_fields %}
+        {% if field.name != "dryrun" and field.name != "include_child_devices" and field.name != "include_interfaces" and field.name != "_job_queue" and field.name != "_profile" and field.name != "_ignore_singleton_lock" %}
+            {% render_field field %}
+        {% endif %}
+    {% endfor %}
+    {% include "nautobot_dns_models/inc/reconcile_include_fields.html" %}
+    {% include "nautobot_dns_models/inc/reconcile_runtime_tail_fields.html" %}
+{% endblock %}
+
+{% block javascript %}
+    {{ block.super }}
+    <script type="text/javascript">
+        (function() {
+            var deviceCtIds = new Set([{% for ct in job_form.source_models.field.queryset %}{% if ct.app_label == "dcim" and ct.model == "device" %}{{ ct.pk }},{% endif %}{% endfor %}]);
+            var vmCtIds = new Set([{% for ct in job_form.source_models.field.queryset %}{% if ct.app_label == "virtualization" and ct.model == "virtualmachine" %}{{ ct.pk }},{% endif %}{% endfor %}]);
+
+            {% include "nautobot_dns_models/inc/reconcile_field_visibility_js.html" %}
+
+            function toggleIncludeOptions() {
+                var selected = $("#id_source_models").val() || [];
+                var selectedSet = new Set(selected.map(String));
+                var isEmpty = selectedSet.size === 0;
+
+                var hasDevice = isEmpty || [...deviceCtIds].some(function(id) {
+                    return selectedSet.has(String(id));
+                });
+                var hasVmOrDevice = isEmpty || [...deviceCtIds, ...vmCtIds].some(function(id) {
+                    return selectedSet.has(String(id));
+                });
+
+                setFieldVisibility(
+                    $("#include-child-devices-wrapper"),
+                    $("#id_include_child_devices"),
+                    hasDevice
+                );
+                setFieldVisibility(
+                    $("#include-interfaces-wrapper"),
+                    $("#id_include_interfaces"),
+                    hasVmOrDevice
+                );
+            }
+
+            $(document).ready(function() {
+                $("#id_source_models").on("change", toggleIncludeOptions);
+                toggleIncludeOptions();
+            });
+        })();
+    </script>
+{% endblock %}

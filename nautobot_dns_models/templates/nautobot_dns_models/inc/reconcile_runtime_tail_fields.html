@@ -1,0 +1,10 @@
+{% load form_helpers %}
+
+{% render_field job_form.dryrun %}
+
+{# Use a loop for these since _-prefixed names can't be accessed directly #}
+{% for field in job_form.visible_fields %}
+    {% if field.name == "_job_queue" or field.name == "_profile" or field.name == "_ignore_singleton_lock" %}
+        {% render_field field %}
+    {% endif %}
+{% endfor %}

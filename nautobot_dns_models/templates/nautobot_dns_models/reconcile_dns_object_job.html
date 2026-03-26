@@ -11,6 +11,10 @@
         .reconcile-target-copy-btn .mdi::before {
             left: 1px;
         }
+        .reconcile-option-disabled label,
+        .reconcile-option-disabled .help-block {
+            opacity: 0.6;
+        }
     </style>
 {% endblock %}
 
@@ -21,14 +25,14 @@
         {% else %}
             {% include "nautobot_dns_models/inc/manual_context.html" %}
         {% endif %}
-        {% render_field job_form.dryrun %}
-        {{ job_form.object_has_populated_device_bays.as_hidden }}
-        <div id="include-child-devices-wrapper" style="display: none;">
-            {% render_field job_form.include_child_devices %}
-        </div>
-        <div id="include-interfaces-wrapper" style="display: none;">
-            {% render_field job_form.include_interfaces %}
-        </div>
+        {% for field in job_form.hidden_fields %}
+            {% if field.name != "object_name" %}
+                 {{ field }}
+            {% endif %}
+        {% endfor %}
+
+        {% include "nautobot_dns_models/inc/reconcile_include_fields.html" %}
+        {% include "nautobot_dns_models/inc/reconcile_runtime_tail_fields.html" %}
     {% endwith %}
 {% endblock %}
 
@@ -36,31 +40,40 @@
     {{ block.super }}
     <script type="text/javascript">
         (function() {
+            var deviceCtIds = new Set([{% for ct in job_form.object_model.field.queryset %}{% if ct.app_label == "dcim" and ct.model == "device" %}{{ ct.pk }},{% endif %}{% endfor %}]);
+            var vmCtIds = new Set([{% for ct in job_form.object_model.field.queryset %}{% if ct.app_label == "virtualization" and ct.model == "virtualmachine" %}{{ ct.pk }},{% endif %}{% endfor %}]);
+
             function parseBooleanValue(value) {
                 var normalized = String(value || "").toLowerCase();
                 return normalized === "true" || normalized === "1" || normalized === "yes";
             }
 
-            function setFieldVisibility($wrapper, $field, shouldShow) {
-                if (!$wrapper.length || !$field.length) {
-                    return;
-                }
-                $field.prop("disabled", !shouldShow);
-                if (!shouldShow) {
-                    $field.prop("checked", false);
-                }
-                $wrapper.toggle(shouldShow);
-            }
+            {% include "nautobot_dns_models/inc/reconcile_field_visibility_js.html" %}
 
             function toggleIncludeOptions() {
-                var modelValue = $("#id_object_model").val();
-                var modelLabel = $("#id_object_model_label").val();
-                if (!modelLabel) {
-                    modelLabel = modelValue;
-                }
+                var hasHints = $("#id_object_has_interfaces").length > 0;
+                var hasPopulatedDeviceBays;
+                var hasInterfaces;
 
-                var hasPopulatedDeviceBays = parseBooleanValue($("#id_object_has_populated_device_bays").val());
-                var hasInterfaces = parseBooleanValue($("#id_object_has_interfaces").val());
+                if (hasHints) {
+                    // Button-prefilled flow: hidden hint inputs are present in target_context.
+                    hasPopulatedDeviceBays = parseBooleanValue($("#id_object_has_populated_device_bays").val());
+                    hasInterfaces = parseBooleanValue($("#id_object_has_interfaces").val());
+                } else {
+                    // Manual flow: infer visibility from the currently selected object model.
+                    var modelId = String($("#id_object_model").val() || "");
+                    var isDevice = [...deviceCtIds].some(function(id) {
+                        return String(id) === modelId;
+                    });
+                    var isVirtualMachine = [...vmCtIds].some(function(id) {
+                        return String(id) === modelId;
+                    });
+
+                    // Without jumping through hoops, we can't know if the Device has populated device bays in this
+                    // code path. Rather than deal with those hoops, just give the user the option.
+                    hasPopulatedDeviceBays = isDevice;
+                    hasInterfaces = isDevice || isVirtualMachine;
+                }
 
                 setFieldVisibility(
                     $("#include-child-devices-wrapper"),

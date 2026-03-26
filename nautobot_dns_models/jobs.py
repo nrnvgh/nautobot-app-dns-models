@@ -266,6 +266,8 @@ def _log_result_summary(logger, result):
 class ReconcileDNSBulkJob(Job):
     """Reconcile DNS records for all or selected source objects in bulk mode."""
 
+    template_name = "nautobot_dns_models/reconcile_dns_bulk_job.html"
+
     class Meta:
         """Metadata for job definition."""
 

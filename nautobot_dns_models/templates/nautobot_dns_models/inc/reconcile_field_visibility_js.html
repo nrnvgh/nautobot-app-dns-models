@@ -1,0 +1,11 @@
+function setFieldVisibility($wrapper, $field, shouldShow) {
+    if (!$wrapper.length || !$field.length) {
+        return;
+    }
+    $field.prop("disabled", !shouldShow);
+    if (!shouldShow) {
+        $field.prop("checked", false);
+    }
+    $wrapper.toggleClass("reconcile-option-disabled", !shouldShow);
+    $wrapper.show();
+}
