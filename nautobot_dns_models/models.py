@@ -813,7 +813,7 @@ class DNSRule(PrimaryModel):
 
     def _validate_template_expression_required(self, template_fields):
         """
-        Reject templates that use Jinja control/comment tags ({% or {#) but no expression ({{).
+        Reject templates that use Jinja statement/comment tags ({% or {#) but no expression ({{).
 
         Such templates are ambiguous (e.g. {# comment #}Default renders to Default but would
         be treated as literal without a {{). Require either a plain literal (no Jinja) or
@@ -823,13 +823,15 @@ class DNSRule(PrimaryModel):
         for field_name, template_content in template_fields:
             if not template_content or not template_content.strip():
                 continue
+
             has_expression = "{{" in template_content
-            has_control_or_comment = "{%" in template_content or "{#" in template_content
-            if has_control_or_comment and not has_expression:
+            has_statement_or_comment = "{%" in template_content or "{#" in template_content
+            if has_statement_or_comment and not has_expression:
                 errors[field_name].append(
-                    "Template uses Jinja control or comment tags but has no {{ expression. "
+                    "Template uses Jinja statement or comment tags but has no {{ expression. "
                     "Use a plain literal or add at least one {{ ... }} expression."
                 )
+
         return errors
 
     def _validate_template_literals(self, template_fields):
