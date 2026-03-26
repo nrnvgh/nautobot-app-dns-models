@@ -277,7 +277,6 @@ class ReconcileDNSBulkJob(Job):
 
     _bulk_scope_filter_builder = BulkScopeFilterBuilder()
 
-    dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
     source_models = MultiObjectVar(
         model=ContentType,
         query_params=get_content_type_query_params(),
@@ -321,6 +320,8 @@ class ReconcileDNSBulkJob(Job):
         max_value=5000,
         description="Pipeline batch size for fetch/render/delta/execute phases.",
     )
+    dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
+
 
     def run(
         self,
@@ -726,8 +727,8 @@ class ReconcileDNSObjectJob(Job):
         name = "Reconcile DNS Records (Object)"
         description = "Reconcile rule-driven DNS records for a single object"
         has_sensitive_variables = False
+        hidden = True
 
-    dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
     object_model = ObjectVar(
         model=ContentType,
         query_params=get_content_type_query_params(),
@@ -760,6 +761,7 @@ class ReconcileDNSObjectJob(Job):
         default=False,
         description="Reconcile interfaces.",
     )
+    dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
 
     def run(  # pylint: disable=arguments-differ
         self,

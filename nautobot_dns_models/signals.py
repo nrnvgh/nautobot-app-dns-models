@@ -138,8 +138,6 @@ def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs
 
 #
 # NOTE: do we want to explictly list other sender models here and, if so, which?
-# NOTE: We're waiting on resolution of https://github.com/nautobot/nautobot/issues/7728 for
-# NOTE: full signal handling.
 @receiver(pre_save, sender=Device)
 @receiver(pre_save, sender=Interface)
 @receiver(pre_save, sender=Service)
