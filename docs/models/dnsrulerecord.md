@@ -5,6 +5,7 @@ The DNS Rule Record model serves as a linking table that tracks the relationship
 ## Purpose
 
 When a DNS rule triggers and creates a DNS record, a DNSRuleRecord entry is created to maintain the connection between:
+
 1. The source object that triggered the rule (e.g., a Device or Interface)
 2. The DNS rule that was applied
 3. The DNS record that was created

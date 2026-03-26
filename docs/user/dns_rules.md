@@ -46,16 +46,16 @@ A single rule can create multiple DNS records:
 1. **Navigate** to DNS → DNS Rules in the Nautobot interface
 2. **Click** "Add DNS Rule" 
 3. **Configure** the rule parameters:
-   - **Name**: Unique identifier for the rule
-   - **Content Type**: What type of object triggers this rule (Device, Interface, etc.)
-   - **Location**: Leave blank for non-location-scoped rules, or select a location for location-scoped rules
-   - **Tenant**: Leave blank for non-tenant-scoped rules, or select a tenant for tenant-scoped rules
-   - **Record Type**: Type of DNS record to create (A, AAAA)
+    - **Name**: Unique identifier for the rule
+    - **Content Type**: What type of object triggers this rule (Device, Interface, etc.)
+    - **Location**: Leave blank for non-location-scoped rules, or select a location for location-scoped rules
+    - **Tenant**: Leave blank for non-tenant-scoped rules, or select a tenant for tenant-scoped rules
+    - **Record Type**: Type of DNS record to create (A, AAAA)
 4. **Define** Jinja2 templates:
-   - **Name Template**: The record name within the zone
-   - **Value Template**: The record value (IP address, hostname, etc.)
-   - **View Template**: Optional DNS view selector template (leave blank to use `Default`)
-   - **Zone Template**: Which DNS zone to create records in
+    - **Name Template**: The record name within the zone
+    - **Value Template**: The record value (IP address, hostname, etc.)
+    - **View Template**: Optional DNS view selector template (leave blank to use `Default`)
+    - **Zone Template**: Which DNS zone to create records in
 
 ### Template Field Behavior
 

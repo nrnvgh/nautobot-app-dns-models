@@ -113,7 +113,6 @@ Failure paths can return a reduced payload instead of the full success shape, fo
 ```
 
 ## Log summary line
-
 At **INFO**, the Job emits one summary line similar to:
 
 ```text

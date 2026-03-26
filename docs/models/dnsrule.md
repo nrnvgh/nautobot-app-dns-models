@@ -5,6 +5,7 @@ The DNSRule model defines automated DNS record creation rules that trigger when 
 ## Model Fields
 
 ### Core Fields
+
 - `name` (CharField): Unique identifier, max 100 characters
 - `description` (CharField): Optional description, max 200 characters  
 - `enabled` (BooleanField): Rule active status, default True
