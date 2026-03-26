@@ -10,6 +10,8 @@ Generally, this App is to used to keep track of DNS Zones and their related data
 
 Use the API or GUI to add DNS Zones and Record objects to Nautobot.
 
+For rule-driven records, use [Reconciliation jobs](reconciliation_jobs.md) when you need a full rescan—such as after adding rules—or drift repair, instead of relying only on object save signals.
+
 ## Screenshots
 
 ![Adding a DNS Zone](../images/getting_started-add-zone-3.png)

@@ -167,15 +167,14 @@ This example uses `python-json-logger`. If you use a different JSON logging libr
 
 ## DNS Reconciliation Jobs
 
-The app provides two Nautobot Jobs for operator-driven drift repair:
+The app provides two Nautobot Jobs for operator-driven reconciliation (for example drift repair or backfilling after new rules):
 
-- `Reconcile DNS Records (Bulk)` for global/subset execution.
 - `Reconcile DNS Records (Object)` for single-object execution.
+- `Reconcile DNS Records (Bulk)` for global or filtered subset execution.
 
-- Launch it from `Jobs > Jobs`.
-- Enable the job in the Job detail page before first use (standard Nautobot job enable workflow).
-- Grant operators the `extras.run_job` permission so they can execute it.
-- Use filters to run globally or on a subset (model/rule/location/tenant/limit/batch size).
-- Use `dryrun` to preview targets without applying updates.
+User-facing documentation (parameters, Job result shape, class paths, and log line format) is in [DNS Reconciliation Jobs](../user/reconciliation_jobs.md).
 
-Supported per-object detail views also expose a `Reconcile DNS` button (when rules are in scope), which opens the object job pre-populated for that object.
+- Enable each Job you intend to use on its Job detail page before first use (standard Nautobot job enable workflow).
+- Grant operators the `extras.run_job` permission so they can execute Jobs.
+- **Bulk:** launch from **Jobs > Jobs** or via API by class path. Scope the run with `source_models`, `rules`, `locations`, `tenants`, `limit`, `batch_size`, and related options; use `dryrun` to list targets without applying changes.
+- **Object:** the detail-view **Reconcile DNS** action (when rules are in scope) opens this Job with the object pre-filled; you can also invoke it via API. It is registered as hidden, so it may not appear in the default **Jobs > Jobs** list; use the button, API, or your Nautobot UI’s controls for hidden jobs if you need to open the form manually. Use `dryrun` the same way as for bulk.
