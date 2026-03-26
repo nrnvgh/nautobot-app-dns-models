@@ -10,38 +10,67 @@ DNS Rules use Jinja2 templates to dynamically generate DNS record content based 
 All templates have access to the triggering object as `obj` and can traverse Django ORM relationships:
 
 ### `Interface` Examples
-```jinja2
-{{ obj.name }}                    # Object name
-{{ obj.device.name }}             # Related device name
-{{ obj.device.location.name }}    # Device location name
-{{ obj.ip_addresses.first() }}    # First IP address on the interface
-```
+
+| Template | Description |
+| --- | --- |
+| `{{ obj.name }}` | Interface name |
+| `{{ obj.device.name }}` | Related device name |
+| `{{ obj.parent.name }}` | Related parent name that works for both device-backed and module-backed interfaces |
+| `{{ obj.device.location.name }}` | Device location name |
+| `{{ obj.ip_addresses.first() }}` | First IP address on the interface |
+| `{{ obj.ip_addresses.all() }}` | All IP addresses on the interface |
+
+
+!!! note
+    `Interface` objects may be attached to either a `Device` or to a `Module`. In templates, `obj.device` is present for device-attached interfaces but is `None` for module-backed interfaces while `obj.module` is present for module-attached interfaces. For interface templates, use `obj.parent` when you need a stable parent reference; it resolves to the owning `Device` for device-backed, module-backed, and nested-module-backed interfaces.
+    
+    Location and tenant scoping during reconciliation follow the rule engine's extraction and fallback logic.
 
 ### `Device` Examples
-```jinja
-{{ obj.primary_ip4.address }}     # Primary IP address object (e.g. for devices)
-```
+| Template | Description |
+| --- | --- |
+| `{{ obj.name }}` | Device name |
+| `{{ obj.primary_ip4.address }}` | Primary IPv4 address object |
 
 ### `Service` Examples
 
 Service objects provide access to their parent (device or virtual machine) and service-specific fields:
 
-```jinja2
-# Service basic fields
-{{ obj.name }}                    # Service name
-{{ obj.protocol }}                # Service protocol (HTTP, SSH, etc.)
-{{ obj.ports }}                   # List of port numbers
+| Template | Description |
+| --- | --- |
+| `{{ obj.name }}` | Service name |
+| `{{ obj.protocol }}` | Service protocol (HTTP, SSH, etc.) |
+| `{{ obj.ports }}` | List of port numbers |
+| `{{ obj.device.name }}` | Parent device name (device-attached service) |
+| `{{ obj.device.location.name }}` | Device location (device-attached service) |
+| `{{ obj.virtual_machine.name }}` | Parent VM name (VM-attached service) |
+| `{{ obj.virtual_machine.cluster.location.name }}` | VM cluster location (VM-attached service) |
+| `{{ obj.virtual_machine.tenant.name }}` | VM tenant (VM-attached service) |
+| `{{ obj.virtual_machine.cluster.tenant.name }}` | VM cluster tenant fallback (VM-attached service) |
+| `{{ obj.ip_addresses.first() }}` | First IP address on the service |
+| `{{ obj.ip_addresses.all() }}` | All IP addresses on the service |
 
-# Device-attached service
-{{ obj.device.name }}             # Parent device name
-{{ obj.device.location.name }}    # Device location
+### `VirtualMachine` Examples
 
-# VM-attached service  
-{{ obj.virtual_machine.name }}    # Parent VM name
-{{ obj.virtual_machine.cluster.location.name }}  # VM cluster location
-{{ obj.virtual_machine.tenant.name }}            # VM tenant
-{{ obj.virtual_machine.cluster.tenant.name }}    # VM cluster tenant (fallback)
-```
+| Template | Description |
+| --- | --- |
+| `{{ obj.name }}` | Virtual machine name |
+| `{{ obj.cluster.name }}` | Cluster name |
+| `{{ obj.location.name }}` | VM location (resolved from cluster location) |
+| `{{ obj.tenant.name }}` | VM tenant |
+| `{{ obj.cluster.tenant.name }}` | Cluster tenant fallback when VM tenant is unset |
+| `{{ obj.primary_ip4 }}` | Primary IPv4 address object |
+
+### `VMInterface` Examples
+
+| Template | Description |
+| --- | --- |
+| `{{ obj.name }}` | VM interface name |
+| `{{ obj.virtual_machine.name }}` | Parent virtual machine name |
+| `{{ obj.virtual_machine.cluster.name }}` | Parent VM cluster name |
+| `{{ obj.virtual_machine.location.name }}` | Parent VM location (resolved from cluster location) |
+| `{{ obj.ip_addresses.first() }}` | First IP address on the VM interface |
+| `{{ obj.ip_addresses.all() }}` | All IP addresses on the VM interface |
 
 ## Required Templates
 
@@ -51,6 +80,10 @@ Every DNS rule must define these core templates:
 - **Name Template**: The record name within the zone  
 - **Value Template**: The primary record value
 
+Optionally, a DNS rule may also define:
+
+- **View Template**: Determines the view of the rendered DNS zone
+
 ## Valid Template Forms
 
 Each template field can be either:
@@ -58,22 +91,9 @@ Each template field can be either:
 - **Plain literal**: no Jinja delimiters (`{{`, `{%`, `{#`), for example `Default` or `example.com`.
 - **Template with expressions**: one or more `{{ ... }}` expressions.
 
-If a template uses Jinja control tags (`{% ... %}`) or comments (`{# ... #}`), it must also include at least one `{{ ... }}` expression. Templates containing only control/comment tags (and no `{{ ... }}`) are rejected during DNS rule validation.
+If a template uses either Jinja statement tags (`{% ... %}`) or comments (`{# ... #}`), it must also include at least one `{{ ... }}` expression. Templates containing only statement/comment tags (and no `{{ ... }}`) are rejected during DNS rule validation.
 
-For `name_template` and `value_template`, expression-based templates are nearly always preferred so names and values vary per source object.
-
-## Template Filters
-
-### IP Address Filter
-
-**Purpose**: Convert IP address objects to DNS record values for A/AAAA records.
-
-**Usage**
-
-- `{{ obj.primary_ip4 }}` - Creates 1 A record
-- `{{ obj.ip_addresses.all() }}` - Creates 1 record per IP address  
-- `{{ obj.ip_addresses.first() }}` - Creates 1 record from first IP
-- `{{ obj.ip_addresses.filter(role="primary") }}` - Creates 1 record per filtered IP
+For `name_template` and `value_template`, expression-based templates preferred in virtually every case so that names and values vary per source object.
 
 
 ## Template Patterns
@@ -252,7 +272,7 @@ Example `IPAddress` computed field template (pattern):
 Templates are validated when rules are saved:
 
 - **Syntax errors** are caught during rule creation
-- **Control/comment-only templates** (no `{{ ... }}` expression) are rejected
+- **Statement/comment-only templates** (no `{{ ... }}` expression) are rejected
 - **Literal fragments** are checked for DNS safety constraints
 
 ### Testing Templates
