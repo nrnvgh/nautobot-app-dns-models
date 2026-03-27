@@ -172,7 +172,7 @@ The app provides two Nautobot Jobs for operator-driven reconciliation (for examp
 - `Reconcile DNS Records (Object)` for single-object execution.
 - `Reconcile DNS Records (Bulk)` for global or filtered subset execution.
 
-User-facing documentation (parameters, Job result shape, class paths, and log line format) is in [DNS Reconciliation Jobs](../user/reconciliation_jobs.md).
+User-facing documentation (parameters, Job result shape, class paths, and log line format) is in [DNS Reconciliation Jobs](../user/rules/reconciliation_jobs.md).
 
 - Enable each Job you intend to use on its Job detail page before first use (standard Nautobot job enable workflow).
 - Grant operators the `extras.run_job` permission so they can execute Jobs.

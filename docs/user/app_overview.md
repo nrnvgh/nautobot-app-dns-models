@@ -31,4 +31,4 @@ Network or Systems Admins who need to keep track of DNS records.
 
 ### Extras
 
-The app registers Nautobot Jobs for DNS reconciliation; see [DNS Reconciliation Jobs](reconciliation_jobs.md). No custom fields or custom relationships are created, although this may change in the future.
+The app registers Nautobot Jobs for DNS reconciliation; see [DNS Reconciliation Jobs](rules/reconciliation_jobs.md). No custom fields or custom relationships are created, although this may change in the future.
