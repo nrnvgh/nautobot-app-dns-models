@@ -725,36 +725,6 @@ class DNSRuleEngine:
 
         return created_records
 
-    def _create_records_from_data_bulk_create_fast(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
-        """Fast-path create using Django bulk_create for records and tracking rows."""
-        if not record_data_list:
-            return []
-
-        record_class = self._get_record_class(rule.record_type)
-        source_content_type = ContentType.objects.get_for_model(source_obj)
-        dns_record_content_type = ContentType.objects.get_for_model(record_class)
-        dns_records = [record_class(**record_data) for record_data in record_data_list]  # pylint: disable=not-callable
-
-        try:
-            with transaction.atomic():
-                created_records = record_class.objects.bulk_create(dns_records, batch_size=1000)
-                tracking_rows = [
-                    DNSRuleRecord(
-                        rule=rule,
-                        content_type=source_content_type,
-                        object_id=source_obj.id,
-                        dns_record_content_type=dns_record_content_type,
-                        dns_record_object_id=dns_record.id,
-                    )
-                    for dns_record in created_records
-                ]
-                DNSRuleRecord.objects.bulk_create(tracking_rows, batch_size=1000)
-        except IntegrityError as exc:
-            self._log_record_create_failure(rule, source_obj, {}, exc, phase=phase)
-            return []
-
-        return created_records
-
     def _queue_records_for_batched_create(self, rule, source_obj, record_data_list):
         """Queue create rows for one pipeline-level bulk flush."""
         if not record_data_list:
