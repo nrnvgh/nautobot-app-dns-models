@@ -221,27 +221,15 @@ class DNSRuleEngine:
         return summary
 
     def process_objects_pipeline(self, source_objects, created=False):
-        """Execute batch pipeline for one source-object batch."""
-        return self._process_objects(source_objects=source_objects, created=created)
+        """Process one batch of source objects.
 
-    def delete_dns_records_for_object(self, source_obj):
-        """Delete all DNS records created from a source object."""
-        content_type = ContentType.objects.get_for_model(source_obj)
-        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
+        Args:
+            source_objects: A list of source objects to process.
+            created: Whether the source objects are being created.
 
-        for rule_record in rule_records:
-            self._delete_tracking_and_dns_record(rule_record)
-
-    def get_pipeline_stage_metrics(self):
-        """Return cumulative and per-batch stage metrics for current run."""
-        return self._pipeline_stage_metrics.as_report()
-
-    #
-    # Pipeline internals
-    #
-
-    def _process_objects(self, source_objects, created=False):
-        """Process one object batch through the default phased flow."""
+        Returns:
+            A list of ObjectProcessingSummary objects, one per source object in the batch.
+        """
         if not source_objects:
             return []
 
@@ -285,6 +273,22 @@ class DNSRuleEngine:
         self._pipeline_stage_metrics.record_batch(batch_metrics)
 
         return apply_result["summaries"]
+
+    def delete_dns_records_for_object(self, source_obj):
+        """Delete all DNS records created from a source object."""
+        content_type = ContentType.objects.get_for_model(source_obj)
+        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
+
+        for rule_record in rule_records:
+            self._delete_tracking_and_dns_record(rule_record)
+
+    def get_pipeline_stage_metrics(self):
+        """Return cumulative and per-batch stage metrics for current run."""
+        return self._pipeline_stage_metrics.as_report()
+
+    #
+    # Pipeline internals
+    #
 
     def _fetch_tracking_data(self, source_objects):
         """Stage 1: fetch and prefetch tracking rows for the current object batch."""
