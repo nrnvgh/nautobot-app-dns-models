@@ -1216,8 +1216,8 @@ class DNSRuleEngine:
                 # logger.debug(f"A/AAAA record data variations from rule {rule.name} - address result: {address_result}")
 
                 address_ids = address_result.split()
-
-                return self._build_record_variations(rule, base_record_data, address_ids)
+                record_variations = self._build_record_variations(rule, base_record_data, address_ids)
+                return self._filter_record_variations_by_ip_version(rule, context, record_variations)
 
             raise DNSRuleTemplateRenderedEmptyError("value_template", "missing", [])
 
@@ -1258,6 +1258,35 @@ class DNSRuleEngine:
             record_variations.append(record_data)
 
         return record_variations
+
+    def _filter_record_variations_by_ip_version(self, rule, context, record_variations):
+        """Return the record data for the DNS record type associated with the rule."""
+
+        # This code filters records to only return those IPs which match the record type for the rule.
+        # Benchmarks showed it the performance of doing it this was was on par with doing SQL-level filtering
+        # in template_proxies.py, but the code for doing it this way was simpler.
+        if rule.record_type not in ("A", "AAAA"):
+            return record_variations
+
+        if not record_variations:
+            return record_variations
+
+        target_ip_version = 4 if rule.record_type == "A" else 6
+        candidate_address_ids = [record_data["address_id"] for record_data in record_variations]
+
+        context_obj = context.get("obj")
+        source_obj = getattr(context_obj, "_obj", context_obj)
+        prefetched_ips = getattr(source_obj, "_prefetched_objects_cache", {}).get("ip_addresses")
+        if prefetched_ips is not None:
+            allowed_ids = {ip_obj.id for ip_obj in prefetched_ips if ip_obj.ip_version == target_ip_version}
+        else:
+            allowed_ids = set(
+                ipam_models.IPAddress.objects.filter(id__in=candidate_address_ids, ip_version=target_ip_version).values_list(
+                    "id", flat=True
+                )
+            )
+
+        return [record_data for record_data in record_variations if record_data["address_id"] in allowed_ids]
 
     def _add_record_type_fields_single(self, rule, context, record_data):
         """Add record-type specific fields to the record data."""
