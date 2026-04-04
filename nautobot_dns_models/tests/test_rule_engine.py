@@ -2008,8 +2008,8 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         """
         Validate rollback on real tracking-row uniqueness collision.
 
-        This pre-seeds a conflicting DNSRuleRecord tuple and then calls the fast bulk-create
-        method with a deterministic DNS record UUID to trigger a DB-enforced IntegrityError.
+        This pre-seeds a conflicting DNSRuleRecord tuple and then calls the singleton create
+        path with a deterministic DNS record UUID to trigger a DB-enforced IntegrityError.
         """
 
         rule = DNSRule.objects.create(
@@ -2038,7 +2038,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 
         self.assertEqual(ARecord.objects.filter(id=forced_record_id).count(), 0)
 
-        created_records = self.engine._create_records_from_data_bulk_create_fast(
+        created_records = self.engine._create_records_for_object(
             rule=rule,
             source_obj=self.interface,
             record_data_list=[
@@ -2067,7 +2067,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         )
 
     def test_signal_path_does_not_use_bulk_create_fast(self):
-        """Signal-driven processing should not use the direct bulk_create fast path."""
+        """Signal-driven processing should not use the pipeline batched-create queue."""
 
         self.interface.ip_addresses.set([])
         DNSRule.objects.create(
@@ -2086,13 +2086,13 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 
         with patch.object(
             type(self.engine),
-            "_create_records_from_data_bulk_create_fast",
+            "_queue_records_for_batched_create",
             autospec=True,
-            wraps=type(self.engine)._create_records_from_data_bulk_create_fast,
-        ) as bulk_create_fast_mock:
+            wraps=type(self.engine)._queue_records_for_batched_create,
+        ) as batched_queue_mock:
             self.interface.ip_addresses.add(self.ip_addresses[0])
 
-        bulk_create_fast_mock.assert_not_called()
+        batched_queue_mock.assert_not_called()
         self.assertEqual(ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(), 1)
 
     def test_interface_a_record_created_on_ip_addition_via_custom_method(self):
