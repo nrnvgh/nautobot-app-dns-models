@@ -186,6 +186,7 @@ def handle_object_save(sender, instance, created, **kwargs):  # pylint: disable=
         created: Boolean indicating if this was a new object
         **kwargs: Additional signal arguments
     """
+    logger.debug(f"[SIGNAL] [handle_object_save] {sender} / {instance} / {created=}")
     _process_dns_rules_if_needed(instance, created, context="object_save")
 
 
@@ -218,7 +219,7 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
         **kwargs: Additional signal arguments
     """
     model_name = sender._meta.model_name
-    # logger.debug(f"[SIGNAL] [handle_object_with_interfaces_save] {model_name} {instance} / {created=}")
+    logger.debug(f"[SIGNAL] [handle_object_with_interfaces_save] {model_name} {instance} / {created=}")
 
     try:
         # Process parent object's DNS rules only if needed
@@ -231,7 +232,7 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
 
         # If any parent object fields changed, process all interfaces belonging to this parent
         # This ensures interface DNS records with {{ obj.parent.* }} (or similar) templates get updated
-        if getattr(instance, "_dns_needs_processing", False):
+        if instance._dns_needs_processing:
             # Process all interfaces belonging to this parent
             interfaces = instance.interfaces.all()
             if interfaces:
@@ -268,7 +269,7 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
         context: String context for logging
     """
     # Check if DNS processing is needed (set by pre_save handler)
-    should_process = created or getattr(instance, "_dns_needs_processing", False)
+    should_process = created or instance._dns_needs_processing
 
     logger.debug(f"[SIGNAL] [{context}] {instance} / {created=} / should_process={should_process}")
 
@@ -281,7 +282,6 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
             logger.error("[SIGNAL] [%s] Failed to process DNS rules for %s: %s", context, instance, exc)
     else:
         logger.debug(f"[SIGNAL] [{context}] Skipping DNS processing for {instance} - no relevant field changes")
-        pass
 
 
 @receiver(post_delete, sender=Device)
