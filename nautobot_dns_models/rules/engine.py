@@ -32,7 +32,7 @@ from nautobot_dns_models.models import (
     DNSRuleRecord,
     DNSZone,
 )
-from nautobot_dns_models.normalization import normalize_dns_name
+from nautobot_dns_models.normalization import normalize_dns_name_if_enabled
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
 logger = logging.getLogger(__name__)
@@ -332,7 +332,7 @@ class DNSRuleEngine:
                 try:
                     base_context = {"obj": wrap_for_template(source_obj)}
                     rendered_name = self._render_template(rule.name_template, base_context, "name_template")
-                    shared_record_data = {"name": normalize_dns_name(rendered_name)}
+                    shared_record_data = {"name": normalize_dns_name_if_enabled(rendered_name)}
                     record_variations = self._get_record_data_variations_for_rule(
                         rule, base_context, shared_record_data
                     )
@@ -1178,7 +1178,7 @@ class DNSRuleEngine:
         """Calculate desired DNS record data for one rule/object pair."""
         base_context = {"obj": wrap_for_template(source_obj)}
         rendered_name = self._render_template(rule.name_template, base_context, "name_template")
-        shared_record_data = {"name": normalize_dns_name(rendered_name)}
+        shared_record_data = {"name": normalize_dns_name_if_enabled(rendered_name)}
         requires_ip_context = self._requires_ip_context(rule)
 
         all_record_data = []

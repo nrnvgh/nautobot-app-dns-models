@@ -12,6 +12,7 @@ import uuid
 from unittest import skip
 from unittest.mock import PropertyMock, patch
 
+from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
@@ -3368,9 +3369,77 @@ class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
                 combined_message = " ".join(messages).lower()
                 self.assertNotIn("runtime issues", combined_message)
 
+    @override_config(nautobot_dns_models__NORMALIZE_DNS_RECORDS=False)
+    def test_engine_record_creation_requires_pre_normalized_name_when_normalization_disabled(self):
+        """Engine path should not normalize candidate names when config is disabled."""
+        rule = DNSRule.objects.create(
+            name="engine-normalization-disabled",
+            description="Engine should preserve non-normalized candidate names when disabled",
+            content_type=self.interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            # device.role.name contains spaces/uppercase in shared fixtures
+            name_template="{{ obj.device.role.name }}.{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=True,
+        )
+
+        self.engine.process_object(self.interface, created=False)
+
+        expected_name = normalize_dns_name(f"{self.device_role.name}.{self.interface.name}.{self.device.name}")
+        self.assertEqual(
+            ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(),
+            0,
+            "Engine should not create a normalized record when normalization config is disabled",
+        )
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(rule=rule, object_id=self.interface.id).count(),
+            0,
+            "Tracking row should not be created when candidate fails normalization validation",
+        )
+
+    @override_config(nautobot_dns_models__NORMALIZE_DNS_RECORDS=True)
+    def test_engine_record_creation_normalizes_name_when_enabled(self):
+        """Engine path should normalize candidate names when config is enabled."""
+        rule = DNSRule.objects.create(
+            name="engine-normalization-enabled",
+            description="Engine should normalize candidate names when enabled",
+            content_type=self.interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            # device.role.name contains spaces/uppercase in shared fixtures
+            name_template="{{ obj.device.role.name }}.{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=True,
+        )
+
+        self.engine.process_object(self.interface, created=False)
+
+        expected_name = normalize_dns_name(f"{self.device_role.name}.{self.interface.name}.{self.device.name}")
+        self.assertEqual(
+            ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(),
+            1,
+            "Engine should create a normalized record when normalization config is enabled",
+        )
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(rule=rule, object_id=self.interface.id).count(),
+            1,
+            "Tracking row should be created for successful normalized candidate",
+        )
+
+        rule_record = DNSRuleRecord.objects.get(rule=rule, object_id=self.interface.id)
+        self.assertEqual(
+            rule_record.dns_record,
+            ARecord.objects.get(name=expected_name, zone=self.dns_zone),
+            "Tracking row should point to the correct A record",
+        )
+
     @override_settings(
         DEBUG=True,
         LOGGING=TEST_LOGGING_CONFIG,
+    )
+    @override_config(
+        nautobot_dns_models__NORMALIZE_DNS_RECORDS=True,
     )
     def test_template_failure_preserves_existing_records(self):  # pylint: disable=too-many-locals
         """Test that existing DNS records are not deleted when template rendering fails."""
@@ -3631,7 +3700,6 @@ class RuleValidationTestCase(BaseRuleEngineMixin, TestCase):
         v4_and_v6_addresses = list(itertools.chain.from_iterable(zip(self.ip_addresses[:3], self.ipv6_addresses[:3])))
         interface.ip_addresses.set(v4_and_v6_addresses)
         self.assertEqual(interface.ip_addresses.count(), 6)
-        print(f"\n\ninterface.ip_addresses.all(): {interface.ip_addresses.all()}\n")
 
         # Verify only 3 AAAA records were created (one for each IPv6 address)
         aaaa_records = AAAARecord.objects.filter(name=f"{interface.name}.{self.device.name}", zone=self.dns_zone)

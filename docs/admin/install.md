@@ -77,6 +77,21 @@ This setting controls the DNS validation level applied to zones and records:
     - Empty labels (e.g., consecutive dots or leading/trailing dots) are not allowed
     - The total length of the fully qualified DNS name (including all dots, in wire format) must not exceed 255 bytes
 
+`NORMALIZE_DNS_RECORDS` (default: `False`)
+
+This setting controls whether DNS-related fields are normalized automatically:
+
+- **False** - Normalization is not applied automatically. Values must already be normalized or validation will fail.
+- **True** - Values are normalized automatically on a per-dot-delimited-label basis using the plugin normalization policy:
+    - Lowercase the label
+    - Translate `/`, `_`, and space to `-`
+    - Collapse consecutive `-` to a single `-`
+    - Trim leading/trailing `-` from each label
+    - Preserve a single leading `_` when the original label starts with `_`
+
+!!! note "Punycode labels are preserved"
+    Labels that start with `xn--` are left unchanged during normalization.
+
 ## Logging
 
 `nautobot_dns_models` emits hybrid logs: human-readable messages plus structured fields in the Python logging `extra` payload.

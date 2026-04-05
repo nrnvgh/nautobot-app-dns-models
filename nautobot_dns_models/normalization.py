@@ -5,6 +5,8 @@ Implements per-label normalization with trim/collapse and underscore-led label h
 
 import re
 
+from constance import config as constance_config
+
 _TRANSLATE_TO_HYPHEN = str.maketrans(
     {
         "/": "-",
@@ -34,6 +36,14 @@ def normalize_dns_name(value):
     return ".".join(normalized_labels)
 
 
+def normalize_dns_name_if_enabled(value):
+    """Normalize DNS names only when NORMALIZE_DNS_RECORDS is enabled."""
+    if getattr(constance_config, "nautobot_dns_models__NORMALIZE_DNS_RECORDS"):
+        return normalize_dns_name(value)
+
+    return value
+
+
 def _normalize_label(label):
     """Normalize a single DNS label according to plugin policy.
 
@@ -41,10 +51,15 @@ def _normalize_label(label):
     - Translate '/', '_', and space to '-'
     - Collapse runs of '-'
     - Trim leading/trailing '-'
+    - Preserve ACE/Punycode labels (``xn--`` prefix) unchanged
     - If the original label starts with '_', preserve a single leading underscore and
       normalize the remainder. Underscores elsewhere are translated to '-'.
     """
     if not label:
+        return label
+
+    # If the label is ACE/Punycode, assume it is already normalized and return it as-is.
+    if label.lower().startswith("xn--"):
         return label
 
     #
@@ -60,6 +75,7 @@ def _normalize_label(label):
 
     if leading_underscore:
         return f"_{normalized}" if normalized else "_"
+
     return normalized
 
 
