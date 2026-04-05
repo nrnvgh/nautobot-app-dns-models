@@ -693,15 +693,7 @@ class DNSRule(PrimaryModel):
                 super().validate_unique(exclude)
                 return
 
-            if self.location is None and self.tenant is None:
-                message = (
-                    f"An enabled global {self.record_type} record rule for " f"'{self.content_type}' already exists."
-                )
-            else:
-                message = (
-                    f"An enabled {self.record_type} record rule for '{self.content_type}' "
-                    "already exists for this scope."
-                )
+            message = self._build_scope_conflict_message()
             raise ValidationError({"location": message})
 
         super().validate_unique(exclude)
@@ -713,8 +705,6 @@ class DNSRule(PrimaryModel):
         errors = self._validate_templates()
 
         # Validate content type exists
-        # NOTE: In a perfect world, there would be a mixin of some sort which would
-        # NOTE: handle this. For example, Tag, LocationType, Role, etc.
         if self.content_type_id:
             try:
                 content_type = self.content_type
@@ -729,6 +719,23 @@ class DNSRule(PrimaryModel):
         if errors:
             raise ValidationError(dict(errors))
 
+    def _build_scope_conflict_message(self):
+        """Build a human-readable conflict message for duplicate enabled rule scope."""
+        if self.location is None and self.tenant is None:
+            scope_text = "global scope"
+        else:
+            scope_parts = []
+            if self.location is not None:
+                scope_parts.append(f"location '{self.location}'")
+            if self.tenant is not None:
+                scope_parts.append(f"tenant '{self.tenant}'")
+            scope_text = ", ".join(scope_parts)
+
+        return (
+            f"An enabled {self.record_type} record rule for '{self.content_type}' "
+            f"already exists for {scope_text}."
+        )
+
     def _validate_templates(self):
         """Validate templates for the DNS rule."""
         hostname_related_fields, non_hostname_related_fields = self._build_template_fields()
@@ -736,9 +743,9 @@ class DNSRule(PrimaryModel):
         template_syntax_errors = self._validate_template_syntax(all_template_fields)
         template_expression_errors = self._validate_template_expression_required(all_template_fields)
 
-        # _validate_template_literals() -> collect_literal_validation_errors() parses templates; if
-        # syntax is invalid it can raise TemplateSyntaxError directly. Skip literal checks for fields
-        #  that already failed syntax so that we can present as mucn info to the user as possible.
+        # _validate_template_literals() -> collect_literal_validation_errors() parses templates, and if the
+        # syntax is invalid it can raise TemplateSyntaxError. Skip literal checks for fields that already
+        # failed syntax so that we can gather as much info for the user as possible.
         syntax_error_fields = {field_name for field_name, messages in template_syntax_errors.items() if messages}
         syntax_valid_hostname_fields = [
             (field_name, template_content)
@@ -746,7 +753,10 @@ class DNSRule(PrimaryModel):
             if field_name not in syntax_error_fields
         ]
         template_literal_errors = self._validate_template_literals(syntax_valid_hostname_fields)
-        record_type_specific_errors = self._validate_record_type_specific_requirements()
+
+        #
+        # If we add additional record types with record-type-specific requirements, we'll need validate them here.
+        #
 
         # Merge per-field without overwriting; preserve order and dedupe
         merged_errors = defaultdict(list)
@@ -760,11 +770,6 @@ class DNSRule(PrimaryModel):
                     merged_errors[field_name].append(msg)
 
         for field_name, messages in template_literal_errors.items():
-            for msg in messages:
-                if msg not in merged_errors[field_name]:
-                    merged_errors[field_name].append(msg)
-
-        for field_name, messages in record_type_specific_errors.items():
             for msg in messages:
                 if msg not in merged_errors[field_name]:
                     merged_errors[field_name].append(msg)
@@ -794,14 +799,7 @@ class DNSRule(PrimaryModel):
         for field_name, template_content in template_fields:
             if template_content:
                 try:
-                    # Step 1: Basic syntax validation (fast check)
                     validate_jinja2(template_content)
-
-                    # NOTE: We explored full runtime validation here, but it introduced
-                    # NOTE: more issues than it solved (missing/optional fields, etc.).
-                    # NOTE: Alternative approaches may be possible; see:
-                    # NOTE: https://github.com/nautobot/nautobot/issues/7852
-
                 except TemplateSyntaxError as exc:
                     # Basic syntax errors (unclosed tags, invalid operators, etc.)
                     errors[field_name].append(f"Template syntax error on line {exc.lineno}: {exc.message}")
@@ -854,14 +852,6 @@ class DNSRule(PrimaryModel):
             for msg in field_error_list:
                 if msg not in errors[field_name]:
                     errors[field_name].append(msg)
-
-        return errors
-
-    def _validate_record_type_specific_requirements(self):
-        """Validate record-type-specific requirements for the DNS rule."""
-        errors = defaultdict(list)
-
-        # No record-type-specific requirements for A, AAAA
 
         return errors
 
