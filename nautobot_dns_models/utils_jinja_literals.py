@@ -5,7 +5,7 @@ These helpers work at the AST level and do not evaluate templates.
 
 import re
 
-from django.template import engines
+from django.template import engines as django_template_engines
 from jinja2.visitor import NodeVisitor
 
 # Default substring patterns to flag in literal fragments
@@ -91,7 +91,7 @@ def collect_literal_strings(template_str):
     Returns:
         A list of literal string fragments in source order.
     """
-    rendering_engine = engines["jinja"]
+    rendering_engine = django_template_engines["jinja"]
     ast = rendering_engine.env.parse(template_str)
     collector = LiteralCollector()
     collector.visit(ast)
