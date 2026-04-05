@@ -1393,8 +1393,8 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             enabled=True,
         )
         expected_message = (
-            f"An enabled global {duplicate_rule.record_type} record rule for "
-            f"'{duplicate_rule.content_type}' already exists."
+            f"An enabled {duplicate_rule.record_type} record rule for "
+            f"'{duplicate_rule.content_type}' already exists for global scope."
         )
         with self.assertRaises(ValidationError) as context:
             duplicate_rule.full_clean()

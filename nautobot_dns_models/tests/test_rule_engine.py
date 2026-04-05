@@ -2295,6 +2295,203 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         self.assertEqual(old_records.count(), 0, "Old record should be gone after device name change")
         self.assertEqual(updated_records.first().address, self.ip_addresses[0])
 
+    def test_a_records_cascade_when_device_renamed_many_interfaces_one_ip_each(self):
+        """Cascade path: parent rename updates one A record per interface when each has a single IP.
+
+        At least two interfaces are required to exercise batched cascade handling (all interfaces
+        processed in one pipeline batch rather than only the trivial single-object case). Eight
+        interfaces is enough to catch off-by-one or partial-batch bugs while keeping the test fast.
+        """
+        num_interfaces = 8
+        self._create_dns_rule_for_interface_a_record(name="cascade-many-ifaces-one-ip")
+
+        interfaces = [self.interface]
+        for i in range(1, num_interfaces):
+            interfaces.append(
+                Interface.objects.create(
+                    name=f"eth{i}",
+                    device=self.device,
+                    type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+                    status=self.interface_status,
+                )
+            )
+
+        extra_ips = []
+        for octet in range(20, 20 + num_interfaces):
+            extra_ips.append(
+                IPAddress.objects.create(
+                    address=f"192.168.1.{octet}/24",
+                    status=self.ip_status,
+                    namespace=self.namespace,
+                    parent=self.prefix,
+                )
+            )
+
+        for iface, ip in zip(interfaces, extra_ips):
+            iface.ip_addresses.add(ip)
+
+        old_device_name = self.device.name
+        new_device_name = f"{old_device_name}-cascade-1ip"
+        self.device.name = new_device_name
+        self.device.save()
+
+        for iface in interfaces:
+            expected_name = f"{iface.name}.{new_device_name}"
+            stale_name = f"{iface.name}.{old_device_name}"
+            self.assertEqual(
+                ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(),
+                1,
+                msg=f"expected one A record for {expected_name}",
+            )
+            self.assertEqual(ARecord.objects.filter(name=stale_name, zone=self.dns_zone).count(), 0)
+
+    def test_a_records_cascade_when_device_renamed_multiple_ips_per_interface(self):
+        """Cascade path: parent rename updates all A records when each interface has multiple IPv4s."""
+        num_interfaces = 4
+        num_ips_per_interface = 2
+        device = Device.objects.create(
+            name="multi-ip-cascade-device",
+            device_type=self.device_type,
+            location=self.location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        DNSRule.objects.create(
+            name="cascade-multi-ip-per-iface",
+            description="Multi-A per interface for cascade test",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        interfaces = []
+        for i in range(num_interfaces):
+            interfaces.append(
+                Interface.objects.create(
+                    name=f"multi-eth{i}",
+                    device=device,
+                    type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+                    status=self.interface_status,
+                )
+            )
+
+        total_ips = num_interfaces * num_ips_per_interface
+        extra_ips = []
+        for octet in range(40, 40 + total_ips):
+            extra_ips.append(
+                IPAddress.objects.create(
+                    address=f"192.168.1.{octet}/24",
+                    status=self.ip_status,
+                    namespace=self.namespace,
+                    parent=self.prefix,
+                )
+            )
+
+        ip_iter = iter(extra_ips)
+        for iface in interfaces:
+            iface.ip_addresses.add(next(ip_iter), next(ip_iter))
+
+        old_device_name = device.name
+        new_device_name = f"{old_device_name}-renamed"
+        device.name = new_device_name
+        device.save()
+
+        for iface in interfaces:
+            expected_name = f"{iface.name}.{new_device_name}"
+            stale_name = f"{iface.name}.{old_device_name}"
+            self.assertEqual(
+                ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(),
+                num_ips_per_interface,
+                msg=f"expected {num_ips_per_interface} A records for {expected_name}",
+            )
+            self.assertEqual(ARecord.objects.filter(name=stale_name, zone=self.dns_zone).count(), 0)
+
+    def test_a_and_aaaa_records_cascade_when_device_renamed_mixed_ip_per_interface(self):
+        """Cascade path: parent rename applies every applicable rule (A and AAAA) per interface.
+
+        Each interface has both IPv4 and IPv6; one A rule and one AAAA rule share the same name
+        template. After rename, both record types must reflect the new device name for every
+        interface (validates multi-rule reconciliation on the batched cascade path).
+        """
+        num_interfaces = 3
+        device = Device.objects.create(
+            name="mixed-ip-cascade-device",
+            device_type=self.device_type,
+            location=self.location,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        DNSRule.objects.create(
+            name="cascade-mixed-a",
+            description="A records for mixed v4/v6 cascade test",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+        DNSRule.objects.create(
+            name="cascade-mixed-aaaa",
+            description="AAAA records for mixed v4/v6 cascade test",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}.{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+            enabled=True,
+        )
+
+        interfaces = []
+        for i in range(num_interfaces):
+            interfaces.append(
+                Interface.objects.create(
+                    name=f"mix-eth{i}",
+                    device=device,
+                    type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+                    status=self.interface_status,
+                )
+            )
+
+        for i, iface in enumerate(interfaces):
+            v4 = IPAddress.objects.create(
+                address=f"192.168.1.{60 + i}/24",
+                status=self.ip_status,
+                namespace=self.namespace,
+                parent=self.prefix,
+            )
+            v6 = IPAddress.objects.create(
+                address=f"2001:db8::{60 + i}/64",
+                status=self.ip_status,
+                namespace=self.namespace,
+                parent=self.ipv6_prefix,
+            )
+            iface.ip_addresses.add(v4, v6)
+
+        old_device_name = device.name
+        new_device_name = f"{old_device_name}-renamed"
+        device.name = new_device_name
+        device.save()
+
+        for iface in interfaces:
+            expected_name = f"{iface.name}.{new_device_name}"
+            stale_name = f"{iface.name}.{old_device_name}"
+            self.assertEqual(
+                ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(),
+                1,
+                msg=f"expected one A record for {expected_name}",
+            )
+            self.assertEqual(
+                AAAARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(),
+                1,
+                msg=f"expected one AAAA record for {expected_name}",
+            )
+            self.assertEqual(ARecord.objects.filter(name=stale_name, zone=self.dns_zone).count(), 0)
+            self.assertEqual(AAAARecord.objects.filter(name=stale_name, zone=self.dns_zone).count(), 0)
+
     def test_a_record_deleted_when_interface_deleted(self):
         """Test that A records are deleted when interface is deleted."""
         # Create DNS rule for this test
