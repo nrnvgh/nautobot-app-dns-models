@@ -523,7 +523,12 @@ class DNSRuleEngine:
                 continue
 
             try:
-                created_records = self._create_dns_record_from_rule(rule, source_obj)
+                desired_record_data_list = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_CREATE)
+                if not desired_record_data_list:
+                    continue
+
+                created_records = self._create_records_from_data(source_obj, rule, desired_record_data_list, phase=PHASE_CREATE)
+
                 changed_record_count += len(created_records)
             except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                 self._log_rule_processing_error(rule, source_obj, exc, phase=PHASE_CREATE, cleanup=False)
@@ -671,18 +676,8 @@ class DNSRuleEngine:
     # Record creation / update / delete
     #
 
-    def _create_dns_record_from_rule(self, rule, source_obj):
-        """Create one or more DNS records based on a rule and source object."""
-        desired_record_data_list = self._calculate_desired_record_data(rule, source_obj, phase=PHASE_CREATE)
-        if not desired_record_data_list:
-            return []
-
-        created_records = self._create_records_from_data(rule, source_obj, desired_record_data_list, phase=PHASE_CREATE)
-
-        return created_records
-
-    def _create_records_from_data(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
-        """Dispatch create path based on configured runtime strategy."""
+    def _create_records_from_data(self, source_obj, rule, record_data_list, phase=PHASE_CREATE):
+        """Dispatch create work to either batched queueing or immediate persistence."""
         if self._batched_create_queue_active:
             return self._queue_records_for_batched_create(
                 rule=rule,
