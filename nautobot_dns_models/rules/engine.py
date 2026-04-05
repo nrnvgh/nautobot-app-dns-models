@@ -661,7 +661,7 @@ class DNSRuleEngine:
         if records_to_create:
             records_to_create_data = [desired_records_by_identity[key] for key in records_to_create]
             created_records = self._create_records_from_data(
-                rule, source_obj, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
+                source_obj, rule, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
             )
 
         skipped_create = len(records_to_create) - len(created_records)
@@ -692,7 +692,7 @@ class DNSRuleEngine:
             phase=phase,
         )
 
-    def _create_records_for_object(self, rule, source_obj, record_data_list, phase=PHASE_CREATE):
+    def _create_records_for_object(self, source_obj, rule, record_data_list, phase=PHASE_CREATE):
         """Singleton create path using per-record inserts (no bulk_create)."""
         if not record_data_list:
             return []
