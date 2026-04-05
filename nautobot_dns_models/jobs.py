@@ -675,7 +675,7 @@ class ReconcileDNSBulkJob(Job):
         for model_class, model_objects in targets_by_model_class.items():
             model_label = _model_label(model_class)
             try:
-                batch_summaries = selected_engine.process_objects_pipeline(model_objects, created=False)
+                batch_summaries = selected_engine.process_objects_pipeline(model_objects)
             except DNSRuleEngineIntegrityError:
                 raise
             except (

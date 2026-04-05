@@ -220,21 +220,17 @@ class DNSRuleEngine:
 
         return summary
 
-    def process_objects_pipeline(self, source_objects, created=False):
+    def process_objects_pipeline(self, source_objects):
         """Process one batch of source objects.
 
         Args:
             source_objects: A list of source objects to process.
-            created: Whether the source objects are being created.
 
         Returns:
             A list of ObjectProcessingSummary objects, one per source object in the batch.
         """
         if not source_objects:
             return []
-
-        if created:
-            return [self.process_object(source_obj, created=True) for source_obj in source_objects]
 
         batch_metrics = PipelineBatchMetrics(objects=len(source_objects))
         total_started_at = perf_counter()

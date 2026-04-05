@@ -458,7 +458,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         """Bulk mode include-children should process child devices and their interfaces from in-scope parents."""
         selected_engine = MockDNSRuleEngine.return_value
         selected_engine.process_objects_pipeline.side_effect = (
-            lambda model_objects, created=False: [ObjectProcessingSummary() for _ in model_objects]
+            lambda model_objects: [ObjectProcessingSummary() for _ in model_objects]
         )
         out_of_scope_location = Location.objects.create(
             name="Bulk Child Device Out-of-Scope",

@@ -250,7 +250,7 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
                     interface_type_name,
                 )
 
-                rule_engine.process_objects_pipeline(interfaces, created=False)
+                rule_engine.process_objects_pipeline(interfaces)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Log the error but don't let it break the original object save
         logger.error(
