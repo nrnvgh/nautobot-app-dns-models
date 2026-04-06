@@ -1,14 +1,6 @@
 # Automated DNS Record Management
 
-DNS Rules provide automated DNS record creation, update, and deletion based on Nautobot source objects. When supported objects change, enabled rules are evaluated and corresponding DNS records are reconciled.
-
-## Overview
-
-DNS Rules replace manual record lifecycle work with template-driven behavior:
-
-- Create DNS records when objects enter scope.
-- Update records when source data changes.
-- Remove records when objects leave scope or desired candidates no longer resolve.
+DNS Rules provide automated DNS management of A and AAAA records and can replace manual record lifecycle work with template-driven behavior. When DNS Rules are applied to source objects, corresponding DNS records are created, updated, or deleted as necessary.
 
 ## Key Concepts
 
@@ -56,16 +48,9 @@ A single rule can produce multiple records, for example:
 
 All template fields have access to `obj` (the source object). Rule processing uses object-level rendering and per-candidate rendering.
 
-For template syntax, object context, patterns, and troubleshooting, see [DNS Rule Templates](dns_rule_templates.md) and [DNS Rule Template Patterns](dns_rule_template_patterns.md).
+For template syntax and object context see [DNS Rule Templates](dns_rule_templates.md); for concrete recipes and patterns see [DNS Rule Template Patterns](dns_rule_template_patterns.md).
 
-#### Valid Template Forms
-
-Each template field must be either:
-
-- **Plain literal**: no `{{`, `{%`, `{#}` delimiters.
-- **Template with expression**: contains at least one `{{ ... }}` expression.
-
-If a field contains Jinja statements (`{% ... %}`) and/or comments (`{# ... #}`) but no expression, validation fails.
+For valid template forms see [DNS Rule Templates](dns_rule_templates.md#valid-template-forms).
 
 #### Evaluation Order
 
@@ -82,7 +67,7 @@ Processing is best effort in both create and update paths:
 
 - Valid candidates continue even if other candidates fail.
 - Failed candidates are skipped or reconciled away.
-- If all candidates fail during update reconciliation, previously managed records for that rule/object can be removed.
+- If all candidates fail during update reconciliation, previously managed records for that rule/object can be removed. ## FIXME this probably needs to be reworded
 
 When related context changes do not trigger source-object signals, run reconciliation jobs to repair drift. See [DNS Reconciliation Jobs](reconciliation_jobs.md).
 
@@ -96,8 +81,6 @@ When related context changes do not trigger source-object signals, run reconcili
 | Location-specific deployment | Global + Location | Location (in-scope objects) | Global |
 | Tenant-specific deployment | Global + Tenant | Tenant (in-scope objects) | Global |
 | Full scoped deployment | Global + Location + Tenant + Location+Tenant | Location+Tenant (exact match) | Location -> Tenant -> Global |
-
-For concrete template recipes (device/interface/service/VM/VMInterface), see [DNS Rule Template Patterns](dns_rule_template_patterns.md).
 
 ### End-to-End Scope Examples
 
@@ -130,7 +113,8 @@ This shows the full fallback chain in practice: `Location+Tenant -> Location -> 
 
 - Disable to stop automatic processing without deleting the rule.
 - Re-enable to resume processing.
-- Existing records remain until a future reconciliation removes or updates them.
+
+While a rule is disabled, existing records created by it will not be updated, nor will new records be created by it.
 
 ### Conflicts
 
@@ -157,10 +141,6 @@ Check:
 4. Templates render successfully.
 5. Required data exists (for example IPs for A/AAAA records).
 
-### Template Validation Failure
-
-A frequent error is using Jinja statements/comments without any `{{ ... }}` expression in the same field.
-
 ### Records Were Removed
 
 Common causes:
@@ -169,10 +149,3 @@ Common causes:
 2. Scope applicability changed.
 3. Rule changed or was disabled.
 4. Related context data changed and later reconciliation removed obsolete records.
-
-## Best Practices
-
-- Start with simple global rules, then add scoped variants.
-- Use representative objects when validating templates.
-- Keep complex naming logic documented in the rule description.
-- Prefer predictable, testable template behavior over compact but opaque expressions.

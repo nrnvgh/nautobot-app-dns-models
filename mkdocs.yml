@@ -114,7 +114,7 @@ nav:
           - Rules Overview: "user/rules/dns_rules.md"
           - Rule Templates Reference: "user/rules/dns_rule_templates.md"
           - Rule Template Patterns: "user/rules/dns_rule_template_patterns.md"
-          - Reconciliation jobs: "user/rules/reconciliation_jobs.md"
+          - Reconciliation Jobs: "user/rules/reconciliation_jobs.md"
       - Frequently Asked Questions: "user/faq.md"
       - External Interactions: "user/external_interactions.md"
       - Data Models:

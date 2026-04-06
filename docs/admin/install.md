@@ -67,7 +67,8 @@ sudo systemctl restart nautobot nautobot-worker nautobot-scheduler
 
 This option is configured via the Admin GUI.
 
-`DNS_VALIDATION_LEVEL` (default: "Wire format")
+### `DNS_VALIDATION_LEVEL`
+default: "Wire format"
 
 This setting controls the DNS validation level applied to zones and records:
 
@@ -77,7 +78,8 @@ This setting controls the DNS validation level applied to zones and records:
     - Empty labels (e.g., consecutive dots or leading/trailing dots) are not allowed
     - The total length of the fully qualified DNS name (including all dots, in wire format) must not exceed 255 bytes
 
-`NORMALIZE_DNS_RECORDS` (default: `False`)
+### `NORMALIZE_DNS_RECORDS`
+default: `False`
 
 This setting controls whether DNS-related fields are normalized automatically:
 
