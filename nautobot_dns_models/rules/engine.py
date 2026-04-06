@@ -178,12 +178,16 @@ class DNSRuleEngine:
         self._view_lookup_cache = {}
         self._zone_lookup_cache = {}
         self._applicable_rules_cache = {}
-
         self._compiled_template_cache = {}
-        self._jinja_env = django_template_engines["jinja"].env
         self._pending_batched_creates = defaultdict(list)
         self._batched_create_queue_active = False
         self._pipeline_stage_metrics = PipelineMetrics()
+        #
+        # Another way to do this would be to apply an overlay to the base environment which
+        # set trim_blocks=True, lstrip_blocks=True, and possibly even undefined=StrictUndefined.
+        # This could be useful, but would be different than how the nautobot core sets up its environment.
+        # Currently optimizing for consistency rather than maximizing ease of use for DNS rules.
+        self._jinja_env = django_template_engines["jinja"].env
 
     #
     # Public API
@@ -234,7 +238,7 @@ class DNSRuleEngine:
 
         batch_metrics = PipelineBatchMetrics(objects=len(source_objects))
         total_started_at = perf_counter()
-
+        logger.info(f"[process_objects_pipeline] Starting batch of {len(source_objects)} objects")
         # Stage 1: Fetch tracking rows
         with batch_metrics.time_stage("fetch"):
             fetch_result = self._fetch_tracking_data(source_objects)
@@ -968,7 +972,16 @@ class DNSRuleEngine:
         return [rule for rule in all_rules if rule.pk in final_rule_pk_set]
 
     def _object_needs_dns_records_for_rule(self, source_obj, rule):
-        """Hybrid fast-path: avoid per-object SQL checks when prefetch cache is present."""
+        """Return whether this object should produce records for the given rule.
+
+        For A/AAAA rules this is an IP-family presence gate:
+        - Interface/VMInterface: require at least one IP with matching version.
+        - Device/VirtualMachine: require corresponding primary_ip4/primary_ip6.
+        - Service: require at least one IP with matching version.
+
+        For non-A/AAAA record types this currently returns True and defers any
+        type-specific validation/handling to later processing stages.
+        """
         if rule.record_type not in ("A", "AAAA"):
             return True
 
@@ -1149,13 +1162,17 @@ class DNSRuleEngine:
             compiled_template = self._jinja_env.from_string(template_str)
             self._compiled_template_cache[template_str] = compiled_template
 
-        result = compiled_template.render(context)
+        raw_result = compiled_template.render(context)
+
+        # If, down the line, the code needs to support DNS record types for which leading or trailing
+        # whitespace may want to be preserved, this blanket strip() will need to be revisted.
+        result = raw_result.strip()
 
         if not result:
             raise DNSRuleTemplateRenderedEmptyError(field_name, template_str, list(context.keys()))
 
         # This should only happen when DEBUG=True and Django uses jinja2.runtime.DebugUndefined.
-        if "{{ no such element:" in result:
+        if "{{ no such element:" in raw_result:
             raise DNSRuleTemplateRenderedEmptyError(field_name, f"{template_str} → {result}", list(context.keys()))
 
         return result
@@ -1254,8 +1271,8 @@ class DNSRuleEngine:
         """Return the record data for the DNS record type associated with the rule."""
 
         # This code filters records to only return those IPs which match the record type for the rule.
-        # Benchmarks showed it the performance of doing it this was was on par with doing SQL-level filtering
-        # in template_proxies.py, but the code for doing it this way was simpler.
+        # Benchmarks showed that performance was on par with SQL-level filtering in template_proxies.py,
+        # while this approach kept the implementation simpler.
         if rule.record_type not in ("A", "AAAA"):
             return record_variations
 
@@ -1265,6 +1282,11 @@ class DNSRuleEngine:
         target_ip_version = 4 if rule.record_type == "A" else 6
         candidate_address_ids = [record_data["address_id"] for record_data in record_variations]
 
+        # Not all render paths provide prefetched "ip_addresses" on the source object.
+        # - Bulk pipeline jobs prefetch ip_addresses (preferred fast path).
+        # - Some single-object/signal-driven runs may not prefetch and therefore miss cache hits.
+        # When no prefetch cache is present, fall back to one constrained SQL query against only
+        # candidate IDs for this rendered record set.
         context_obj = context.get("obj")
         source_obj = getattr(context_obj, "_obj", context_obj)
         prefetched_ips = getattr(source_obj, "_prefetched_objects_cache", {}).get("ip_addresses")
@@ -1515,6 +1537,7 @@ class DNSRuleEngine:
         if isinstance(exc, DNSRuleRenderedValueLookupError):
             if exc.reason_code:
                 return exc.reason_code
+
             return default_reason
 
         if isinstance(exc, DNSRuleTemplateRenderedEmptyError):
