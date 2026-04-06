@@ -70,9 +70,10 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
 
     def test_render_template_method_with_undefined_variable(self):
         """Test _render_template method behavior with undefined variables."""
-        # render_jinja2 returns empty string for undefined variables, which our method treats as an error
-        with self.assertRaises(DNSRuleTemplateRenderedEmptyError):
+        with self.assertRaises(DNSRuleTemplateRenderedEmptyError) as context:
             self._render_template("{{ undefined_var }}", {}, "test_field")
+
+        self.assertEqual("Template test_field rendered empty: {{ undefined_var }}", str(context.exception))
 
     def test_render_template_method_with_syntax_error(self):
         """Test _render_template method behavior with syntax errors."""
