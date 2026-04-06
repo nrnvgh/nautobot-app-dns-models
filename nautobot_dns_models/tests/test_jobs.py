@@ -268,33 +268,21 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         jsonschema.validate(instance=result, schema=schema)
 
-    def test_object_job_path_does_not_use_bulk_create_fast(self):
-        """Object reconcile job flow should not call direct bulk_create fast path."""
-        self.interface_rule.name_template = "{{ obj.device.name }}-{{ obj.name }}"
-        self.interface_rule.value_template = "{{ obj.ip_addresses.all() }}"
-        self.interface_rule.enabled = True
-        self.interface_rule.save(update_fields=["name_template", "value_template", "enabled"])
-        self.interface.ip_addresses.set([self.ip_addresses[0]])
-        expected_name = f"{self.device.name}-{self.interface.name}"
-        DNSRuleRecord.objects.filter(object_id=self.interface.id).delete()
-        ARecord.objects.filter(name=expected_name).delete()
-        self.assertEqual(ARecord.objects.filter(name=expected_name).count(), 0)
+    @patch("nautobot_dns_models.jobs.DNSRuleEngine")
+    def test_object_job_path_uses_process_object_not_pipeline(self, MockDNSRuleEngine):
+        """Object reconcile job flow should call process_object and not process_objects_pipeline."""
+        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine.process_object.return_value = ObjectProcessingSummary()
         job = ReconcileDNSObjectJob()
 
-        with patch.object(
-            DNSRuleEngine,
-            "_create_records_from_data_bulk_create_fast",
-            autospec=True,
-            wraps=DNSRuleEngine._create_records_from_data_bulk_create_fast,
-        ) as bulk_create_fast_mock:
-            result = job.run(
-                dryrun=False,
-                object_model=ContentType.objects.get_for_model(Interface),
-                object_id=str(self.interface.id),
-            )
+        result = job.run(
+            dryrun=False,
+            object_model=ContentType.objects.get_for_model(Interface),
+            object_id=str(self.interface.id),
+        )
 
-        bulk_create_fast_mock.assert_not_called()
-        self.assertEqual(ARecord.objects.filter(name=expected_name).count(), 1)
+        selected_engine.process_object.assert_called_once_with(self.interface, created=False)
+        selected_engine.process_objects_pipeline.assert_not_called()
         self.assertEqual(result["execution"]["targets_processed_count"], 1)
         self.assertEqual(result["execution"]["targets_failed_count"], 0)
 

@@ -225,7 +225,6 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
         # Process parent object's DNS rules only if needed
         _process_dns_rules_if_needed(instance, created, context="object_with_interfaces_save")
 
-        # Enhanced cascade processing for parent field changes
         # Skip cascade processing for newly created parents
         if created:
             return
@@ -251,8 +250,8 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
                 )
 
                 # NOTE This is significantly faster than processing each interface individually, but it
-                # NOTE does use bulk_update, so no changelog entries will be created. That may
-                # NOTE or may not be acceptable for some use cases.
+                # NOTE does use bulk_update, so no changelog entries will be created. That may or may
+                # NOTE not be acceptable for some use cases.
                 rule_engine.process_objects_pipeline(interfaces)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Log the error but don't let it break the original object save
@@ -276,7 +275,7 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
     # Check if DNS processing is needed (set by pre_save handler)
     should_process = created or instance._dns_needs_processing
 
-    logger.debug(f"[SIGNAL] [{context}] {instance} / {created=} / should_process={should_process}")
+    logger.debug(f"[SIGNAL] [{context}] {instance} / {created=} / {should_process=}")
 
     if should_process:
         logger.debug(f"[SIGNAL] [{context}] Processing DNS rules for {instance}")
