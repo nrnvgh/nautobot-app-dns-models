@@ -1,6 +1,8 @@
 """Unit tests for Jinja template proxy objects."""
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
 from nautobot_dns_models.tests.test_rule_engine import BaseRuleEngineMixin
@@ -110,6 +112,12 @@ class Mixins:
         def _get_manager_proxy(self):
             return wrap_for_template(getattr(self, self.manager_source_attr)).ip_addresses
 
+        def _get_prefetched_manager_proxy(self):
+            source = getattr(self, self.manager_source_attr)
+            prefetched_source = source.__class__.objects.prefetch_related("ip_addresses").get(pk=source.pk)
+            self.assertIn("ip_addresses", getattr(prefetched_source, "_prefetched_objects_cache", {}))
+            return wrap_for_template(prefetched_source).ip_addresses
+
         def test_all_returns_space_delimited_uuids(self):
             """str() on ip_addresses.all() should join UUIDs with spaces."""
             proxy_manager = self._get_manager_proxy()
@@ -153,6 +161,59 @@ class Mixins:
             self.assertEqual(str(first_proxy), "")
             self.assertFalse(last_proxy)
             self.assertEqual(str(last_proxy), "")
+
+        def test_filter_without_args_uses_prefetch_cache(self):
+            """Empty filter() should preserve all() behavior without extra DB queries."""
+            proxy_manager = self._get_prefetched_manager_proxy()
+            expected = str(proxy_manager.all())
+
+            with CaptureQueriesContext(connection) as query_context:
+                result = str(proxy_manager.filter())
+
+            self.assertEqual(result, expected)
+            self.assertEqual(len(query_context), 0)
+
+        def test_exclude_without_args_uses_prefetch_cache(self):
+            """Empty exclude() should preserve all() behavior without extra DB queries."""
+            proxy_manager = self._get_prefetched_manager_proxy()
+            expected = str(proxy_manager.all())
+
+            with CaptureQueriesContext(connection) as query_context:
+                result = str(proxy_manager.exclude())
+
+            self.assertEqual(result, expected)
+            self.assertEqual(len(query_context), 0)
+
+        def test_filter_with_lookup_returns_filtered_proxy_rows(self):
+            """Non-empty filter() should return proxied, filtered IP rows."""
+            source = getattr(self, self.manager_source_attr)
+            source.ip_addresses.set([self.ip_address, self.ip_address2, self.ipv6_address])
+            proxy_manager = self._get_manager_proxy()
+
+            filtered = proxy_manager.filter(ip_version=6)
+            rendered_values = [str(ip_proxy) for ip_proxy in filtered]
+
+            self.assertEqual(rendered_values, [str(self.ipv6_address.pk)])
+            self.assertEqual(str(filtered.first()), str(self.ipv6_address.pk))
+
+        def test_exclude_with_lookup_returns_filtered_proxy_rows(self):
+            """Non-empty exclude() should return proxied rows after exclusion."""
+            source = getattr(self, self.manager_source_attr)
+            source.ip_addresses.set([self.ip_address, self.ip_address2, self.ipv6_address])
+            proxy_manager = self._get_manager_proxy()
+
+            filtered = proxy_manager.exclude(ip_version=6)
+            rendered_values = {str(ip_proxy) for ip_proxy in filtered}
+
+            self.assertEqual(rendered_values, {str(self.ip_address.pk), str(self.ip_address2.pk)})
+
+        def test_unsupported_queryset_chain_raises_attribute_error(self):
+            """Unsupported queryset-style chaining should fail loudly."""
+            proxy_manager = self._get_manager_proxy()
+            filtered = proxy_manager.filter(ip_version=4)
+
+            with self.assertRaises(AttributeError):
+                filtered.exclude(ip_version=6)
 
 
 class DevicePrimaryIPProxyTestCase(Mixins.PrimaryIPProxyMixin, TestCase):

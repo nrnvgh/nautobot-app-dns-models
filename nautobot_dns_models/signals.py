@@ -250,6 +250,9 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
                     interface_type_name,
                 )
 
+                # NOTE This is significantly faster than processing each interface individually, but it
+                # NOTE does use bulk_update, so no changelog entries will be created. That may
+                # NOTE or may not be acceptable for some use cases.
                 rule_engine.process_objects_pipeline(interfaces)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Log the error but don't let it break the original object save
