@@ -11,6 +11,7 @@
 from functools import cached_property
 
 from django.db.models.query import QuerySet
+from jinja2 import UndefinedError
 from nautobot.dcim.models import Device, Interface
 from nautobot.ipam.models import IPAddress, Service
 from nautobot.virtualization.models import VirtualMachine, VMInterface
@@ -82,7 +83,7 @@ class TemplateIPAddressProxy(TemplateProxyBase):
         """
         Return the UUID string representation.
 
-        We return an empty string when no IP is set to emulate what Jinja2 returns when a variable is undefined.
+        Return an empty string when no IP is set to emulate what Jinja2 returns when a variable is undefined.
         """
         if self._obj is None:
             return ""
@@ -115,235 +116,133 @@ class TemplateIPAddressProxy(TemplateProxyBase):
 
 
 class TemplateIPAddressQuerySetProxy:
-    """Wrap a QuerySet of IPAddress objects to yield proxied results."""
+    """Wrap IPAddress rows as an in-memory, template-facing collection."""
 
     def __init__(self, queryset, prefetched_ips=None):
-        """Store queryset and optional prefetched IP cache."""
-        self._queryset = queryset
-        self._prefetched_ips = prefetched_ips
+        """Store IPs as a concrete list to avoid hidden queryset round-trips."""
+        if prefetched_ips is not None:
+            self._ips = list(prefetched_ips)
+        else:
+            self._ips = list(queryset)
+
+    def __repr__(self):
+        """String representation of the proxy."""
+        return f"{type(self).__name__}({self._ips!r})"
 
     def __str__(self):
         """Join UUID representations for readability."""
-        print(f"[TemplateIPAddressQuerySetProxy] __str__: Returning all related IPs as a proxied queryset")
-        return " ".join(str(ip) for ip in self.all())
+        return " ".join(str(ip_proxy) for ip_proxy in self)
 
-    def __len__(self):  # pragma: no cover - mirrors QuerySet behaviour
-        """Return the length via the underlying queryset."""
-        prefetched_ips = self._effective_prefetched_ips()
-        if prefetched_ips is not None:
-            return len(prefetched_ips)
+    def __len__(self):  # pragma: no cover - mirrors QuerySet behavior
+        """Return number of rows in this collection."""
+        return len(self._ips)
 
-        return self._effective_queryset().count()
+    def __bool__(self):
+        """Truthiness matches whether any related IP exists."""
+        return bool(self._ips)
 
     def __iter__(self):
         """Yield proxied IPAddress objects during iteration."""
-        print(f"[TemplateIPAddressQuerySetProxy] __iter__: Yielding proxied IPAddress objects during iteration")
-        prefetched_ips = self._effective_prefetched_ips()
-        if prefetched_ips is not None:
-            for ip in prefetched_ips:
-                print(f"YIELD from cache ({ip=})")
-                yield TemplateIPAddressProxy(ip)
-
-            return
-
-        for ip in self._effective_queryset():
-            print(f"YIELD from queryset({ip=})")
-            yield TemplateIPAddressProxy(ip)
+        for ip_obj in self._ips:
+            yield TemplateIPAddressProxy(ip_obj)
 
     def __getitem__(self, item):
         """Allow indexing and slicing while preserving proxies."""
-        prefetched_ips = self._effective_prefetched_ips()
-        if prefetched_ips is not None:
-            result = prefetched_ips[item]
-            if isinstance(result, list):
-                return TemplateIPAddressQuerySetProxy(
-                    self._effective_queryset(),
-                    prefetched_ips=result,
-                )
+        result = self._ips[item]
+        if isinstance(result, list):
+            return TemplateIPAddressQuerySetProxy(queryset=(), prefetched_ips=result)
 
-            return TemplateIPAddressProxy(result)
-
-        result = self._effective_queryset()[item]
-        return self._wrap_result(result)
-
-    def __getattr__(self, name):
-        """Delegate attribute access to the queryset, wrapping callables."""
-        attr = getattr(self._effective_queryset(), name)
-        if callable(attr):
-            return self._wrap_callable(attr)
-
-        return attr
+        return TemplateIPAddressProxy(result)
 
     def all(self):
-        """Return a proxied queryset of IP addresses."""
-        print(f"[TemplateIPAddressQuerySetProxy] Returning all related IPs as a proxied queryset")
-        return TemplateIPAddressQuerySetProxy(
-            self._effective_queryset().all(),
-            prefetched_ips=self._effective_prefetched_ips(),
-        )
+        """Return a proxied copy of this in-memory collection."""
+        return TemplateIPAddressQuerySetProxy(queryset=(), prefetched_ips=self._ips)
 
     def first(self):
         """Return the first proxied IP address, if any."""
-        prefetched_ips = self._effective_prefetched_ips()
-        if prefetched_ips is not None:
-            return TemplateIPAddressProxy(prefetched_ips[0] if prefetched_ips else None)
-
-        ip = self._effective_queryset().first()
-
-        return TemplateIPAddressProxy(ip)
+        return TemplateIPAddressProxy(self._ips[0] if self._ips else None)
 
     def last(self):
         """Return the last proxied IP address, if any."""
-        prefetched_ips = self._effective_prefetched_ips()
-        if prefetched_ips is not None:
-            return TemplateIPAddressProxy(prefetched_ips[-1] if prefetched_ips else None)
-
-        ip = self._effective_queryset().last()
-
-        return TemplateIPAddressProxy(ip)
-
-    def _effective_queryset(self):
-        """Return underlying queryset as-is."""
-        return self._queryset
-
-    def _effective_prefetched_ips(self):
-        """Return cached prefetched IPs when available."""
-        if self._prefetched_ips is None:
-            return None
-
-        return self._prefetched_ips
-
-    def _wrap_result(self, result):
-        """Wrap queryset or model results as template proxies."""
-        if isinstance(result, QuerySet) and result.model is IPAddress:
-            return TemplateIPAddressQuerySetProxy(result)
-
-        if isinstance(result, IPAddress):
-            return TemplateIPAddressProxy(result)
-
-        return result
-
-    def _wrap_callable(self, func):
-        """Wrap queryset methods so their return values stay proxied."""
-
-        def wrapper(*args, **kwargs):
-            result = func(*args, **kwargs)
-            return self._wrap_result(result)
-
-        return wrapper
+        return TemplateIPAddressProxy(self._ips[-1] if self._ips else None)
 
 
 class TemplateIPAddressManagerProxy:
-    """Wrap a many-to-many manager returning IPAddress objects."""
+    """Wrap a many-to-many manager returning an in-memory proxy collection."""
 
     def __init__(self, manager):
-        """Store manager and prefetched related-IP cache."""
+        """Store manager reference for one-shot list materialization."""
         self._manager = manager
 
     def __str__(self):
         """Provide a joined UUID representation."""
-        print(f"[TemplateIPAddressManagerProxy] __str__: Returning all related IPs from manager as a proxied queryset")
         return " ".join(str(ip) for ip in self)
 
     def __bool__(self):
         """Allow truthiness checks without evaluating templates."""
-        prefetched_ips = self._get_prefetched_ips()
-        if prefetched_ips is not None:
-            return bool(prefetched_ips)
-
-        return self._effective_queryset().exists()
+        return bool(self._materialize_ips())
 
     def __len__(self):  # pragma: no cover - mirrors manager behaviour
         """Return the number of related IPs."""
-        prefetched_ips = self._get_prefetched_ips()
-        if prefetched_ips is not None:
-            return len(prefetched_ips)
-
-        return self._effective_queryset().count()
+        return len(self._materialize_ips())
 
     def __iter__(self):
         """Yield proxied IPs when iterating over the manager."""
-        prefetched_ips = self._get_prefetched_ips()
-        if prefetched_ips is not None:
-            for ip in prefetched_ips:
-                yield TemplateIPAddressProxy(ip)
-
-            return
-
-        for ip in self._effective_queryset():
-            yield TemplateIPAddressProxy(ip)
-
-    def __getattr__(self, name):
-        """Delegate to the manager, wrapping callables."""
-        attr = getattr(self._effective_queryset(), name)
-        if callable(attr):
-            return self._wrap_callable(attr)
-
-        return attr
+        for ip_obj in self._materialize_ips():
+            yield TemplateIPAddressProxy(ip_obj)
 
     def all(self):
         """Return all related IPs as a proxied queryset."""
-        print(f"[TemplateIPAddressManagerProxy] Returning all related IPs as a proxied queryset")
         return TemplateIPAddressQuerySetProxy(
-            self._effective_queryset(),
-            prefetched_ips=self._get_prefetched_ips(),
+            queryset=(),
+            prefetched_ips=self._materialize_ips(),
         )
 
     def first(self):
         """Return the first related IP as a proxy."""
-        prefetched_ips = self._get_prefetched_ips()
-        if prefetched_ips is not None:
-            return TemplateIPAddressProxy(prefetched_ips[0] if prefetched_ips else None)
-
-        ip = self._effective_queryset().first()
-
-        return TemplateIPAddressProxy(ip)
+        ip_rows = self._materialize_ips()
+        return TemplateIPAddressProxy(ip_rows[0] if ip_rows else None)
 
     def last(self):
         """Return the last related IP as a proxy."""
-        prefetched_ips = self._get_prefetched_ips()
-        if prefetched_ips is not None:
-            return TemplateIPAddressProxy(prefetched_ips[-1] if prefetched_ips else None)
+        ip_rows = self._materialize_ips()
+        return TemplateIPAddressProxy(ip_rows[-1] if ip_rows else None)
 
-        ip = self._effective_queryset().last()
+    # These next two are provided for completeness, but since they don't
+    # leverage prefetched IPs, they're significantly slower (when passed
+    # arguments) than the all(), first(), etc. It's probably acceptable
+    # for most single-object saves, even with cascading changes, but for
+    # large batches (e.g. tens of thousands of objects or more) it's really
+    # going to be noticable.
+    def filter(self, *args, **kwargs):
+        """Pass through queryset filtering; empty filters preserve prefetched all()."""
+        if not args and not kwargs:
+            return self.all()
 
-        return TemplateIPAddressProxy(ip)
+        return TemplateIPAddressQuerySetProxy(
+            queryset=self._manager.filter(*args, **kwargs),
+            prefetched_ips=None,
+        )
 
-    def _effective_queryset(self):
-        """Return manager queryset as-is."""
-        return self._manager.all()
+    def exclude(self, *args, **kwargs):
+        """Pass through queryset exclude; empty excludes preserve prefetched all()."""
+        if not args and not kwargs:
+            return self.all()
 
-    def _get_prefetched_ips(self):
-        """Read prefetched related IPs from the model prefetch cache."""
-        # Fast path: if the relationship was prefetched by the queryset builder,
-        # reuse those in-memory rows for first()/last()/len()/bool()/iteration
-        # instead of issuing follow-up queryset calls.
+        return TemplateIPAddressQuerySetProxy(
+            queryset=self._manager.exclude(*args, **kwargs),
+            prefetched_ips=None,
+        )
 
+    def _materialize_ips(self):
+        """Materialize related IP rows once, preferring prefetch cache when available."""
         prefetched_cache = getattr(self._manager.instance, "_prefetched_objects_cache", {})
         prefetched_ips = prefetched_cache.get(self._manager.prefetch_cache_name)
-        if prefetched_ips is None:
-            return None
+        if prefetched_ips is not None:
+            return list(prefetched_ips)
 
-        return list(prefetched_ips)
+        return list(self._manager.all())
 
-    def _wrap_result(self, result):
-        """Wrap manager results into template proxies."""
-        if isinstance(result, QuerySet) and result.model is IPAddress:
-            return TemplateIPAddressQuerySetProxy(result)
-
-        if isinstance(result, IPAddress):
-            return TemplateIPAddressProxy(result)
-
-        return result
-
-    def _wrap_callable(self, func):
-        """Ensure callable results remain proxied."""
-
-        def wrapper(*args, **kwargs):
-            result = func(*args, **kwargs)
-            return self._wrap_result(result)
-
-        return wrapper
 
 #
 # Top-level proxy objects.
