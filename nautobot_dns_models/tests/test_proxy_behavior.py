@@ -207,8 +207,11 @@ class Mixins:
 
             self.assertEqual(rendered_values, {str(self.ip_address.pk), str(self.ip_address2.pk)})
 
+        #
+        # Chained things do not currently work the same as native ORM calls. In this
+        # case, manager.filter().exclude() will raise an exception. 
         def test_unsupported_queryset_chain_raises_attribute_error(self):
-            """Unsupported queryset-style chaining should fail loudly."""
+            """Unsupported queryset-style chaining should raise an AttributeError."""
             proxy_manager = self._get_manager_proxy()
             filtered = proxy_manager.filter(ip_version=4)
 
