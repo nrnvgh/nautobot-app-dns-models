@@ -1061,7 +1061,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             zone_template="example.com",
             record_type="A",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.address }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
         expected_url = f"/plugins/dns/dns-rules/{rule.pk}/"
         self.assertEqual(rule.get_absolute_url(), expected_url)

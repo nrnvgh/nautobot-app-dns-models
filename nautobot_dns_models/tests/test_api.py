@@ -1111,7 +1111,7 @@ class ReconcileDNSJobsAPITestCase(APITestCase):
             record_type="A",
             zone_template="example.com",
             name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4.address.ip }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
     def setUp(self):
@@ -1137,7 +1137,7 @@ class ReconcileDNSJobsAPITestCase(APITestCase):
             "dryrun": True,
             "object_model": str(ContentType.objects.get_for_model(Device).pk),
             "object_id": str(self.device.pk),
-            "include_children": False,
+            "include_child_devices": False,
         }
         job_class = get_job(self.object_job_class_path)
         cleaned_data = job_class.validate_data(job_data)
