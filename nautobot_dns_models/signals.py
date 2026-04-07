@@ -145,6 +145,7 @@ def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs
 @receiver(pre_save, sender=VMInterface)
 # TODO: Add signal handlers for future models:
 # - Cluster (location changes affect VMs and their VMInterfaces)
+# - InterfaceRedundancyGroup (location changes affect interfaces in the group)
 def capture_object_change_state(sender, instance, **kwargs):
     """
     Capture object field changes to determine if DNS processing is needed.
@@ -275,17 +276,17 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
     # Check if DNS processing is needed (set by pre_save handler)
     should_process = created or instance._dns_needs_processing
 
-    logger.debug(f"[SIGNAL] [{context}] {instance} / {created=} / {should_process=}")
+    logger.debug(f"[SIGNAL] [_process_dns_rules_if_needed] [{context}] {instance} / {created=} / {should_process=}")
 
     if should_process:
-        logger.debug(f"[SIGNAL] [{context}] Processing DNS rules for {instance}")
+        logger.debug(f"[SIGNAL] [_process_dns_rules_if_needed] [{context}] Processing DNS rules for {instance}")
         try:
             DNSRuleEngine().process_object(instance, created=created)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # Log the error but don't let it break the original object save
             logger.error("[SIGNAL] [%s] Failed to process DNS rules for %s: %s", context, instance, exc)
     else:
-        logger.debug(f"[SIGNAL] [{context}] Skipping DNS processing for {instance} - no relevant field changes")
+        logger.debug(f"[SIGNAL] [_process_dns_rules_if_needed] [{context}] Skipping DNS processing for {instance} - no relevant field changes")
 
 
 @receiver(post_delete, sender=Device)
