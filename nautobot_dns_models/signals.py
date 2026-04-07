@@ -318,20 +318,42 @@ def handle_object_delete(sender, instance, **kwargs):
 
 @receiver(post_save, sender=IPAddressToInterface)
 def handle_ipaddresstointerface_save(sender, instance, **kwargs):  # pylint: disable=unused-argument
-    """Handle IPAddressToInterface save events to trigger DNS rule processing."""
-    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_save] {sender} / '{instance}' ({kwargs})")
+    """Handle IPAddressToInterface save events to trigger DNS rule processing.
+
+    Args:
+        sender: IPAddressToInterface model class
+        instance: IPAddressToInterface instance that was saved
+        **kwargs: Additional signal arguments
+    """
+    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_save] {sender=} / '{instance=}' ({kwargs=})")
 
     #
     # We pass created=False because while the IPAddressToInterface is a new object, the interface is not.
     # We want to process the interface, not the IPAddressToInterface.
-    DNSRuleEngine().process_object(instance.interface, created=False)
+    source_obj = instance.interface or instance.vm_interface
+    if source_obj is None:
+        logger.debug("[SIGNAL] [handle_ipaddresstointerface_save] No interface/vm_interface on %s, skipping", instance)
+        return
+
+    DNSRuleEngine().process_object(source_obj, created=False)
 
 
 @receiver(post_delete, sender=IPAddressToInterface)
 def handle_ipaddresstointerface_delete(sender, instance, **kwargs):  # pylint: disable=unused-argument
-    """Handle IPAddressToInterface delete events to clean up associated DNS records."""
-    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_delete] {sender} / {instance} ({kwargs})")
-    DNSRuleEngine().process_object(instance.interface, created=False)
+    """Handle IPAddressToInterface delete events to clean up associated DNS records.
+
+    Args:
+        sender: IPAddressToInterface model class
+        instance: IPAddress object being removed from the interface
+        **kwargs: Additional signal arguments
+    """
+    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_delete] {sender=} / {instance=} ({kwargs=})")
+    source_obj = instance.interface or instance.vm_interface
+    if source_obj is None:
+        logger.debug("[SIGNAL] [handle_ipaddresstointerface_delete] No interface/vm_interface on %s, skipping", instance)
+        return
+
+    DNSRuleEngine().process_object(source_obj, created=False)
 
 
 @receiver(m2m_changed, sender=Service.ip_addresses.through)
