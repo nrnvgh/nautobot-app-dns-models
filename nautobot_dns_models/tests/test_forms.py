@@ -5,7 +5,7 @@ from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
 from nautobot_dns_models import forms
-from nautobot_dns_models.models import DNSRegistrar, DNSView, DNSZone
+from nautobot_dns_models.models import DNSCatalogZone, DNSRegistrar, DNSView, DNSZone
 
 
 class DNSViewFormTestCase(TestCase):
@@ -143,6 +143,81 @@ class DNSRegistrarFormTestCase(TestCase):
         form = self.form_class(data={"url": "https://registrar.test"})
         self.assertFalse(form.is_valid())
         self.assertIn("This field is required.", form.errors["name"])
+
+
+class DNSCatalogZoneFormTestCase(TestCase):
+    """Test DNSCatalogZone forms."""
+
+    form_class = forms.DNSCatalogZoneForm
+
+    def test_specifying_all_fields_success(self):
+        form = self.form_class(
+            data={
+                "name": "catalog-1.example.com",
+                "description": "Catalog description",
+                "dns_view": DNSView.objects.get(name="Default").id,
+                "ttl": 3600,
+                "filename": "catalog-1.example.com.zone",
+                "soa_mname": "ns1.catalog-1.example.com",
+                "soa_rname": "admin@example.com",
+                "soa_refresh": 86400,
+                "soa_retry": 7200,
+                "soa_expire": 3600000,
+                "soa_serial": 1,
+                "soa_minimum": 3600,
+            }
+        )
+        self.assertTrue(form.is_valid())
+        self.assertTrue(form.save())
+
+    def test_specifying_only_required_success(self):
+        form = self.form_class(
+            data={
+                "name": "catalog-2.example.com",
+                "dns_view": DNSView.objects.get(name="Default").id,
+                "ttl": 3600,
+                "filename": "catalog-2.example.com.zone",
+                "soa_mname": "ns1.catalog-2.example.com",
+                "soa_rname": "admin@example.com",
+                "soa_refresh": 86400,
+                "soa_retry": 7200,
+                "soa_expire": 3600000,
+                "soa_serial": 1,
+                "soa_minimum": 3600,
+            }
+        )
+        self.assertTrue(form.is_valid())
+        self.assertTrue(form.save())
+
+    def test_validate_name_catalogzone_is_required(self):
+        form = self.form_class(data={"description": "Catalog description"})
+        self.assertFalse(form.is_valid())
+        self.assertIn("This field is required.", form.errors["name"])
+
+    def test_validate_name_catalogzone_is_unique(self):
+        DNSCatalogZone.objects.create(
+            name="catalog-unique.example.com",
+            filename="catalog-unique.example.com.zone",
+            soa_mname="ns1.catalog-unique.example.com",
+            soa_rname="admin@example.com",
+        )
+        form = self.form_class(
+            data={
+                "name": "catalog-unique.example.com",
+                "dns_view": DNSView.objects.get(name="Default").id,
+                "ttl": 3600,
+                "filename": "catalog-unique.example.com.zone",
+                "soa_mname": "ns1.catalog-unique.example.com",
+                "soa_rname": "admin@example.com",
+                "soa_refresh": 86400,
+                "soa_retry": 7200,
+                "soa_expire": 3600000,
+                "soa_serial": 1,
+                "soa_minimum": 3600,
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("Catalog Zone with this Name and View already exists.", form.errors["__all__"])
 
 
 class NSRecordFormTestCase(TestCase):

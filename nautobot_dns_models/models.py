@@ -140,17 +140,8 @@ def get_default_view_pk():
     return default_view.pk
 
 
-@extras_features(
-    "custom_fields",
-    "custom_links",
-    "custom_validators",
-    "export_templates",
-    "graphql",
-    "relationships",
-    "webhooks",
-)
-class DNSZone(DNSModel):
-    """Model for DNS SOA Records. An SOA Record defines a DNS Zone."""
+class DNSZoneBase(DNSModel):
+    """Abstract base model for zone-like DNS objects."""
 
     name = models.CharField(max_length=200, help_text="FQDN of the Zone, w/ TLD. e.g example.com")
     dns_view = ForeignKeyWithAutoRelatedName(
@@ -205,6 +196,24 @@ class DNSZone(DNSModel):
         help_text="Minimum TTL for records in this zone.",
         verbose_name="SOA Minimum",
     )
+
+    class Meta:
+        """Meta class."""
+
+        abstract = True
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class DNSZone(DNSZoneBase):
+    """Model for DNS SOA Records. An SOA Record defines a DNS Zone."""
 
     tenant = models.ForeignKey(
         to="tenancy.Tenant",
@@ -301,6 +310,72 @@ class DNSViewPrefixAssignment(BaseModel):
     def __str__(self):
         """Stringify instance."""
         return f"{self.dns_view}: {self.prefix}"
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class DNSCatalogZone(DNSZoneBase):
+    """Model for DNS Catalog Zones."""
+
+    schema_version = models.CharField(
+        max_length=8,
+        default="2",
+        choices=[("2", "2")],
+        help_text="Catalog zone schema version (RFC 9432 uses version 2).",
+    )
+    members = models.ManyToManyField(
+        to="nautobot_dns_models.DNSZone",
+        related_name="catalog_zones",
+        through="DNSCatalogZoneMembership",
+        through_fields=("catalog_zone", "member_zone"),
+        blank=True,
+        help_text="DNS Zones that are members of this catalog zone.",
+    )
+
+    class Meta:
+        """Meta attributes for DNSCatalogZone."""
+
+        unique_together = [["name", "dns_view"]]
+        verbose_name = "Catalog Zone"
+        verbose_name_plural = "Catalog Zones"
+
+
+@extras_features("graphql")
+class DNSCatalogZoneMembership(BaseModel):
+    """Through model for DNSCatalogZone and DNSZone member-zone relationship."""
+
+    catalog_zone = ForeignKeyWithAutoRelatedName(
+        DNSCatalogZone,
+        on_delete=models.CASCADE,
+    )
+    member_zone = ForeignKeyWithAutoRelatedName(
+        DNSZone,
+        on_delete=models.PROTECT,
+    )
+    member_node_label = models.CharField(
+        max_length=63,
+        blank=True,
+        null=True,
+        help_text="Optional RFC 9432 member node label under zones.<catalog-zone>.",
+    )
+
+    class Meta:
+        """Meta attributes for DNSCatalogZoneMembership."""
+
+        unique_together = [["catalog_zone", "member_zone"], ["catalog_zone", "member_node_label"]]
+        verbose_name = "Catalog Zone Membership"
+        verbose_name_plural = "Catalog Zone Memberships"
+
+    def __str__(self):
+        """Stringify instance."""
+        return f"{self.catalog_zone}: {self.member_zone}"
 
 
 class DNSRecord(DNSModel):

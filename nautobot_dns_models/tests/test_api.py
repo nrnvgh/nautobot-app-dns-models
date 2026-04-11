@@ -17,6 +17,7 @@ from rest_framework.relations import ManyRelatedField
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    DNSCatalogZone,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -119,6 +120,74 @@ class DNSViewPrefixAssignmentAPITestCase(APIViewTestCases.APIViewTestCase):
             {
                 "dns_view": dns_views[1].pk,
                 "prefix": prefixes[2].pk,
+            },
+        ]
+
+
+class DNSCatalogZoneAPITestCase(APIViewTestCases.APIViewTestCase):
+    """Test the Nautobot DNSCatalogZone API."""
+
+    model = DNSCatalogZone
+    view_namespace = "plugins-api:nautobot_dns_models"
+    bulk_update_data = {
+        "description": "Example bulk description",
+    }
+    brief_fields = [
+        "name",
+    ]
+
+    @classmethod
+    def setUpTestData(cls):
+        dns_view = DNSView.objects.get(name="Default")
+        DNSCatalogZone.objects.create(
+            name="catalog-one.example.com",
+            description="First catalog zone",
+            dns_view=dns_view,
+            filename="catalog-one.example.com.zone",
+            soa_mname="ns1.catalog-one.example.com",
+            soa_rname="admin@example.com",
+        )
+        DNSCatalogZone.objects.create(
+            name="catalog-two.example.com",
+            description="Second catalog zone",
+            dns_view=dns_view,
+            filename="catalog-two.example.com.zone",
+            soa_mname="ns1.catalog-two.example.com",
+            soa_rname="admin@example.com",
+        )
+        DNSCatalogZone.objects.create(
+            name="catalog-three.example.com",
+            description="Third catalog zone",
+            dns_view=dns_view,
+            filename="catalog-three.example.com.zone",
+            soa_mname="ns1.catalog-three.example.com",
+            soa_rname="admin@example.com",
+        )
+
+        cls.create_data = [
+            {
+                "name": "catalog-four.example.com",
+                "description": "Fourth catalog zone",
+                "dns_view": dns_view.id,
+                "filename": "catalog-four.example.com.zone",
+                "soa_mname": "ns1.catalog-four.example.com",
+                "soa_rname": "admin@example.com",
+            },
+            {
+                "name": "catalog-five.example.com",
+                "description": "Fifth catalog zone",
+                "dns_view": dns_view.id,
+                "filename": "catalog-five.example.com.zone",
+                "soa_mname": "ns1.catalog-five.example.com",
+                "soa_rname": "admin@example.com",
+            },
+            {
+                "name": "catalog-six.example.com",
+                "description": "Sixth catalog zone",
+                "dns_view": dns_view.id,
+                "filename": "catalog-six.example.com.zone",
+                "soa_mname": "ns1.catalog-six.example.com",
+                "soa_rname": "admin@example.com",
             },
         ]
 

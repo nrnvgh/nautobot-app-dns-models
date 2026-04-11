@@ -9,6 +9,7 @@ from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    DNSCatalogZone,
     CNAMERecord,
     DNSRegistrar,
     DNSView,
@@ -66,6 +67,66 @@ class TestDNSView(ModelTestCases.BaseModelTestCase):
     def test_get_absolute_url(self):
         dns_view_model = DNSView.objects.get(name="View 1")
         self.assertEqual(dns_view_model.get_absolute_url(), f"/plugins/dns/dns-views/{dns_view_model.id}/")
+
+
+class TestDNSCatalogZone(ModelTestCases.BaseModelTestCase):
+    """Test DNSCatalogZone model."""
+
+    model = DNSCatalogZone
+
+    @classmethod
+    def setUpTestData(cls):
+        """Create test data for DNSCatalogZone model."""
+        super().setUpTestData()
+        DNSCatalogZone.objects.create(
+            name="catalog-1.example.com",
+            description="First Catalog Zone",
+            filename="catalog-1.example.com.zone",
+            soa_mname="ns1.catalog-1.example.com",
+            soa_rname="admin@example.com",
+        )
+        DNSCatalogZone.objects.create(
+            name="catalog-2.example.com",
+            description="Second Catalog Zone",
+            filename="catalog-2.example.com.zone",
+            soa_mname="ns1.catalog-2.example.com",
+            soa_rname="admin@example.com",
+        )
+        DNSCatalogZone.objects.create(
+            name="catalog-3.example.com",
+            description="Third Catalog Zone",
+            filename="catalog-3.example.com.zone",
+            soa_mname="ns1.catalog-3.example.com",
+            soa_rname="admin@example.com",
+        )
+
+    def test_create_catalogzone_only_required(self):
+        """Create with only required fields, and validate null description and __str__."""
+        catalog_zone = DNSCatalogZone.objects.create(
+            name="catalog-default.example.com",
+            filename="catalog-default.example.com.zone",
+            soa_mname="ns1.catalog-default.example.com",
+            soa_rname="admin@example.com",
+        )
+        self.assertEqual(catalog_zone.name, "catalog-default.example.com")
+        self.assertEqual(catalog_zone.description, "")
+        self.assertEqual(str(catalog_zone), "catalog-default.example.com")
+
+    def test_create_catalogzone_all_fields_success(self):
+        """Create DNSCatalogZone with all fields."""
+        catalog_zone = DNSCatalogZone.objects.create(
+            name="catalog-with-description.example.com",
+            description="Catalog description",
+            filename="catalog-with-description.example.com.zone",
+            soa_mname="ns1.catalog-with-description.example.com",
+            soa_rname="admin@example.com",
+        )
+        self.assertEqual(catalog_zone.name, "catalog-with-description.example.com")
+        self.assertEqual(catalog_zone.description, "Catalog description")
+
+    def test_get_absolute_url(self):
+        catalog_zone = DNSCatalogZone.objects.get(name="catalog-1.example.com")
+        self.assertEqual(catalog_zone.get_absolute_url(), f"/plugins/dns/catalog-zones/{catalog_zone.id}/")
 
 
 class TestDNSViewPrefixAssignment(ModelTestCases.BaseModelTestCase):

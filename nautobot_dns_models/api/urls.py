@@ -8,6 +8,8 @@ router = OrderedDefaultRouter()
 # add the name of your api endpoint, usually hyphenated model name in plural, e.g. "my-model-classes"
 router.register("dns-views", views.DNSViewViewSet)
 router.register("dns-view-prefix-assignments", views.DNSViewPrefixAssignmentViewSet)
+router.register("catalog-zones", views.DNSCatalogZoneViewSet)
+router.register("catalog-zone-memberships", views.DNSCatalogZoneMembershipViewSet)
 router.register("dns-registrars", views.DNSRegistrarViewSet)
 router.register("dns-registrations", views.DNSRegistrationViewSet)
 router.register("dns-zones", views.DNSZoneViewSet)

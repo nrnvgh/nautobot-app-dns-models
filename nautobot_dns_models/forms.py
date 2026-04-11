@@ -67,6 +67,125 @@ class DNSViewFilterForm(NautobotFilterForm):
     ]
 
 
+class DNSCatalogZoneForm(NautobotModelForm):
+    """DNSCatalogZone creation/edit form."""
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSCatalogZone
+        exclude = ["members"]
+
+
+class DNSCatalogZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
+    """DNSCatalogZone bulk edit form."""
+
+    pk = forms.ModelMultipleChoiceField(queryset=models.DNSCatalogZone.objects.all(), widget=forms.MultipleHiddenInput)
+    description = forms.CharField(required=False)
+
+    class Meta:
+        """Meta attributes."""
+
+        nullable_fields = [
+            "description",
+        ]
+
+
+class DNSCatalogZoneFilterForm(NautobotFilterForm):
+    """Filter form to filter searches."""
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        help_text="Search within Name and Description.",
+    )
+    name = forms.CharField(required=False, label="Name")
+    model = models.DNSCatalogZone
+    # Define the fields above for ordering and widget purposes
+    fields = [
+        "q",
+        "name",
+    ]
+
+
+class DNSCatalogZoneMembershipForm(forms.ModelForm):
+    """DNSCatalogZoneMembership creation/edit form."""
+
+    catalog_zone = forms.ModelChoiceField(
+        queryset=models.DNSCatalogZone.objects.all(),
+        required=True,
+    )
+    member_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=True,
+        query_params={"catalog_zone": "$catalog_zone"},
+    )
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSCatalogZoneMembership
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        """Initialize form."""
+        super().__init__(*args, **kwargs)
+        self.fields["catalog_zone"].label_from_instance = lambda obj: f"{obj.name} ({obj.dns_view.name})"
+
+    def clean(self):
+        """Validate selected member zone belongs to catalog zone's DNS view."""
+        cleaned_data = super().clean()
+        catalog_zone = cleaned_data.get("catalog_zone")
+        member_zone = cleaned_data.get("member_zone")
+        if catalog_zone and member_zone and catalog_zone.dns_view_id != member_zone.dns_view_id:
+            self.add_error("member_zone", "Member zone must belong to the same DNS view as the catalog zone.")
+
+        return cleaned_data
+
+
+class DNSCatalogZoneMembershipBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
+    """DNSCatalogZoneMembership bulk edit form."""
+
+    pk = forms.ModelMultipleChoiceField(
+        queryset=models.DNSCatalogZoneMembership.objects.all(), widget=forms.MultipleHiddenInput
+    )
+    member_node_label = forms.CharField(required=False)
+
+    class Meta:
+        """Meta attributes."""
+
+        nullable_fields = [
+            "member_node_label",
+        ]
+
+
+class DNSCatalogZoneMembershipFilterForm(NautobotFilterForm):
+    """Filter form to filter membership searches."""
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        help_text="Search within Catalog Zone, Member Zone, and Member Node Label.",
+    )
+    catalog_zone = DynamicModelChoiceField(
+        queryset=models.DNSCatalogZone.objects.all(),
+        required=False,
+        label="Catalog Zone",
+    )
+    member_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=False,
+        label="Member Zone",
+    )
+    model = models.DNSCatalogZoneMembership
+    fields = [
+        "q",
+        "catalog_zone",
+        "member_zone",
+        "member_node_label",
+    ]
+
+
 class DNSRegistrarForm(NautobotModelForm):
     """DNSRegistrar creation/edit form."""
 

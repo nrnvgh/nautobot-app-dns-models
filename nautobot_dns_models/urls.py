@@ -11,6 +11,8 @@ app_name = "nautobot_dns_models"
 router = NautobotUIViewSetRouter()
 
 router.register("dns-views", views.DNSViewUIViewSet)
+router.register("catalog-zones", views.DNSCatalogZoneUIViewSet)
+router.register("catalog-zone-memberships", views.DNSCatalogZoneMembershipUIViewSet)
 router.register("dns-registrars", views.DNSRegistrarUIViewSet)
 router.register("dns-registrations", views.DNSRegistrationUIViewSet)
 router.register("dns-zones", views.DNSZoneUIViewSet)
@@ -67,6 +69,13 @@ urlpatterns = [
         "dns-zones/<uuid:pk>/txt-records/add/",
         RedirectView.as_view(url="/plugins/dns/txt-records/add/?zone=%(pk)s&return_url=/plugins/dns/dns-zones/%(pk)s"),
         name="zone_txt_records_add",
+    ),
+    path(
+        "catalog-zones/<uuid:pk>/catalog-zone-memberships/add/",
+        RedirectView.as_view(
+            url="/plugins/dns/catalog-zone-memberships/add/?catalog_zone=%(pk)s&return_url=/plugins/dns/catalog-zones/%(pk)s?tab=member-zones"
+        ),
+        name="catalog_zone_memberships_add",
     ),
 ]
 

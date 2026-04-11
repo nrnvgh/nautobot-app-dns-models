@@ -115,6 +115,7 @@ nav:
       - Frequently Asked Questions: "user/faq.md"
       - External Interactions: "user/external_interactions.md"
       - Data Models:
+          - Catalog Zone: "models/catalogzone.md"
           - DNS Zone: "models/dnszone.md"
           - DNS Registrar: "models/dnsregistrar.md"
           - DNS Registration: "models/dnsregistration.md"

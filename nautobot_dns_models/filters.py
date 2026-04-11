@@ -44,6 +44,55 @@ class DNSViewPrefixAssignmentFilterSet(NautobotFilterSet):
         fields = "__all__"
 
 
+class DNSCatalogZoneFilterSet(NautobotFilterSet):
+    """Filter for DNSCatalogZone."""
+
+    q = SearchFilter(
+        filter_predicates={
+            "name": "icontains",
+            "description": "icontains",
+            "filename": "icontains",
+            "soa_mname": "icontains",
+            "soa_rname": "icontains",
+        }
+    )
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.DNSCatalogZone
+        fields = "__all__"
+
+
+class DNSCatalogZoneMembershipFilterSet(NautobotFilterSet):
+    """Filter for DNSCatalogZoneMembership."""
+
+    catalog_zone = NaturalKeyOrPKMultipleChoiceFilter(
+        queryset=models.DNSCatalogZone.objects.all(),
+        to_field_name="name",
+        label="Catalog Zone (name or ID)",
+    )
+    member_zone = NaturalKeyOrPKMultipleChoiceFilter(
+        queryset=models.DNSZone.objects.all(),
+        to_field_name="name",
+        label="Member Zone (name or ID)",
+    )
+
+    q = SearchFilter(
+        filter_predicates={
+            "catalog_zone__name": "icontains",
+            "member_zone__name": "icontains",
+            "member_node_label": "icontains",
+        }
+    )
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.DNSCatalogZoneMembership
+        fields = "__all__"
+
+
 class DNSRegistrarFilterSet(NautobotFilterSet):
     """Filter for DNSRegistrar."""
 
@@ -97,6 +146,14 @@ class DNSRegistrationFilterSet(NautobotFilterSet):
 class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
     """Filter for DNSZone."""
 
+    catalog_zone = django_filters.UUIDFilter(method="filter_catalog_zone", field_name="pk")
+
+    dns_view = NaturalKeyOrPKMultipleChoiceFilter(
+        queryset=models.DNSView.objects.all(),
+        to_field_name="name",
+        label="DNS View (name or ID)",
+    )
+
     q = SearchFilter(
         filter_predicates={
             "name": "icontains",
@@ -105,6 +162,15 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
             "soa_rname": "icontains",
         }
     )
+
+    def filter_catalog_zone(self, queryset, name, value):  # pylint: disable=unused-argument
+        """Filter zones to the selected catalog zone's DNS view."""
+        try:
+            catalog_zone = models.DNSCatalogZone.objects.only("dns_view_id").get(pk=value)
+        except (models.DNSCatalogZone.DoesNotExist, ValueError, TypeError):
+            return queryset.none()
+
+        return queryset.filter(dns_view_id=catalog_zone.dns_view_id).exclude(catalog_zones__pk=catalog_zone.pk).distinct()
 
     class Meta:
         """Meta attributes for filter."""

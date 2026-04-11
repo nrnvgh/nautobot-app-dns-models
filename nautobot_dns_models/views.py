@@ -1,5 +1,7 @@
 """DNS Plugin Views."""
 
+from django.template.loader import render_to_string
+from django.utils.html import format_html
 from nautobot.apps import views
 from nautobot.apps.ui import (
     ButtonColorChoices,
@@ -8,13 +10,19 @@ from nautobot.apps.ui import (
     ObjectsTablePanel,
     SectionChoices,
     StatsPanel,
+    Tab,
+    Titles,
 )
 from nautobot.core.ui import object_detail
+from nautobot.core.templatetags.helpers import badge
+from nautobot.core.views.utils import get_obj_from_context
 from nautobot.ipam.tables import PrefixTable
 
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
+    DNSCatalogZoneSerializer,
+    DNSCatalogZoneMembershipSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -29,6 +37,8 @@ from nautobot_dns_models.api.serializers import (
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
+    DNSCatalogZoneFilterSet,
+    DNSCatalogZoneMembershipFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -47,6 +57,12 @@ from nautobot_dns_models.forms import (
     ARecordBulkEditForm,
     ARecordFilterForm,
     ARecordForm,
+    DNSCatalogZoneBulkEditForm,
+    DNSCatalogZoneMembershipBulkEditForm,
+    DNSCatalogZoneMembershipFilterForm,
+    DNSCatalogZoneMembershipForm,
+    DNSCatalogZoneFilterForm,
+    DNSCatalogZoneForm,
     CNAMERecordBulkEditForm,
     CNAMERecordFilterForm,
     CNAMERecordForm,
@@ -81,6 +97,8 @@ from nautobot_dns_models.forms import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    DNSCatalogZone,
+    DNSCatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -95,6 +113,8 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
+    DNSCatalogZoneTable,
+    DNSCatalogZoneMembershipTable,
     CNAMERecordTable,
     DNSRegistrarTable,
     DNSRegistrationTable,
@@ -106,6 +126,18 @@ from nautobot_dns_models.tables import (
     SRVRecordTable,
     TXTRecordTable,
 )
+
+
+class CatalogZoneMembersTab(Tab):
+    """Tab displaying catalog membership with a member count badge."""
+
+    def render_label(self, context):
+        """Render tab label with a count of member zones."""
+        return format_html(
+            "{} {}",
+            self.label,
+            render_to_string("utilities/templatetags/badge.html", badge(get_obj_from_context(context).members.count(), True)),
+        )
 
 
 class DNSViewUIViewSet(views.NautobotUIViewSet):
@@ -143,6 +175,72 @@ class DNSViewUIViewSet(views.NautobotUIViewSet):
                 table_class=PrefixTable,
                 table_title="Assigned Prefixes",
                 include_columns=["prefix", "status", "location_count", "namespace"],
+            ),
+        ],
+    )
+
+
+class DNSCatalogZoneUIViewSet(views.NautobotUIViewSet):
+    """DNSCatalogZone UI ViewSet."""
+
+    form_class = DNSCatalogZoneForm
+    bulk_update_form_class = DNSCatalogZoneBulkEditForm
+    filterset_class = DNSCatalogZoneFilterSet
+    filterset_form_class = DNSCatalogZoneFilterForm
+    serializer_class = DNSCatalogZoneSerializer
+    lookup_field = "pk"
+    queryset = DNSCatalogZone.objects.all()
+    table_class = DNSCatalogZoneTable
+
+    object_detail_content = ObjectDetailContent(
+        panels=[
+            ObjectFieldsPanel(
+                weight=100,
+                section=SectionChoices.LEFT_HALF,
+                fields="__all__",
+            ),
+        ],
+        extra_tabs=[
+            CatalogZoneMembersTab(
+                weight=100,
+                tab_id="member-zones",
+                label="Member Zones",
+                panels=[
+                    ObjectsTablePanel(
+                        weight=100,
+                        section=SectionChoices.LEFT_HALF,
+                        table_class=DNSCatalogZoneMembershipTable,
+                        table_filter="catalog_zone",
+                        related_field_name="catalog_zone",
+                        # available columns: catalog_zone, member_zone, member_node_label
+                        exclude_columns=["catalog_zone", "member_node_label"],
+                        table_title="Catalog Memberships",
+                        tab_id="member-zones",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+class DNSCatalogZoneMembershipUIViewSet(views.NautobotUIViewSet):
+    """DNSCatalogZoneMembership UI ViewSet."""
+
+    form_class = DNSCatalogZoneMembershipForm
+    bulk_update_form_class = DNSCatalogZoneMembershipBulkEditForm
+    filterset_class = DNSCatalogZoneMembershipFilterSet
+    filterset_form_class = DNSCatalogZoneMembershipFilterForm
+    serializer_class = DNSCatalogZoneMembershipSerializer
+    lookup_field = "pk"
+    queryset = DNSCatalogZoneMembership.objects.all()
+    table_class = DNSCatalogZoneMembershipTable
+
+    object_detail_content = ObjectDetailContent(
+        panels=[
+            ObjectFieldsPanel(
+                weight=100,
+                section=SectionChoices.LEFT_HALF,
+                fields="__all__",
             ),
         ],
     )

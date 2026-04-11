@@ -48,6 +48,80 @@ class DNSViewTable(BaseTable):
         )
 
 
+class DNSCatalogZoneTable(BaseTable):
+    """Table for Catalog Zone list view."""
+
+    pk = ToggleColumn()
+    name = tables.Column(linkify=True)
+    dns_view = tables.Column(linkify=True)
+    actions = ButtonsColumn(
+        models.DNSCatalogZone,
+        buttons=("changelog", "edit", "delete"),
+    )
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.DNSCatalogZone
+        fields = (
+            "pk",
+            "name",
+            "dns_view",
+            "ttl",
+            "filename",
+            "description",
+            "soa_expire",
+            "soa_rname",
+            "soa_refresh",
+            "soa_retry",
+            "soa_serial",
+            "soa_minimum",
+            "actions",
+        )
+
+        default_columns = (
+            "pk",
+            "name",
+            "dns_view",
+            "ttl",
+            "filename",
+            "soa_rname",
+            "actions",
+        )
+
+
+class DNSCatalogZoneMembershipTable(BaseTable):
+    """Table for Catalog Zone Membership list view."""
+
+    pk = ToggleColumn()
+    catalog_zone = tables.Column(linkify=True)
+    member_zone = tables.Column(linkify=True)
+    actions = ButtonsColumn(
+        models.DNSCatalogZoneMembership,
+        buttons=("changelog", "edit", "delete"),
+    )
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.DNSCatalogZoneMembership
+        fields = (
+            "pk",
+            "catalog_zone",
+            "member_zone",
+            "member_node_label",
+            "actions",
+        )
+
+        default_columns = (
+            "pk",
+            "catalog_zone",
+            "member_zone",
+            "member_node_label",
+            "actions",
+        )
+
+
 class DNSRegistrarTable(BaseTable):
     """Table for DNS Registrar list view."""
 

@@ -13,6 +13,7 @@ from netutils.ip import ipaddress_address
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    DNSCatalogZone,
     CNAMERecord,
     DNSRegistrar,
     DNSView,
@@ -94,6 +95,59 @@ class DNSViewViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
+
+
+class DNSCatalogZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
+    """Test the DNSCatalogZone views."""
+
+    model = DNSCatalogZone
+
+    @classmethod
+    def setUpTestData(cls):
+        DNSCatalogZone.objects.create(
+            name="catalog-1.example.com",
+            description="Catalog zone one",
+            filename="catalog-1.example.com.zone",
+            soa_mname="ns1.catalog-1.example.com",
+            soa_rname="admin@example.com",
+        )
+        DNSCatalogZone.objects.create(
+            name="catalog-2.example.com",
+            description="Catalog zone two",
+            filename="catalog-2.example.com.zone",
+            soa_mname="ns1.catalog-2.example.com",
+            soa_rname="admin@example.com",
+        )
+        DNSCatalogZone.objects.create(
+            name="catalog-3.example.com",
+            description="Catalog zone three",
+            filename="catalog-3.example.com.zone",
+            soa_mname="ns1.catalog-3.example.com",
+            soa_rname="admin@example.com",
+        )
+
+        dns_view = DNSView.objects.get(name="Default")
+        cls.form_data = {
+            "name": "catalog-4.example.com",
+            "description": "Catalog zone four",
+            "dns_view": dns_view.id,
+            "ttl": 3600,
+            "filename": "catalog-4.example.com.zone",
+            "soa_mname": "ns1.catalog-4.example.com",
+            "soa_rname": "admin@example.com",
+            "soa_refresh": 86400,
+            "soa_retry": 7200,
+            "soa_expire": 3600000,
+            "soa_serial": 1,
+            "soa_minimum": 3600,
+        }
+
+        cls.csv_data = (
+            "name,dns_view,ttl,description,filename,soa_mname,soa_rname,soa_refresh,soa_retry,soa_expire,soa_serial,soa_minimum",
+            f"catalog-5.example.com,{dns_view.id},3600,Catalog zone five,catalog-5.example.com.zone,ns1.catalog-5.example.com,admin@example.com,86400,7200,3600000,1,3600",
+        )
+
+        cls.bulk_edit_data = {"description": "Bulk edit catalog zones"}
 
 
 class DNSRegistrarViewTest(ViewTestCases.PrimaryObjectViewTestCase):
