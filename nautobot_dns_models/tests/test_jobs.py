@@ -17,7 +17,7 @@ from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import Cluster, VirtualMachine, VMInterface
 
 from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileRunSummary
-from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord
+from nautobot_dns_models.models import ARecord, DNSRule
 from nautobot_dns_models.rules.engine import DNSRuleEngine, ObjectProcessingSummary
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
@@ -445,9 +445,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def test_bulk_mode_include_children_includes_child_devices_and_interfaces(self, MockDNSRuleEngine):
         """Bulk mode include-children should process child devices and their interfaces from in-scope parents."""
         selected_engine = MockDNSRuleEngine.return_value
-        selected_engine.process_objects_pipeline.side_effect = (
-            lambda model_objects: [ObjectProcessingSummary() for _ in model_objects]
-        )
+        selected_engine.process_objects_pipeline.side_effect = lambda model_objects: [
+            ObjectProcessingSummary() for _ in model_objects
+        ]
         out_of_scope_location = Location.objects.create(
             name="Bulk Child Device Out-of-Scope",
             location_type=self.location_type,

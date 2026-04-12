@@ -527,7 +527,9 @@ class DNSRuleEngine:
                 if not desired_record_data_list:
                     continue
 
-                created_records = self._create_records_from_data(source_obj, rule, desired_record_data_list, phase=PHASE_CREATE)
+                created_records = self._create_records_from_data(
+                    source_obj, rule, desired_record_data_list, phase=PHASE_CREATE
+                )
 
                 changed_record_count += len(created_records)
             except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
@@ -1269,7 +1271,6 @@ class DNSRuleEngine:
 
     def _filter_record_variations_by_ip_version(self, rule, context, record_variations):
         """Return the record data for the DNS record type associated with the rule."""
-
         # This code filters records to only return those IPs which match the record type for the rule.
         # Benchmarks showed that performance was on par with SQL-level filtering in template_proxies.py,
         # while this approach kept the implementation simpler.
@@ -1294,9 +1295,9 @@ class DNSRuleEngine:
             allowed_ids = {ip_obj.id for ip_obj in prefetched_ips if ip_obj.ip_version == target_ip_version}
         else:
             allowed_ids = set(
-                ipam_models.IPAddress.objects.filter(id__in=candidate_address_ids, ip_version=target_ip_version).values_list(
-                    "id", flat=True
-                )
+                ipam_models.IPAddress.objects.filter(
+                    id__in=candidate_address_ids, ip_version=target_ip_version
+                ).values_list("id", flat=True)
             )
 
         return [record_data for record_data in record_variations if record_data["address_id"] in allowed_ids]

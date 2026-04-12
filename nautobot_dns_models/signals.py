@@ -286,7 +286,9 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
             # Log the error but don't let it break the original object save
             logger.error("[SIGNAL] [%s] Failed to process DNS rules for %s: %s", context, instance, exc)
     else:
-        logger.debug(f"[SIGNAL] [_process_dns_rules_if_needed] [{context}] Skipping DNS processing for {instance} - no relevant field changes")
+        logger.debug(
+            f"[SIGNAL] [_process_dns_rules_if_needed] [{context}] Skipping DNS processing for {instance} - no relevant field changes"
+        )
 
 
 @receiver(post_delete, sender=Device)
@@ -351,7 +353,9 @@ def handle_ipaddresstointerface_delete(sender, instance, **kwargs):  # pylint: d
     logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_delete] {sender=} / {instance=} ({kwargs=})")
     source_obj = instance.interface or instance.vm_interface
     if source_obj is None:
-        logger.debug("[SIGNAL] [handle_ipaddresstointerface_delete] No interface/vm_interface on %s, skipping", instance)
+        logger.debug(
+            "[SIGNAL] [handle_ipaddresstointerface_delete] No interface/vm_interface on %s, skipping", instance
+        )
         return
 
     DNSRuleEngine().process_object(source_obj, created=False)

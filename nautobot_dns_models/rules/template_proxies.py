@@ -11,7 +11,6 @@
 from functools import cached_property
 
 from django.db.models.query import QuerySet
-from jinja2 import UndefinedError
 from nautobot.dcim.models import Device, Interface
 from nautobot.ipam.models import IPAddress, Service
 from nautobot.virtualization.models import VirtualMachine, VMInterface

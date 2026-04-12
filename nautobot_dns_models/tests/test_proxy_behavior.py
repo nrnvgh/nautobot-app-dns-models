@@ -209,7 +209,7 @@ class Mixins:
 
         #
         # Chained things do not currently work the same as native ORM calls. In this
-        # case, manager.filter().exclude() will raise an exception. 
+        # case, manager.filter().exclude() will raise an exception.
         def test_unsupported_queryset_chain_raises_attribute_error(self):
             """Unsupported queryset-style chaining should raise an AttributeError."""
             proxy_manager = self._get_manager_proxy()

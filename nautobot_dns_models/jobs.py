@@ -324,7 +324,6 @@ class ReconcileDNSBulkJob(Job):
     )
     dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
 
-
     def run(
         self,
         dryrun,
