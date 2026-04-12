@@ -8,6 +8,7 @@ import uuid
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import cached_property
 from time import perf_counter
 
 from django.contrib.contenttypes.models import ContentType
@@ -174,7 +175,6 @@ class DNSRuleEngine:
 
     def __init__(self):
         """Initialize DNS rule engine caches and pipeline state."""
-        self._default_view_cache = None
         self._view_lookup_cache = {}
         self._zone_lookup_cache = {}
         self._applicable_rules_cache = {}
@@ -188,6 +188,12 @@ class DNSRuleEngine:
         # This could be useful, but would be different than how the nautobot core sets up its environment.
         # Currently optimizing for consistency rather than maximizing ease of use for DNS rules.
         self._jinja_env = django_template_engines["jinja"].env
+
+    @cached_property
+    def _default_view(self):
+        """Return the default DNS view, cached per engine instance."""
+        logger.debug("[default_view] Getting default DNS view")
+        return dns_models.DNSView.objects.get(pk=dns_models.get_default_view_pk())
 
     #
     # Public API
@@ -1314,9 +1320,7 @@ class DNSRuleEngine:
     def _get_dns_views_for_rule(self, rule, context):
         """Cache DNS view resolution for repeated templates."""
         if not rule.view_template:
-            if self._default_view_cache is None:
-                self._default_view_cache = dns_models.DNSView.objects.get(pk=dns_models.get_default_view_pk())
-            return [self._default_view_cache]
+            return [self._default_view]
 
         rendered = self._render_template(rule.view_template, context, "view_template")
         raw_names = [token.strip() for token in re.split(r"[\s,]+", rendered) if token.strip()]
