@@ -1723,8 +1723,8 @@ class DNSRuleRecordTestCase(TestCase):
         self.assertEqual(rule_record.source_object.device, self.device)
         self.assertEqual(rule_record.source_object.name, "eth0")
 
-    def test_dnsrulerecord_with_different_record_types(self):
-        """Test DNSRuleRecord with different DNS record types."""
+    def test_dnsrulerecord_rejects_mismatched_record_type(self):
+        """Test DNSRuleRecord rejects DNS record content type mismatched to rule.record_type."""
         # Create CNAME record
         cname_record = CNAMERecord.objects.create(
             name="www-test-device-1",
@@ -1734,7 +1734,7 @@ class DNSRuleRecordTestCase(TestCase):
 
         content_type_cname = ContentType.objects.get_for_model(CNAMERecord)
 
-        rule_record = DNSRuleRecord.objects.create(
+        rule_record = DNSRuleRecord(
             rule=self.dns_rule,
             content_type=self.content_type_device,
             object_id=self.device.id,
@@ -1742,8 +1742,10 @@ class DNSRuleRecordTestCase(TestCase):
             dns_record_object_id=cname_record.id,
         )
 
-        self.assertEqual(rule_record.dns_record, cname_record)
-        self.assertEqual(rule_record.dns_record.alias, "test-device-1.example.com")
+        with self.assertRaises(ValidationError) as context:
+            rule_record.full_clean()
+
+        self.assertIn("dns_record_content_type", context.exception.message_dict)
 
     def test_dnsrulerecord_with_aaaa_record(self):
         """Test DNSRuleRecord with AAAA record."""

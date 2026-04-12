@@ -18,6 +18,7 @@ from nautobot.ipam.choices import IPAddressVersionChoices
 
 from nautobot_dns_models.choices import DNSRuleRecordTypeChoices
 from nautobot_dns_models.normalization import normalize_dns_name
+from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
 from nautobot_dns_models.utils_jinja_literals import collect_literal_validation_errors
 
 logger = logging.getLogger(__name__)
@@ -897,3 +898,39 @@ class DNSRuleRecord(BaseModel):
     def __str__(self):
         """String representation of DNSRuleRecord."""
         return f"{self.rule.name} -> {self.dns_record}"
+
+    def clean(self):
+        """Validate DNSRuleRecord type alignment and referential semantics."""
+        super().clean()
+
+        record_model = None
+        if self.dns_record_content_type_id:
+            record_model = self.dns_record_content_type.model_class()
+
+        if record_model is None:
+            raise ValidationError({"dns_record_content_type": ["Selected DNS record content type does not exist."]})
+
+        if not issubclass(record_model, DNSRecord):
+            raise ValidationError(
+                {
+                    "dns_record_content_type": [
+                        f"Content type '{self.dns_record_content_type}' is not a DNSRecord subclass."
+                    ]
+                }
+            )
+
+        if self.rule_id:
+            try:
+                expected_model = get_dns_record_model_class(self.rule.record_type)
+            except ValueError as exc:
+                raise ValidationError({"rule": [str(exc)]}) from exc
+
+            if record_model is not expected_model:
+                raise ValidationError(
+                    {
+                        "dns_record_content_type": [
+                            f"Rule record_type '{self.rule.record_type}' requires '{expected_model.__name__}', "
+                            f"got '{record_model.__name__}'."
+                        ]
+                    }
+                )
