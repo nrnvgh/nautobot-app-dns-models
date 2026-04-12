@@ -17,9 +17,9 @@ from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.ipam.choices import IPAddressVersionChoices
 
 from nautobot_dns_models.choices import DNSRuleRecordTypeChoices
+from nautobot_dns_models.jinja_literals import collect_literal_validation_errors
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
-from nautobot_dns_models.jinja_literals import collect_literal_validation_errors
 
 logger = logging.getLogger(__name__)
 

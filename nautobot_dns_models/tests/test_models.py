@@ -1,7 +1,6 @@
 """Test DNS Models (DNS zones, records, and rules)."""
 # pylint: disable=too-many-lines
 
-from unittest import skip
 
 from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
@@ -1545,7 +1544,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             disabled_location_rule.full_clean()
 
 
-
 class DNSRuleRecordTestCase(TestCase):
     """Test the DNSRuleRecord model."""
 
@@ -1928,4 +1926,3 @@ class DNSRuleRecordTestCase(TestCase):
         # DNSRuleRecord should be cascade deleted
         with self.assertRaises(DNSRuleRecord.DoesNotExist):
             DNSRuleRecord.objects.get(id=rule_record_id)
-

@@ -24,11 +24,11 @@ from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
 from nautobot_dns_models.constants import SUPPORTED_SOURCE_MODELS
-from nautobot_dns_models.source_model_support import get_supported_source_content_type_query_params
 from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule
 from nautobot_dns_models.rules.engine import DNSRuleEngine
 from nautobot_dns_models.rules.scope_filters import BulkScopeFilterBuilder
+from nautobot_dns_models.source_model_support import get_supported_source_content_type_query_params
 
 name = "DNS Reconciliation Jobs"  # pylint: disable=invalid-name
 

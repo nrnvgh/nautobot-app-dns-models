@@ -15,8 +15,8 @@ from nautobot.tenancy.filters import TenancyModelFilterSetMixin
 from netaddr import IPAddress as NetIPAddress
 
 from nautobot_dns_models import models
-from nautobot_dns_models.source_model_support import get_supported_source_content_type_query_params
 from nautobot_dns_models.queries import DNSRuleContentTypeQuery
+from nautobot_dns_models.source_model_support import get_supported_source_content_type_query_params
 
 
 class DNSViewFilterSet(NautobotFilterSet):
