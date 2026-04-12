@@ -17,7 +17,7 @@ from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.ipam.choices import IPAddressVersionChoices
 
 from nautobot_dns_models.choices import DNSRuleRecordTypeChoices
-from nautobot_dns_models.normalization import normalize_dns_name, normalize_dns_name_if_enabled
+from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.utils_jinja_literals import collect_literal_validation_errors
 
 logger = logging.getLogger(__name__)
@@ -79,20 +79,16 @@ class DNSModel(PrimaryModel):
         if errors:
             raise ValidationError(dict(errors))
 
-    @property
-    def _normalize_dns_records_enabled(self):
-        """Return whether DNS records are normalized or validated."""
-        #
-        # This is a property so to make it easier to add per-rule normalization/validation later if needed.
-        return getattr(constance_config, "nautobot_dns_models__NORMALIZE_DNS_RECORDS")
-
     def _normalize_or_validate_field(self, field_name, errors):
         """Normalize or validate the DNS records."""
+        normalize_dns_records_enabled = getattr(constance_config, "nautobot_dns_models__NORMALIZE_DNS_RECORDS")
         field_value = getattr(self, field_name)
-        if self._normalize_dns_records_enabled:
-            setattr(self, field_name, normalize_dns_name_if_enabled(field_value))
+        normalized_value = normalize_dns_name(field_value)
+
+        if normalize_dns_records_enabled:
+            setattr(self, field_name, normalized_value)
         else:
-            if field_value != normalize_dns_name(field_value):
+            if field_value != normalized_value:
                 errors[field_name].append("Field is not normalized.")
 
     def _validate_wire_format_for_field(self, field_name, errors):
