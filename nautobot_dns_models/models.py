@@ -698,7 +698,7 @@ class DNSRule(PrimaryModel):
             if conflict_exists:
                 raise ValidationError(self._build_scope_conflict_error())
 
-        super().validate_unique(exclude)
+        return super().validate_unique(exclude)
 
     def clean(self):
         """Validate DNS rule templates and configuration."""
