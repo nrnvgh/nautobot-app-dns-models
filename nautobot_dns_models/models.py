@@ -639,14 +639,6 @@ class DNSRule(PrimaryModel):
 
         ordering = ["name"]
         verbose_name = "DNS Rule"
-        constraints = [
-            models.UniqueConstraint(
-                fields=["content_type", "record_type", "location", "tenant"],
-                condition=models.Q(enabled=True),
-                name="unique_enabled_rule_per_content_record_location_tenant",
-                violation_error_message="An enabled DNS rule already exists for this scope.",
-            ),
-        ]
 
     def __str__(self):
         """String representation of DNSRule."""
@@ -659,43 +651,48 @@ class DNSRule(PrimaryModel):
         We enforce one enabled rule per scope tuple:
         - (content_type, record_type, location, tenant)
 
-        This manual check is needed because DB-level uniqueness with nullable fields
-        does not prevent duplicates when location/tenant are NULL.
+        See _enabled_scope_conflict_exists() for rationale about nullable scope
+        fields and backend portability.
         """
         exclude = exclude or []
         if {"content_type", "record_type", "enabled"} & set(exclude):
             return super().validate_unique(exclude)
 
-        # DB uniqueness for this tuple is not enforced when location_id and/or tenant_id is NULL,
-        # because multiple rows with NULL in those columns do not violate a unique constraint.
-        #
-        # A deterministic scope-key column (unique for enabled rows) could move this integrity
-        # check fully into the database and close the race window in this exists()-based check.
-        # We have not done that yet because it adds implementation and maintenance tradeoffs:
-        # - deriving key values in save()/clean() can be bypassed by bulk operations. This code doesn't
-        #   do that, but a user certainly could.
-        # - generated-column solutions are not portable across supported databases.
-        # - PostgreSQL NULLS NOT DISTINCT unique semantics can also solve this, but that is
-        #   database-specific and not currently supported by MySQL.
-
-        # Enforce one enabled rule per exact (content_type_id, record_type, location_id, tenant_id)
-        # tuple here.
-        if self.enabled:
-            conflict_exists = (
-                self.__class__.objects.filter(
-                    enabled=True,
-                    content_type_id=self.content_type_id,
-                    record_type=self.record_type,
-                    location_id=self.location_id,
-                    tenant_id=self.tenant_id,
-                )
-                .exclude(pk=self.pk)
-                .exists()
-            )
-            if conflict_exists:
-                raise ValidationError(self._build_scope_conflict_error())
+        self._validate_enabled_scope_uniqueness()
 
         return super().validate_unique(exclude)
+
+    def _validate_enabled_scope_uniqueness(self):
+        """Validate uniqueness of enabled rules within the effective scope tuple."""
+        if not self.enabled:
+            return
+
+        if self._enabled_scope_conflict_exists():
+            raise ValidationError(self._build_scope_conflict_error())
+
+    def _enabled_scope_conflict_exists(self):
+        """
+        Return True if another enabled rule exists for this exact scope tuple.
+
+        This check is done at the model layer for cross-database portability.
+        A DB-level conditional UniqueConstraint (e.g. Q(enabled=True)) works in
+        PostgreSQL but is not supported by MySQL, and plain uniqueness on nullable
+        columns will not prevent duplicate enabled rows where location and/or
+        tenant are NULL.
+
+        Tradeoff: this exists()-based check can race under concurrent writes.
+        """
+        return (
+            self.__class__.objects.filter(
+                enabled=True,
+                content_type_id=self.content_type_id,
+                record_type=self.record_type,
+                location_id=self.location_id,
+                tenant_id=self.tenant_id,
+            )
+            .exclude(pk=self.pk)
+            .exists()
+        )
 
     def clean(self):
         """Validate DNS rule templates and configuration."""
