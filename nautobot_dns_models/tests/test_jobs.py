@@ -92,9 +92,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         return child_device, child_interface
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
-    def test_single_object_mode_processes_requested_object(self, MockDNSRuleEngine):
+    def test_single_object_mode_processes_requested_object(self, mock_dns_rule_engine_class):
         """Single-object mode should call process_object exactly once."""
-        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine = mock_dns_rule_engine_class.return_value
         selected_engine.process_object.return_value = ObjectProcessingSummary()
         job = ReconcileDNSObjectJob()
 
@@ -116,9 +116,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["targets_noop_count"], 1)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
-    def test_single_object_parent_mode_includes_supported_children(self, MockDNSRuleEngine):
+    def test_single_object_parent_mode_includes_supported_children(self, mock_dns_rule_engine_class):
         """Single-object parent mode should reconcile both parent and child objects when requested."""
-        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine = mock_dns_rule_engine_class.return_value
         selected_engine.process_object.return_value = ObjectProcessingSummary()
         DNSRule.objects.create(
             name="job-device-reconcile",
@@ -157,9 +157,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["targets_noop_count"], 2)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
-    def test_single_object_parent_mode_includes_module_bay_interfaces(self, MockDNSRuleEngine):
+    def test_single_object_parent_mode_includes_module_bay_interfaces(self, mock_dns_rule_engine_class):
         """Single-object parent mode should include interfaces installed on modules in module bays."""
-        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine = mock_dns_rule_engine_class.return_value
         selected_engine.process_object.return_value = ObjectProcessingSummary()
 
         module_interface = self._create_module_bay_interface_for_device(
@@ -181,9 +181,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertIn("dcim.interface", result["scope"]["scanned_models"])
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
-    def test_single_object_parent_mode_includes_child_devices_and_interfaces(self, MockDNSRuleEngine):
+    def test_single_object_parent_mode_includes_child_devices_and_interfaces(self, mock_dns_rule_engine_class):
         """Single-object parent mode should include child devices and their interfaces."""
-        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine = mock_dns_rule_engine_class.return_value
         selected_engine.process_object.return_value = ObjectProcessingSummary()
         DNSRule.objects.create(
             name="job-device-ip-child-reconcile",
@@ -215,9 +215,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertIn("dcim.interface", result["scope"]["scanned_models"])
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
-    def test_job_aggregates_engine_processing_summary(self, MockDNSRuleEngine):
+    def test_job_aggregates_engine_processing_summary(self, mock_dns_rule_engine_class):
         """Job output should aggregate per-object processing summary counters from the rule engine."""
-        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine = mock_dns_rule_engine_class.return_value
         selected_engine.process_object.side_effect = [
             ObjectProcessingSummary(
                 had_existing_rule_records=True,
@@ -269,9 +269,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         jsonschema.validate(instance=result, schema=schema)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
-    def test_object_job_path_uses_process_object_not_pipeline(self, MockDNSRuleEngine):
+    def test_object_job_path_uses_process_object_not_pipeline(self, mock_dns_rule_engine_class):
         """Object reconcile job flow should call process_object and not process_objects_pipeline."""
-        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine = mock_dns_rule_engine_class.return_value
         selected_engine.process_object.return_value = ObjectProcessingSummary()
         job = ReconcileDNSObjectJob()
 
@@ -412,9 +412,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["execution"]["targets_processed_count"], 1)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
-    def test_dryrun_mode_does_not_apply_updates(self, MockDNSRuleEngine):
+    def test_dryrun_mode_does_not_apply_updates(self, mock_dns_rule_engine_class):
         """Dry-run should enumerate targets without calling process_object."""
-        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine = mock_dns_rule_engine_class.return_value
         job = ReconcileDNSObjectJob()
 
         result = job.run(
@@ -442,9 +442,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["scope"]["scanned_models"], ["dcim.interface"])
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
-    def test_bulk_mode_include_children_includes_child_devices_and_interfaces(self, MockDNSRuleEngine):
+    def test_bulk_mode_include_children_includes_child_devices_and_interfaces(self, mock_dns_rule_engine_class):
         """Bulk mode include-children should process child devices and their interfaces from in-scope parents."""
-        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine = mock_dns_rule_engine_class.return_value
         selected_engine.process_objects_pipeline.side_effect = lambda model_objects: [
             ObjectProcessingSummary() for _ in model_objects
         ]
@@ -490,9 +490,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertIn("dcim.interface", result["scope"]["scanned_models"])
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
-    def test_invalid_source_model_marks_job_failed(self, MockDNSRuleEngine):
+    def test_invalid_source_model_marks_job_failed(self, mock_dns_rule_engine_class):
         """Submitting an unsupported source model should fail and skip processing."""
-        selected_engine = MockDNSRuleEngine.return_value
+        selected_engine = mock_dns_rule_engine_class.return_value
         unsupported_content_type = ContentType.objects.get_for_model(Location)
         unsupported_label = f"{unsupported_content_type.app_label}.{unsupported_content_type.model}"
         result = ReconcileDNSBulkJob().run(
