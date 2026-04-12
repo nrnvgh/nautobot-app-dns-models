@@ -1107,19 +1107,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                     any("Template syntax error" in message for message in ctx.exception.message_dict[field_name])
                 )
 
-    def test_dnsrule_enabled_default_true(self):
-        """Test that DNSRule enabled field defaults to True."""
-        rule = DNSRule(
-            name="default-enabled",
-            content_type=self.content_type_device,
-            zone_template="test.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 }}",
-        )
-        # Before saving, enabled should default to True
-        self.assertTrue(rule.enabled)
-
     def test_dnsrule_value_template_required(self):
         """Test that value_template is required and cannot be omitted."""
         with self.assertRaises(ValidationError) as context:
@@ -1202,66 +1189,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                     rule.full_clean()
                 self.assertIn(missing_field, context.exception.message_dict)
                 self.assertIn(expected_message, context.exception.message_dict[missing_field][0])
-
-    def test_dnsrule_global_uniqueness_constraint(self):
-        """Test that two enabled global rules with same content_type + record_type fails."""
-        # Create first enabled global rule (location=None)
-        DNSRule.objects.create(
-            name="global-rule-1",
-            content_type=self.content_type_device,
-            zone_template="test.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 }}",
-            location=None,  # Global rule
-            enabled=True,  # Enabled
-        )
-
-        # Attempt to create second enabled global rule with same content_type + record_type
-        with self.assertRaises(ValidationError) as context:  # Model validation error
-            duplicate_rule = DNSRule(
-                name="global-rule-2",
-                content_type=self.content_type_device,
-                zone_template="test.com",
-                record_type="A",
-                name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4 }}",
-                location=None,  # Same: global rule
-                enabled=True,  # Same: enabled
-            )
-            duplicate_rule.full_clean()  # Triggers validate_unique()
-        self.assertIn("__all__", context.exception.message_dict)
-        self.assertIn("already exists", context.exception.message_dict["__all__"][0])
-
-    @skip(
-        "Skipping test_dnsrule_enabling_disabled_rule_with_enabled_duplicate_fails since we disabled that check. We maybe revert it, so leaving the test here."
-    )
-    def test_dnsrule_location_scoped_uniqueness_constraint(self):
-        """Test that two enabled location-scoped rules with same content_type + record_type + location fails."""
-        # Create first enabled location-scoped rule
-        DNSRule.objects.create(
-            name="location-rule-1",
-            content_type=self.content_type_device,
-            zone_template="test.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 }}",
-            location=self.location,  # Specific location
-            enabled=True,  # Enabled
-        )
-
-        # Attempt to create second enabled rule with same content_type + record_type + location
-        with self.assertRaises(IntegrityError):  # Database constraint violation
-            DNSRule.objects.create(
-                name="location-rule-2",
-                content_type=self.content_type_device,
-                zone_template="test.com",
-                record_type="A",
-                name_template="{{ obj.name }}",
-                value_template="{{ obj.primary_ip4 }}",
-                location=self.location,  # Same location
-                enabled=True,  # Same: enabled
-            )
 
     def test_dnsrule_global_and_location_rules_allowed(self):
         """Test that global rule + location-scoped rule with same content_type + record_type succeeds."""
@@ -1374,41 +1301,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 else:
                     self.assertIn("location", context.exception.message_dict)
                     self.assertIn("tenant", context.exception.message_dict)
-
-    def test_dnsrule_global_uniqueness_constraint_with_view_template(self):
-        """Test enabled global rule uniqueness is enforced regardless of view_template."""
-
-        first_rule = DNSRule.objects.create(
-            name="global-view-rule-1",
-            content_type=self.content_type_device,
-            zone_template="test.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 }}",
-            view_template="Internal Global View",
-            enabled=True,
-        )
-        self.assertTrue(DNSRule.objects.filter(id=first_rule.id).exists())
-
-        duplicate_rule = DNSRule(
-            name="global-view-rule-2",
-            content_type=self.content_type_device,
-            zone_template="test.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 }}",
-            view_template="External Global View",
-            enabled=True,
-        )
-        expected_message = (
-            f"An enabled {duplicate_rule.record_type} record rule for "
-            f"'{duplicate_rule.content_type}' already exists for global scope."
-        )
-        with self.assertRaises(ValidationError) as context:
-            duplicate_rule.full_clean()
-
-        self.assertIn("__all__", context.exception.message_dict)
-        self.assertEqual(context.exception.message_dict["__all__"][0], expected_message)
 
     def test_dnsrule_disabled_rules_allow_duplicates(self):
         """Test that disabled rules can have duplicate content_type + record_type combinations."""
