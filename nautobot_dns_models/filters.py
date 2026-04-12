@@ -15,7 +15,7 @@ from nautobot.tenancy.filters import TenancyModelFilterSetMixin
 from netaddr import IPAddress as NetIPAddress
 
 from nautobot_dns_models import models
-from nautobot_dns_models.constants.supported_models import get_content_type_query_params
+from nautobot_dns_models.source_model_support import get_supported_source_content_type_query_params
 from nautobot_dns_models.queries import DNSRuleContentTypeQuery
 
 
@@ -254,7 +254,7 @@ class DNSRuleContentTypeModelMultipleChoiceFilter(django_filters.ModelMultipleCh
     def __init__(self, *args, **kwargs):
         """Default to DNSRule-supported content types for both validation and API option loading."""
         kwargs.setdefault("queryset", DNSRuleContentTypeQuery.as_queryset())
-        kwargs.setdefault("query_params", get_content_type_query_params())
+        kwargs.setdefault("query_params", get_supported_source_content_type_query_params())
         super().__init__(*args, **kwargs)
 
 

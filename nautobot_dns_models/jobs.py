@@ -23,10 +23,8 @@ from nautobot.ipam.models import Service
 from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
-from nautobot_dns_models.constants.supported_models import (
-    SUPPORTED_SOURCE_MODELS,
-    get_content_type_query_params,
-)
+from nautobot_dns_models.constants import SUPPORTED_SOURCE_MODELS
+from nautobot_dns_models.source_model_support import get_supported_source_content_type_query_params
 from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule
 from nautobot_dns_models.rules.engine import DNSRuleEngine
@@ -281,7 +279,7 @@ class ReconcileDNSBulkJob(Job):
 
     source_models = MultiObjectVar(
         model=ContentType,
-        query_params=get_content_type_query_params(),
+        query_params=get_supported_source_content_type_query_params(),
         required=False,
         description="Optional source model filter for bulk runs.",
     )
@@ -732,7 +730,7 @@ class ReconcileDNSObjectJob(Job):
 
     object_model = ObjectVar(
         model=ContentType,
-        query_params=get_content_type_query_params(),
+        query_params=get_supported_source_content_type_query_params(),
         label="Object Model",
         required=True,
     )

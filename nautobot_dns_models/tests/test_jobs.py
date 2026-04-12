@@ -638,16 +638,20 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def _scope_expected_ids_from_engine(objects, location_ids, tenant_ids=None):
         """Return expected object IDs via engine scope-resolution semantics."""
         tenant_ids = tenant_ids or set()
-        selected_engine = DNSRuleEngine()
+        rule_engine = DNSRuleEngine()
         expected_ids = set()
         for obj in objects:
-            object_location = selected_engine._get_object_location(obj)  # pylint: disable=protected-access
-            object_tenant = selected_engine._get_object_tenant(obj)  # pylint: disable=protected-access
+            object_location = rule_engine._get_object_location(obj)  # pylint: disable=protected-access
+            object_tenant = rule_engine._get_object_tenant(obj)  # pylint: disable=protected-access
+
             if location_ids and (object_location is None or object_location.id not in location_ids):
                 continue
+
             if tenant_ids and (object_tenant is None or object_tenant.id not in tenant_ids):
                 continue
+
             expected_ids.add(obj.id)
+
         return expected_ids
 
     def _scope_actual_ids(self, *, target_model_class, location_ids, tenant_ids=None):
@@ -1408,9 +1412,11 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 for service in queryset:
                     _ = service.device
                     _ = service.virtual_machine
+
                     if service.device:
                         _ = service.device.location
                         _ = service.device.tenant
+
                     if service.virtual_machine:
                         _ = service.virtual_machine.tenant
                         _ = service.virtual_machine.cluster

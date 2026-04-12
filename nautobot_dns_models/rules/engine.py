@@ -27,12 +27,12 @@ from nautobot_dns_models.exceptions import (
     DNSRuleTemplateRenderedEmptyError,
 )
 from nautobot_dns_models.models import (
-    DNSRecord,
     DNSRule,
     DNSRuleRecord,
     DNSZone,
 )
 from nautobot_dns_models.normalization import normalize_dns_name_if_enabled
+from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
 from nautobot_dns_models.rules.template_proxies import wrap_for_template
 
 logger = logging.getLogger(__name__)
@@ -1432,16 +1432,7 @@ class DNSRuleEngine:
 
     def _get_record_class(self, record_type):
         """Get the DNS record model class for a given record type."""
-        record_type_name = f"{record_type}Record"
-        record_class = getattr(dns_models, record_type_name, None)
-
-        if not record_class:
-            raise ValueError(f'Unknown record type "{record_type}"')
-
-        if not issubclass(record_class, DNSRecord):
-            raise ValueError(f"Record type '{record_type}' is not a valid DNS record type")
-
-        return record_class
+        return get_dns_record_model_class(record_type)
 
     def _get_record_content_key(self, dns_record):
         """Generate a content-based key for record comparison."""

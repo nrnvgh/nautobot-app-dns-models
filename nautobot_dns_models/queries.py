@@ -3,7 +3,7 @@
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 
-from nautobot_dns_models.constants.supported_models import get_app_model_pairs
+from nautobot_dns_models.source_model_support import get_supported_source_model_pairs
 
 
 class DNSRuleContentTypeQuery:
@@ -12,7 +12,7 @@ class DNSRuleContentTypeQuery:
     @staticmethod
     def get_query():
         """Return a Q object for supported DNS rule source models."""
-        model_pairs = get_app_model_pairs()
+        model_pairs = get_supported_source_model_pairs()
         if not model_pairs:
             return Q(pk__in=[])
 

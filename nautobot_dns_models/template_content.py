@@ -10,7 +10,7 @@ from nautobot.core.views.utils import get_obj_from_context
 from nautobot.dcim.models import Device
 from netutils.ip import ipaddress_address
 
-from nautobot_dns_models.constants.supported_models import SUPPORTED_SOURCE_MODELS
+from nautobot_dns_models.constants import SUPPORTED_SOURCE_MODELS
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
