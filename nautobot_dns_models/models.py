@@ -635,7 +635,6 @@ class DNSRule(PrimaryModel):
     zone_template = models.TextField(help_text="Jinja2 template for DNS zone name")
     record_type = models.CharField(max_length=10, choices=DNSRuleRecordTypeChoices, help_text="Type of DNS record")
     name_template = models.TextField(help_text="Jinja2 template for record name")
-
     value_template = models.TextField(help_text="Jinja2 template for the primary record value")
 
     class Meta:
@@ -779,15 +778,19 @@ class DNSRule(PrimaryModel):
     def _build_template_fields(self):
         """Build template fields for the DNS rule."""
         #
+        # Some template fields render values which need to conform to DNS-literal rules while
+        # others don't. Return discrete lists for each so that additional checks can be run
+        # on the fields rendering DNS-literal values.
+        #
         # This is broken out into a separate method to make it easier to add per-record-type
         # normalization/validation later if needed.
         hostname_related_fields = [
             ("zone_template", self.zone_template),
             ("name_template", self.name_template),
-            ("value_template", self.value_template),
         ]
         non_hostname_related_fields = [
             ("view_template", self.view_template),
+            ("value_template", self.value_template),
         ]
 
         return hostname_related_fields, non_hostname_related_fields

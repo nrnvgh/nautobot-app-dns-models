@@ -1601,7 +1601,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             kwargs["record_type"] = record_type
 
             # Fields to test for whitespace
-            fields_to_test = ["zone_template", "name_template", "value_template"]
+            fields_to_test = ["zone_template", "name_template"]
 
             for field in fields_to_test:
                 with self.subTest(record_type=record_type, field=field):
