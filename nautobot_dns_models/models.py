@@ -647,6 +647,7 @@ class DNSRule(PrimaryModel):
                 fields=["content_type", "record_type", "location", "tenant"],
                 condition=models.Q(enabled=True),
                 name="unique_enabled_rule_per_content_record_location_tenant",
+                violation_error_message="An enabled DNS rule already exists for this scope.",
             ),
         ]
 
@@ -659,41 +660,43 @@ class DNSRule(PrimaryModel):
         Handle uniqueness for enabled rules across the effective scope.
 
         We enforce one enabled rule per scope tuple:
-        (content_type, record_type, location, tenant).
+        - (content_type, record_type, location, tenant)
+
         This manual check is needed because DB-level uniqueness with nullable fields
-        does not consistently prevent duplicates when location/tenant are NULL.
+        does not prevent duplicates when location/tenant are NULL.
         """
-        # Missing required fields is a larger issue that will be handled automatically, but since we
-        # use them in the if block, we need to return before the if block if they're in the exclude list.
         exclude = exclude or []
-        if "content_type" in exclude or "record_type" in exclude or "enabled" in exclude:
-            super().validate_unique(exclude)
-            return
+        if {"content_type", "record_type", "enabled"} & set(exclude):
+            return super().validate_unique(exclude)
 
-        # Database uniqueness on nullable scope columns is not sufficient for this policy:
-        # multiple enabled rules can slip through when one or more scope columns are NULL.
+        # DB uniqueness for this tuple is not enforced when location_id and/or tenant_id is NULL,
+        # because multiple rows with NULL in those columns do not violate a unique constraint.
         #
-        # We therefore enforce policy in model validation:
-        # exactly one enabled rule for each scope tuple
-        # (content_type, record_type, location, tenant).
-        if self.enabled and self.content_type_id and self.record_type:
-            # Use *_id comparisons for exact scope matching.
-            # Django translates `field_id=None` to `IS NULL`, so this single filter
-            # handles all permutations (global, location-only, tenant-only, both set).
-            duplicate_query = DNSRule.objects.exclude(pk=self.pk).filter(
-                content_type=self.content_type,
-                record_type=self.record_type,
-                location_id=self.location_id,
-                tenant_id=self.tenant_id,
-                enabled=True,
+        # A deterministic scope-key column (unique for enabled rows) could move this integrity
+        # check fully into the database and close the race window in this exists()-based check.
+        # We have not done that yet because it adds implementation and maintenance tradeoffs:
+        # - deriving key values in save()/clean() can be bypassed by bulk operations. This code doesn't
+        #   do that, but a user certainly could.
+        # - generated-column solutions are not portable across supported databases.
+        # - PostgreSQL NULLS NOT DISTINCT unique semantics can also solve this, but that is
+        #   database-specific and not currently supported by MySQL.
+
+        # Enforce one enabled rule per exact (content_type_id, record_type, location_id, tenant_id)
+        # tuple here.
+        if self.enabled:
+            conflict_exists = (
+                self.__class__.objects.filter(
+                    enabled=True,
+                    content_type_id=self.content_type_id,
+                    record_type=self.record_type,
+                    location_id=self.location_id,
+                    tenant_id=self.tenant_id,
+                )
+                .exclude(pk=self.pk)
+                .exists()
             )
-
-            if not duplicate_query.exists():
-                super().validate_unique(exclude)
-                return
-
-            message = self._build_scope_conflict_message()
-            raise ValidationError({"location": message})
+            if conflict_exists:
+                raise ValidationError(self._build_scope_conflict_error())
 
         super().validate_unique(exclude)
 
@@ -718,22 +721,29 @@ class DNSRule(PrimaryModel):
         if errors:
             raise ValidationError(dict(errors))
 
-    def _build_scope_conflict_message(self):
-        """Build a human-readable conflict message for duplicate enabled rule scope."""
+    def _build_scope_conflict_error(self):
+        """Build a field-aware conflict payload for duplicate enabled rule scope."""
         if self.location is None and self.tenant is None:
-            scope_text = "global scope"
-        else:
-            scope_parts = []
-            if self.location is not None:
-                scope_parts.append(f"location '{self.location}'")
-            if self.tenant is not None:
-                scope_parts.append(f"tenant '{self.tenant}'")
-            scope_text = ", ".join(scope_parts)
+            return {
+                "__all__": [
+                    f"An enabled {self.record_type} record rule for '{self.content_type}' "
+                    "already exists for global scope."
+                ]
+            }
 
-        return (
-            f"An enabled {self.record_type} record rule for '{self.content_type}' "
-            f"already exists for {scope_text}."
-        )
+        per_field_errors = {}
+        if self.location is not None:
+            per_field_errors["location"] = [
+                f"An enabled {self.record_type} record rule for '{self.content_type}' "
+                f"already exists for location '{self.location}'."
+            ]
+        if self.tenant is not None:
+            per_field_errors["tenant"] = [
+                f"An enabled {self.record_type} record rule for '{self.content_type}' "
+                f"already exists for tenant '{self.tenant}'."
+            ]
+
+        return per_field_errors
 
     def _validate_templates(self):
         """Validate templates for the DNS rule."""
@@ -816,7 +826,7 @@ class DNSRule(PrimaryModel):
         """
         Reject templates that use Jinja statement/comment tags ({% or {#) but no expression ({{).
 
-        Such templates are ambiguous (e.g. {# comment #}Default renders to Default but would
+        Such templates are ambiguous (e.g. '{# comment #}Default' renders to Default but would
         be treated as literal without a {{). Require either a plain literal (no Jinja) or
         at least one {{ expression.
         """
@@ -880,13 +890,10 @@ class DNSRuleRecord(BaseModel):
     class Meta:
         """Meta attributes for DNSRuleRecord."""
 
-        # Ensure each DNS record can only be managed by a single source object.
-        # This prevents duplicate DNSRuleRecord entries and eliminates the need for DISTINCT
-        # clauses in JOIN queries (e.g. DNSRuleRecordViewSet.queryset).
+        # Ensure each DNS record can only be managed by a single source object while also
+        # preventing duplicate source->record linkage rows.
         unique_together = [
-            ["content_type", "object_id", "dns_record_content_type", "dns_record_object_id"],
-            # TODO: Enable this in the future?
-            # ["dns_record_content_type", "dns_record_object_id"],
+            ["dns_record_content_type", "dns_record_object_id"],
         ]
         verbose_name = "DNS Rule Record"
         verbose_name_plural = "DNS Rule Records"
