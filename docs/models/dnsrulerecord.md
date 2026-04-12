@@ -4,7 +4,7 @@ The DNS Rule Record model serves as a linking table that tracks the relationship
 
 ## Purpose
 
-When a DNS rule triggers and creates a DNS record, a DNSRuleRecord entry is created to maintain the connection between:
+When a DNS rule triggers and creates a DNS record, a `DNSRuleRecord` entry is created to maintain the connection between:
 
 1. The source object that triggered the rule (e.g., a Device or Interface)
 2. The DNS rule that was applied
@@ -12,7 +12,7 @@ When a DNS rule triggers and creates a DNS record, a DNSRuleRecord entry is crea
 
 This linking approach avoids the need to re-render Jinja2 templates when performing updates or deletions, making operations more efficient and reliable.
 
-## Fields
+## Model Fields
 
 - `rule` (DNSRule): Foreign key to the DNS rule that created the record.
 - `content_type` (ContentType): Content type of the source object that triggered the rule.
@@ -22,16 +22,15 @@ This linking approach avoids the need to re-render Jinja2 templates when perform
 - `dns_record_object_id` (UUID): Primary key of the created DNS record.
 - `dns_record` (GenericForeignKey): Generic foreign key to the actual DNS record.
 
-## Inherited Fields
+## Model Constraints
 
-As a BaseModel, DNSRuleRecord automatically includes:
-- `id` (UUID): Primary key
-- `created` (DateTime): Timestamp when the record was created
-- `last_updated` (DateTime): Timestamp when the record was last modified
+- **Unique Together**: `dns_record_content_type` + `dns_record_object_id` must be unique so each DNS record is linked to at most one source/rule linkage row.
 
-## Constraints
+## Validation
 
-- **Unique Together**: The combination of rule, content_type, object_id, dns_record_content_type, and dns_record_object_id must be unique to prevent duplicate linkage records.
+- `dns_record_content_type` must resolve to an existing model class.
+- `dns_record_content_type` model must be a `DNSRecord` subclass.
+- When `rule` is set, `dns_record_content_type` must match the model class implied by `rule.record_type`.
 
 ## Use Cases
 
@@ -54,18 +53,21 @@ DNSRuleRecord.objects.create(
 
 ### Record Updates
 When the source object changes, the system can:
+
 1. Find all DNSRuleRecord entries for that object
 2. Update the linked DNS records with new template-rendered values
 3. Avoid re-rendering templates to "search" for existing records
 
 ### Record Cleanup
 When a source object is deleted or no longer matches rule criteria:
+
 1. Find DNSRuleRecord entries for the object
 2. Delete the associated DNS records
 3. Delete the DNSRuleRecord entries
 
 ### Location-Based Rule Changes
 When an object's location changes (e.g., device moves to different datacenter):
+
 1. Location-specific rules may no longer apply to the object
 2. New location-specific rules may now apply
 3. DNSRuleRecord entries help identify which records need cleanup vs creation
@@ -86,4 +88,4 @@ DNS Record (A/AAAA/CNAME/etc.)
 ## Related Models
 
 - [DNS Rule Model](dnsrule.md): The rule definition that creates DNS records
-- Various DNS record models: [A Record](arecord.md), [AAAA Record](aaaarecord.md), [CNAME Record](cnamerecord.md), etc.
+- DNS record models: [A Record](arecord.md) and [AAAA Record](aaaarecord.md)
