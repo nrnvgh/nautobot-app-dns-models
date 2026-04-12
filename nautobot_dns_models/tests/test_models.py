@@ -1230,8 +1230,8 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 enabled=True,  # Same: enabled
             )
             duplicate_rule.full_clean()  # Triggers validate_unique()
-        self.assertIn("location", context.exception.message_dict)
-        self.assertIn("already exists", context.exception.message_dict["location"][0])
+        self.assertIn("__all__", context.exception.message_dict)
+        self.assertIn("already exists", context.exception.message_dict["__all__"][0])
 
     @skip(
         "Skipping test_dnsrule_enabling_disabled_rule_with_enabled_duplicate_fails since we disabled that check. We maybe revert it, so leaving the test here."
@@ -1365,7 +1365,15 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 )
                 with self.assertRaises(ValidationError) as context:
                     duplicate_rule.full_clean()
-                self.assertIn("location", context.exception.message_dict)
+                if label == "global":
+                    self.assertIn("__all__", context.exception.message_dict)
+                elif label == "tenant-only":
+                    self.assertIn("tenant", context.exception.message_dict)
+                elif label == "location-only":
+                    self.assertIn("location", context.exception.message_dict)
+                else:
+                    self.assertIn("location", context.exception.message_dict)
+                    self.assertIn("tenant", context.exception.message_dict)
 
     def test_dnsrule_global_uniqueness_constraint_with_view_template(self):
         """Test enabled global rule uniqueness is enforced regardless of view_template."""
@@ -1399,8 +1407,8 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         with self.assertRaises(ValidationError) as context:
             duplicate_rule.full_clean()
 
-        self.assertIn("location", context.exception.message_dict)
-        self.assertEqual(context.exception.message_dict["location"][0], expected_message)
+        self.assertIn("__all__", context.exception.message_dict)
+        self.assertEqual(context.exception.message_dict["__all__"][0], expected_message)
 
     def test_dnsrule_disabled_rules_allow_duplicates(self):
         """Test that disabled rules can have duplicate content_type + record_type combinations."""
@@ -1788,6 +1796,27 @@ class DNSRuleRecordTestCase(TestCase):
                 rule=self.dns_rule,
                 content_type=self.content_type_device,
                 object_id=self.device.id,
+                dns_record_content_type=self.content_type_a_record,
+                dns_record_object_id=self.a_record.id,
+            )
+
+    def test_dnsrulerecord_dns_record_can_only_map_to_single_source(self):
+        """Test that a DNS record cannot be linked to multiple source objects."""
+        DNSRuleRecord.objects.create(
+            rule=self.dns_rule,
+            content_type=self.content_type_device,
+            object_id=self.device.id,
+            dns_record_content_type=self.content_type_a_record,
+            dns_record_object_id=self.a_record.id,
+        )
+
+        content_type_interface = ContentType.objects.get_for_model(Interface)
+
+        with self.assertRaises(IntegrityError):
+            DNSRuleRecord.objects.create(
+                rule=self.dns_rule,
+                content_type=content_type_interface,
+                object_id=self.interface.id,
                 dns_record_content_type=self.content_type_a_record,
                 dns_record_object_id=self.a_record.id,
             )
