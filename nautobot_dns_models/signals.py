@@ -76,11 +76,9 @@ def has_model_field_changes(instance, debug_context="object"):
             if has_changes:
                 logger.debug(f"{debug_context.title()} {instance} fields changed: {changed_fields}")
                 logger.debug(f"{debug_context.title()} {instance} fields unchanged: {unchanged_fields}")
-                pass
             else:
                 logger.debug(f"{debug_context.title()} {instance} - no relevant field changes detected")
                 logger.debug(f"{debug_context.title()} {instance} all fields unchanged: {unchanged_fields}")
-                pass
 
             return has_changes
 
@@ -97,7 +95,8 @@ def has_model_field_changes(instance, debug_context="object"):
 
 
 #
-# XXX: We may not want to do this at all. Or, we may want to install simpler rules, like:
+# XXX: This is currently a POC just to show what's possibleWe may not want to do this at all or we
+# XXX: may want to install simpler rules, like:
 # XXX: A/AAAA: ^[0-9a-z-.]
 def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs):
     """Create data validation rules for DNS models after database migration."""
@@ -232,7 +231,7 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
 
         # If any parent object fields changed, process all interfaces belonging to this parent
         # This ensures interface DNS records with {{ obj.parent.* }} (or similar) templates get updated
-        if instance._dns_needs_processing:
+        if instance._dns_needs_processing:  # pylint: disable=protected-access
             # prefetch_related("ip_addresses") can be a significant performance optimization. In the
             # case where a device with 128 interfaces, each with 4 IPs, was renamed, the device save
             # time dropped from ~30s to under 5s (84% reduction) in local testing.
@@ -274,7 +273,7 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
         context: String context for logging
     """
     # Check if DNS processing is needed (set by pre_save handler)
-    should_process = created or instance._dns_needs_processing
+    should_process = created or instance._dns_needs_processing  # pylint: disable=protected-access
 
     logger.debug(f"[SIGNAL] [_process_dns_rules_if_needed] [{context}] {instance} / {created=} / {should_process=}")
 
