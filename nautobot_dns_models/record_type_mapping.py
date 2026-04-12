@@ -10,8 +10,10 @@ def get_dns_record_model_class(record_type):
         raise ValueError(f'Unsupported DNS rule record_type "{record_type}"')
 
     # Local imports avoid circular imports during Django app/model initialization.
+    # pylint: disable=import-outside-toplevel
     from nautobot_dns_models import models as dns_models
     from nautobot_dns_models.models import DNSRecord
+    # pylint: enable=import-outside-toplevel
 
     model_name = f"{record_type}Record"
     model_class = getattr(dns_models, model_name, None)
