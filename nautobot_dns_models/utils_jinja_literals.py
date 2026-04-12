@@ -8,8 +8,7 @@ import re
 from django.template import engines as django_template_engines
 from jinja2.visitor import NodeVisitor
 
-# Default substring patterns to flag in literal fragments
-DEFAULT_LITERAL_PATTERNS = (
+INVALID_LITERAL_SUBSTRING_PATTERNS = (
     ("..", "Consecutive dots '..' are not allowed"),
     (".-", "Dot followed by hyphen '.-' is not allowed"),
     ("-.", "Hyphen followed by dot '-.' is not allowed"),
@@ -99,23 +98,14 @@ def collect_literal_strings(template_str):
     return collector.literals
 
 
-def collect_literal_validation_errors(
-    template_fields,
-    *,
-    check_whitespace_in_value_template=True,
-    patterns=DEFAULT_LITERAL_PATTERNS,
-):
+def collect_literal_validation_errors(template_fields):
     """Return mapping of field_name -> list of literal validation errors.
 
-    This validation is performed on literal-only fragments (no evaluation). It can
-    optionally flag any presence of whitespace in literal fragments and will flag
-    any substring patterns specified via ``patterns``.
+    This validation is performed on literal-only fragments (no evaluation). It
+    flags whitespace and invalid literal substrings.
 
     Args:
         template_fields: Iterable of (field_name, template_content) pairs to validate.
-        check_whitespace_in_value_template: When True, flag any whitespace in literal fragments in the value template.
-        patterns: Tuple of (substring, message) to flag when substring appears in
-            any literal fragment for a given field.
 
     Returns:
         Dict mapping field_name to a de-duplicated list of error messages. Fields
@@ -133,13 +123,10 @@ def collect_literal_validation_errors(
 
         field_errors = []
 
-        # Check whitespace: only for value_template if enabled; always for other fields
-        should_check_whitespace = (field_name != "value_template") or check_whitespace_in_value_template
-
-        if should_check_whitespace and any(_string_contains_space(frag) for frag in literal_fragments):
+        if any(_string_contains_space(frag) for frag in literal_fragments):
             field_errors.append("Whitespace in literals is not allowed; use '-' or '.'")
 
-        for bad, message in patterns:
+        for bad, message in INVALID_LITERAL_SUBSTRING_PATTERNS:
             if any(bad in frag for frag in literal_fragments):
                 field_errors.append(message)
 
