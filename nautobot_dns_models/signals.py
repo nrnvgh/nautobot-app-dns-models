@@ -13,7 +13,7 @@ from nautobot.virtualization.models import VirtualMachine, VMInterface
 from nautobot_dns_models.models import DNSRecord
 from nautobot_dns_models.rules.engine import DNSRuleEngine
 
-# logging.basicConfig(level=logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,7 +95,7 @@ def has_model_field_changes(instance, debug_context="object"):
 
 
 #
-# XXX: This is currently a POC just to show what's possibleWe may not want to do this at all or we
+# XXX: This is currently a POC just to show what's possible. We may not want to do this at all, or we
 # XXX: may want to install simpler rules, like:
 # XXX: A/AAAA: ^[0-9a-z-.]
 def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs):
@@ -135,14 +135,12 @@ def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs
             logger.debug("Created data validation rule '%s'", rule.name)
 
 
-#
-# NOTE: do we want to explictly list other sender models here and, if so, which?
 @receiver(pre_save, sender=Device)
 @receiver(pre_save, sender=Interface)
 @receiver(pre_save, sender=Service)
 @receiver(pre_save, sender=VirtualMachine)
 @receiver(pre_save, sender=VMInterface)
-# TODO: Add signal handlers for future models:
+# TODO: Future signal handlers:
 # - Cluster (location changes affect VMs and their VMInterfaces)
 # - InterfaceRedundancyGroup (location changes affect interfaces in the group)
 def capture_object_change_state(sender, instance, **kwargs):
@@ -162,7 +160,7 @@ def capture_object_change_state(sender, instance, **kwargs):
     """
     model_name = sender._meta.model_name
     logger.debug(f"[SIGNAL] [capture_object_change_state] {model_name}: {instance}")
-    # Use helper to detect changes and set flag for post_save handler
+
     instance._dns_needs_processing = has_model_field_changes(instance, debug_context=model_name)  # pylint: disable=protected-access
 
 
@@ -252,6 +250,15 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
                 # NOTE This is significantly faster than processing each interface individually, but it
                 # NOTE does use bulk_update, so no changelog entries will be created. That may or may
                 # NOTE not be acceptable for some use cases.
+                #
+                # NOTE Local testing shows that using bulk_update is significantly faster than processing
+                # NOTE each interface individually. For example, a single device with 128 interfaces, each
+                # NOTE with 4 IPs, was renamed, the device save time dropped from ~30s to under 5s (84% reduction)
+                # NOTE using bulk_update.
+                #
+                # NOTE This could be made configurable via constance; "use_bulk_update_for_cascading_saves" or
+                # NOTE some such. Nautoot does not currently support adding form fields to non-plugin models, such
+                # NOTE as Device from a plugin.
                 rule_engine.process_objects_pipeline(interfaces)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Log the error but don't let it break the original object save
@@ -297,6 +304,7 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
 @receiver(post_delete, sender=VMInterface)
 # TODO: Add post_delete handlers for future models:
 # - Cluster (affects VMs and their VMInterfaces)
+# - InterfaceRedundancyGroup(?) (affects interfaces in the group)
 def handle_object_delete(sender, instance, **kwargs):
     """
     Handle object delete events to clean up associated DNS records.

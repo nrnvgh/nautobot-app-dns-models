@@ -29,13 +29,13 @@ from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine,
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord, DNSView, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name
-from nautobot_dns_models.rules.engine import (
+from nautobot_dns_models.rules.engine import DNSRuleEngine
+from nautobot_dns_models.rules.engine.constants import (
     REASON_VIEW_NOT_FOUND,
     REASON_VIEW_TEMPLATE_EMPTY,
     REASON_ZONE_NOT_FOUND,
-    DNSRuleEngine,
 )
-from nautobot_dns_models.rules.template_proxies import wrap_for_template
+from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
 
 from .mixins.rule_engine import BaseRuleEngineMixin
 
@@ -799,7 +799,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         class ParentNotDevice:
             pass
 
-        with patch("nautobot_dns_models.rules.engine.logger.warning") as mock_warning:
+        with patch("nautobot_dns_models.rules.engine.core.logger.warning") as mock_warning:
             with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
                 with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
                     module_property.return_value = ModuleWithoutTenant()
@@ -1997,7 +1997,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 
         # Force tracking-row insert to fail to simulate uniqueness/constraint failure.
         with patch(
-            "nautobot_dns_models.rules.engine.DNSRuleRecord.objects.create",
+            "nautobot_dns_models.rules.engine.core.DNSRuleRecord.objects.create",
             side_effect=IntegrityError("dup"),
         ):
             # Assign IPv4 to trigger engine

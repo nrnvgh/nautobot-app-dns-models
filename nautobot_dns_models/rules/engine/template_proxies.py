@@ -70,6 +70,7 @@ class TemplateProxyBase:
             return TemplateIPAddressQuerySetProxy(value)
 
         proxied = wrap_for_template(value)
+
         return proxied
 
 

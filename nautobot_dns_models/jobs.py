@@ -417,7 +417,7 @@ class ReconcileDNSBulkJob(Job):
             batch_size=batch_size,
         )
         result["execution"]["runtime_seconds"] = round(perf_counter() - started_at, 3)
-        result["mode"]["pipeline_stage_metrics"] = selected_engine.get_pipeline_stage_metrics()
+        result["mode"]["pipeline_stage_metrics"] = selected_engine.get_pipeline_metrics()
 
         _log_result_summary(self.logger, result)
 

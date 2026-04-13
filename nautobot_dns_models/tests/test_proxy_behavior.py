@@ -4,7 +4,7 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 
-from nautobot_dns_models.rules.template_proxies import wrap_for_template
+from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
 from nautobot_dns_models.tests.test_rule_engine import BaseRuleEngineMixin
 
 
