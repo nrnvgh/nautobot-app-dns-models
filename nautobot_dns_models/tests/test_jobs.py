@@ -19,7 +19,8 @@ from nautobot.virtualization.models import Cluster, VirtualMachine, VMInterface
 from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileRunSummary
 from nautobot_dns_models.models import ARecord, DNSRule
 from nautobot_dns_models.rules.engine import DNSRuleEngine
-from nautobot_dns_models.rules.engine.metrics import ObjectProcessingSummary
+from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
+from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
 
@@ -96,7 +97,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def test_single_object_mode_processes_requested_object(self, mock_dns_rule_engine_class):
         """Single-object mode should call process_object exactly once."""
         selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingSummary()
+        selected_engine.process_object.return_value = ObjectProcessingMetrics()
         job = ReconcileDNSObjectJob()
 
         result = job.run(
@@ -120,7 +121,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def test_single_object_parent_mode_includes_supported_children(self, mock_dns_rule_engine_class):
         """Single-object parent mode should reconcile both parent and child objects when requested."""
         selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingSummary()
+        selected_engine.process_object.return_value = ObjectProcessingMetrics()
         DNSRule.objects.create(
             name="job-device-reconcile",
             content_type=ContentType.objects.get_for_model(Device),
@@ -161,7 +162,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def test_single_object_parent_mode_includes_module_bay_interfaces(self, mock_dns_rule_engine_class):
         """Single-object parent mode should include interfaces installed on modules in module bays."""
         selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingSummary()
+        selected_engine.process_object.return_value = ObjectProcessingMetrics()
 
         module_interface = self._create_module_bay_interface_for_device(
             name_prefix="object-include-children",
@@ -185,7 +186,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def test_single_object_parent_mode_includes_child_devices_and_interfaces(self, mock_dns_rule_engine_class):
         """Single-object parent mode should include child devices and their interfaces."""
         selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingSummary()
+        selected_engine.process_object.return_value = ObjectProcessingMetrics()
         DNSRule.objects.create(
             name="job-device-ip-child-reconcile",
             content_type=ContentType.objects.get_for_model(Device),
@@ -220,14 +221,14 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         """Job output should aggregate per-object processing summary counters from the rule engine."""
         selected_engine = mock_dns_rule_engine_class.return_value
         selected_engine.process_object.side_effect = [
-            ObjectProcessingSummary(
+            ObjectProcessingMetrics(
                 had_existing_rule_records=True,
                 existing_rule_record_count=2,
                 changed_record_count=1,
                 record_ops_create_count=1,
                 record_ops_delete_count=0,
             ),
-            ObjectProcessingSummary(
+            ObjectProcessingMetrics(
                 had_existing_rule_records=True,
                 existing_rule_record_count=3,
                 changed_record_count=2,
@@ -273,7 +274,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     def test_object_job_path_uses_process_object_not_pipeline(self, mock_dns_rule_engine_class):
         """Object reconcile job flow should call process_object and not process_objects_pipeline."""
         selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingSummary()
+        selected_engine.process_object.return_value = ObjectProcessingMetrics()
         job = ReconcileDNSObjectJob()
 
         result = job.run(
@@ -443,11 +444,71 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["scope"]["scanned_models"], ["dcim.interface"])
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
+    def test_bulk_mode_uses_standard_execution_mode_by_default(self, mock_dns_rule_engine_class):
+        """Bulk mode should default to standard execution mode."""
+        selected_engine = mock_dns_rule_engine_class.return_value
+        selected_engine.process_objects_pipeline.return_value = []
+        selected_engine.get_pipeline_metrics.return_value = {
+            "batches": 0,
+            "objects_total": 0,
+            "tracking_rows_total": 0,
+            "pending_rule_calculations_total": 0,
+            "pending_bulk_updates_total": 0,
+            "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
+            "avg_per_batch": {
+                "objects": 0,
+                "tracking_rows": 0,
+                "pending_rule_calculations": 0,
+                "pending_bulk_updates": 0,
+                "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
+            },
+        }
+
+        result = ReconcileDNSBulkJob().run(dryrun=False, rules=[self.interface_rule], limit=1, batch_size=1)
+
+        mock_dns_rule_engine_class.assert_called_once_with(execution_mode=ExecutionMode.STANDARD)
+        self.assertFalse(result["mode"]["fast_mode"])
+        self.assertEqual(result["mode"]["execution_mode"], ExecutionMode.STANDARD.value)
+
+    @patch("nautobot_dns_models.jobs.DNSRuleEngine")
+    def test_bulk_mode_accepts_fast_mode(self, mock_dns_rule_engine_class):
+        """Bulk mode should map fast_mode flag to fast execution mode."""
+        selected_engine = mock_dns_rule_engine_class.return_value
+        selected_engine.process_objects_pipeline.return_value = []
+        selected_engine.get_pipeline_metrics.return_value = {
+            "batches": 0,
+            "objects_total": 0,
+            "tracking_rows_total": 0,
+            "pending_rule_calculations_total": 0,
+            "pending_bulk_updates_total": 0,
+            "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
+            "avg_per_batch": {
+                "objects": 0,
+                "tracking_rows": 0,
+                "pending_rule_calculations": 0,
+                "pending_bulk_updates": 0,
+                "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
+            },
+        }
+
+        result = ReconcileDNSBulkJob().run(
+            dryrun=False,
+            rules=[self.interface_rule],
+            limit=1,
+            batch_size=1,
+            fast_mode=True,
+        )
+
+        mock_dns_rule_engine_class.assert_called_once_with(execution_mode=ExecutionMode.FAST)
+        self.assertTrue(result["mode"]["fast_mode"])
+        self.assertEqual(result["mode"]["execution_mode"], ExecutionMode.FAST.value)
+
+    @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_bulk_mode_include_children_includes_child_devices_and_interfaces(self, mock_dns_rule_engine_class):
         """Bulk mode include-children should process child devices and their interfaces from in-scope parents."""
         selected_engine = mock_dns_rule_engine_class.return_value
         selected_engine.process_objects_pipeline.side_effect = lambda model_objects: [
-            ObjectProcessingSummary() for _ in model_objects
+            ObjectProcessingMetrics() for _ in model_objects
         ]
         out_of_scope_location = Location.objects.create(
             name="Bulk Child Device Out-of-Scope",
@@ -642,8 +703,8 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         rule_engine = DNSRuleEngine()
         expected_ids = set()
         for obj in objects:
-            object_location = rule_engine._get_object_location(obj)  # pylint: disable=protected-access
-            object_tenant = rule_engine._get_object_tenant(obj)  # pylint: disable=protected-access
+            object_location = rule_engine._resolver.get_object_location(obj)  # pylint: disable=protected-access
+            object_tenant = rule_engine._resolver.get_object_tenant(obj)  # pylint: disable=protected-access
 
             if location_ids and (object_location is None or object_location.id not in location_ids):
                 continue

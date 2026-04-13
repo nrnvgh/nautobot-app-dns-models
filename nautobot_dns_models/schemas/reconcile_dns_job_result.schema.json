@@ -23,13 +23,20 @@
         "dryrun",
         "single_object",
         "include_child_devices",
-        "include_interfaces"
+        "include_interfaces",
+        "fast_mode",
+        "execution_mode"
       ],
       "properties": {
         "dryrun": { "type": "boolean" },
         "single_object": { "type": "boolean" },
         "include_child_devices": { "type": "boolean" },
         "include_interfaces": { "type": "boolean" },
+        "fast_mode": { "type": "boolean" },
+        "execution_mode": {
+          "type": "string",
+          "enum": ["standard", "fast"]
+        },
         "pipeline_stage_metrics": {
           "type": "object",
           "additionalProperties": false,

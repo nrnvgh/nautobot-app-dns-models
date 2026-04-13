@@ -23,6 +23,11 @@ from nautobot_dns_models.normalization import normalize_dns_name_if_enabled
 from nautobot_dns_models.rules.engine.cache import EngineCache
 from nautobot_dns_models.rules.engine.constants import PHASE_UPDATE_RECONCILE
 from nautobot_dns_models.rules.engine.context import EngineContext
+from nautobot_dns_models.rules.engine.delete_strategies import (
+    FastDeleteExecutor,
+    StandardDeleteExecutor,
+)
+from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
 from nautobot_dns_models.rules.engine.logging import EngineLogger
 from nautobot_dns_models.rules.engine.materializer import RecordMaterializer
 from nautobot_dns_models.rules.engine.metrics import (
@@ -32,6 +37,7 @@ from nautobot_dns_models.rules.engine.metrics import (
 )
 from nautobot_dns_models.rules.engine.resolver import RuleResolver
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
+from nautobot_dns_models.rules.engine.update_strategies import FastUpdateExecutor, StandardUpdateExecutor
 from nautobot_dns_models.rules.engine.writer import RecordWriter
 
 logger = logging.getLogger(__name__)
@@ -47,8 +53,9 @@ class DNSRuleEngine:
     # Keep this constant in sync with docs/dev/reconcile_greenfield_performance_tally.md.
     BULK_RENAME_UPDATE_BATCH_SIZE = 250
     BULK_CREATE_BATCHED_PIPELINE_SIZE = 1000
+    BULK_DELETE_BATCHED_PIPELINE_SIZE = 1000
 
-    def __init__(self):
+    def __init__(self, *, execution_mode=ExecutionMode.STANDARD):
         """Initialize DNS rule engine caches and pipeline state."""
         self._cache = EngineCache()
         self._pending_batched_creates = defaultdict(list)
@@ -60,16 +67,32 @@ class DNSRuleEngine:
         # This could be useful, but would be different than how the nautobot core sets up its environment.
         # Currently optimizing for consistency rather than maximizing ease of use for DNS rules.
         self._jinja_env = django_template_engines["jinja"].env
+        selected_execution_mode = ExecutionMode(execution_mode)
         self._context = EngineContext(
             jinja_env=self._jinja_env,
             bulk_rename_update_batch_size=self.BULK_RENAME_UPDATE_BATCH_SIZE,
             bulk_create_batched_pipeline_size=self.BULK_CREATE_BATCHED_PIPELINE_SIZE,
+            bulk_delete_batched_pipeline_size=self.BULK_DELETE_BATCHED_PIPELINE_SIZE,
+            execution_mode=selected_execution_mode,
         )
 
         self._engine_logger = EngineLogger()
         self._resolver = RuleResolver(self, self._cache, self._context)
         self._materializer = RecordMaterializer(self, self._cache, self._context)
-        self._writer = RecordWriter(self, self._cache, self._context)
+        if selected_execution_mode == ExecutionMode.FAST:
+            delete_executor = FastDeleteExecutor()
+            update_executor = FastUpdateExecutor()
+        else:
+            delete_executor = StandardDeleteExecutor()
+            update_executor = StandardUpdateExecutor()
+
+        self._writer = RecordWriter(
+            self,
+            self._cache,
+            self._context,
+            delete_executor=delete_executor,
+            update_executor=update_executor,
+        )
 
     #
     # Public API
@@ -321,6 +344,10 @@ class DNSRuleEngine:
     def _apply_changes(self, prepared_entries):
         """Stage 4: apply prepared reconcile entries and queue rename updates."""
         pending_rename_updates = defaultdict(list)
+        bulk_update_collector = (
+            pending_rename_updates if self._context.execution_mode == ExecutionMode.FAST else None
+        )
+        pending_bulk_deletes = defaultdict(set)
         summaries = []
         self._pending_batched_creates.clear()
         self._batched_create_queue_active = True
@@ -328,9 +355,14 @@ class DNSRuleEngine:
         try:
             for entry in prepared_entries:
                 summaries.append(
-                    self._apply_prepared_reconcile_entry(entry, bulk_update_collector=pending_rename_updates)
+                    self._apply_prepared_reconcile_entry(
+                        entry,
+                        bulk_update_collector=bulk_update_collector,
+                        bulk_delete_collector=pending_bulk_deletes,
+                    )
                 )
 
+            self._writer.flush_bulk_delete_queue(pending_bulk_deletes)
             if self._batched_create_queue_active:
                 self._writer.flush_batched_create_queue()
         finally:
@@ -346,6 +378,7 @@ class DNSRuleEngine:
         self,
         entry,
         bulk_update_collector=None,
+        bulk_delete_collector=None,
     ):
         """Apply prepared desired/tracking data for one source object."""
         source_obj = entry["source_obj"]
@@ -368,17 +401,23 @@ class DNSRuleEngine:
             tracking_by_rule_id[tracking_row.rule_id].append(tracking_row)
 
         applicable_rule_ids = {rule.pk for rule in rules}
-        delete_count = self._writer.cleanup_orphaned_records_prefetched(tracking_by_rule_id, applicable_rule_ids)
+        delete_count = self._writer.cleanup_orphaned_records_prefetched(
+            tracking_by_rule_id, applicable_rule_ids, bulk_delete_collector=bulk_delete_collector
+        )
         create_count = 0
         update_count = 0
 
         for rule in rules:
             if needed_rule_ids and rule.pk not in needed_rule_ids:
-                delete_count += self._writer.cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule.pk)
+                delete_count += self._writer.cleanup_records_for_rule_prefetched(
+                    tracking_by_rule_id, rule.pk, bulk_delete_collector=bulk_delete_collector
+                )
                 continue
 
             if rule.pk in failed_rule_ids:
-                delete_count += self._writer.cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule.pk)
+                delete_count += self._writer.cleanup_records_for_rule_prefetched(
+                    tracking_by_rule_id, rule.pk, bulk_delete_collector=bulk_delete_collector
+                )
                 continue
 
             reconcile_summary = self._writer.reconcile_records_for_rule(

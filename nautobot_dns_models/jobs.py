@@ -26,7 +26,7 @@ from nautobot.virtualization.models import VirtualMachine, VMInterface
 from nautobot_dns_models.constants import SUPPORTED_SOURCE_MODELS
 from nautobot_dns_models.exceptions import DNSRuleEngineIntegrityError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule
-from nautobot_dns_models.rules.engine import DNSRuleEngine
+from nautobot_dns_models.rules.engine import DNSRuleEngine, ExecutionMode
 from nautobot_dns_models.rules.scope_filters import BulkScopeFilterBuilder
 from nautobot_dns_models.source_model_support import get_supported_source_content_type_query_params
 
@@ -199,6 +199,7 @@ def _build_result_payload(
     single_object,
     include_child_devices,
     include_interfaces,
+    execution_mode,
     selected_model_classes,
     rules=None,
     location_ids=None,
@@ -207,6 +208,9 @@ def _build_result_payload(
     batch_size=100,
 ):
     """Build structured job result payload from run context and accumulated counters."""
+    selected_execution_mode = (
+        execution_mode if isinstance(execution_mode, ExecutionMode) else ExecutionMode(str(execution_mode))
+    )
     return {
         "schema_version": 1,
         "mode": {
@@ -214,6 +218,8 @@ def _build_result_payload(
             "single_object": bool(single_object),
             "include_child_devices": bool(include_child_devices),
             "include_interfaces": bool(include_interfaces),
+            "fast_mode": selected_execution_mode == ExecutionMode.FAST,
+            "execution_mode": selected_execution_mode.value,
         },
         "scope": {
             "scanned_models": sorted(summary.scanned_model_labels),
@@ -320,6 +326,15 @@ class ReconcileDNSBulkJob(Job):
         max_value=5000,
         description="Pipeline batch size for fetch/render/delta/execute phases.",
     )
+    fast_mode = BooleanVar(
+        required=False,
+        default=False,
+        description=(
+            "Enable faster reconciliation; no per-record changelogs or delete signals."
+            ' See <a href="/static/nautobot_dns_models/docs/user/rules/reconciliation_jobs.html">the documentation</a>'
+            " for more details."
+        )
+    )
     dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
 
     def run(
@@ -333,11 +348,13 @@ class ReconcileDNSBulkJob(Job):
         include_interfaces=False,
         limit=None,
         batch_size=500,
+        fast_mode=False,
     ):  # pylint: disable=too-many-arguments,arguments-differ
         """Execute bulk DNS reconciliation."""
         started_at = perf_counter()
 
-        selected_engine = DNSRuleEngine()
+        selected_execution_mode = ExecutionMode.FAST if fast_mode else ExecutionMode.STANDARD
+        selected_engine = DNSRuleEngine(execution_mode=selected_execution_mode)
 
         location_ids = {location.id for location in (locations or [])}
         tenant_ids = {tenant.id for tenant in (tenants or [])}
@@ -409,6 +426,7 @@ class ReconcileDNSBulkJob(Job):
             single_object=False,
             include_child_devices=bool(include_child_devices),
             include_interfaces=bool(include_interfaces),
+            execution_mode=selected_execution_mode.value,
             selected_model_classes=selected_model_classes,
             rules=rules,
             location_ids=location_ids,
@@ -819,6 +837,7 @@ class ReconcileDNSObjectJob(Job):
             single_object=True,
             include_child_devices=bool(include_child_devices),
             include_interfaces=bool(include_interfaces),
+            execution_mode=ExecutionMode.STANDARD.value,
             selected_model_classes=set(),
             rules=[],
             location_ids=set(),

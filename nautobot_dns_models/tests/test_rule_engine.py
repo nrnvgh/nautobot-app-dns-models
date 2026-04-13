@@ -174,7 +174,7 @@ class TemplateRenderingTestCase(BaseRuleEngineMixin, TestCase):
 
         # Test template with invalid attribute access under DEBUG=True.
         with self.assertRaises(DNSRuleTemplateRenderedEmptyError) as context:
-            test_engine._render_template(
+            test_engine._materializer.render_template(
                 "{{ obj.role.name }}",
                 {"obj": wrap_for_template(interface_no_role)},
                 "test_field",
@@ -2040,7 +2040,7 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 
         self.assertEqual(ARecord.objects.filter(id=forced_record_id).count(), 0)
 
-        created_records = self.engine._create_records_for_object(
+        created_records = self.engine._writer._create_records_for_object(  # pylint: disable=protected-access
             rule=rule,
             source_obj=self.interface,
             record_data_list=[
@@ -3429,16 +3429,12 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
             enabled=True,
         )
 
-        with patch.object(self.engine, "_cleanup_orphaned_records", return_value=0) as cleanup_orphaned_mock:
-            with patch.object(self.engine, "_object_needs_dns_records_for_rule", return_value=True):
-                with patch.object(self.engine, "_reconcile_records_for_rule", side_effect=TemplateError("boom")):
-                    with patch.object(self.engine, "_log_rule_processing_error") as log_error_mock:
-                        with patch.object(
-                            self.engine, "_cleanup_records_for_rule", return_value=0
-                        ) as cleanup_rule_mock:
-                            self.engine._update_dns_records_for_object(
-                                self.interface, DNSRule.objects.filter(pk=rule.pk)
-                            )
+        with patch.object(self.engine._writer, "cleanup_orphaned_records", return_value=0) as cleanup_orphaned_mock:
+            with patch.object(self.engine._resolver, "object_needs_dns_records_for_rule", return_value=True):
+                with patch.object(self.engine._writer, "reconcile_records_for_rule", side_effect=TemplateError("boom")):
+                    with patch.object(self.engine._engine_logger, "log_rule_processing_error") as log_error_mock:
+                        with patch.object(self.engine._writer, "_cleanup_records_for_rule", return_value=0) as cleanup_rule_mock:
+                            self.engine._writer.update_dns_records_for_object(self.interface, DNSRule.objects.filter(pk=rule.pk))
 
         cleanup_orphaned_mock.assert_called_once()
         log_error_mock.assert_called_once()
@@ -3464,7 +3460,7 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
 
         # pylint: disable=protected-access
         with self.assertRaises(DNSRuleRenderedValueLookupError) as exc:
-            self.engine._get_dns_views_for_rule(rule, context)
+            self.engine._materializer.get_dns_views_for_rule(rule, context)
 
         self.assertEqual(exc.exception.field_name, "view_template")
         self.assertEqual(exc.exception.reason_code, REASON_VIEW_TEMPLATE_EMPTY)

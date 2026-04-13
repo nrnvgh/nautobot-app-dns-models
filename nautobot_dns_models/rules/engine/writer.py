@@ -11,6 +11,7 @@ from jinja2 import TemplateError
 from nautobot_dns_models.exceptions import DNSRecordContentTypeResolutionError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
+from nautobot_dns_models.rules.engine.update_strategies import UpdateResult
 
 from .constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
 
@@ -20,11 +21,13 @@ logger = logging.getLogger(__name__)
 class RecordWriter:
     """Create, reconcile, and cleanup DNS records."""
 
-    def __init__(self, engine, cache, context):
+    def __init__(self, engine, cache, context, *, delete_executor, update_executor):
         """Store collaborator references and shared runtime context."""
         self._engine = engine
         self._cache = cache
         self._context = context
+        self._delete_executor = delete_executor
+        self._update_executor = update_executor
         self._pending_batched_creates = engine._pending_batched_creates
         self._engine_logger = engine._engine_logger
 
@@ -103,15 +106,9 @@ class RecordWriter:
                 rule, source_obj, phase=PHASE_UPDATE_RECONCILE
             )
 
-        def _resolve_dns_record(tracking_record):
-            dns_record = getattr(tracking_record, "_prefetched_dns_record", None)
-            if dns_record is None:
-                dns_record = tracking_record.dns_record
-            return dns_record
-
         existing_records_by_identity = {}
         for tracking_record in tracking_records:
-            dns_record = _resolve_dns_record(tracking_record)
+            dns_record = self._resolve_prefetched_dns_record(tracking_record)
             if dns_record is None:
                 continue
             identity_key = self._get_record_identity_key(dns_record)
@@ -137,32 +134,21 @@ class RecordWriter:
         for identity_key in records_to_check_for_update:
             tracking_record = existing_records_by_identity[identity_key]
             desired_record = desired_records_by_identity[identity_key]
-            if bulk_update_collector is not None:
-                dns_record = _resolve_dns_record(tracking_record)
-                if dns_record is None:
-                    skipped_update += 1
-                    continue
-                desired_name = desired_record["name"]
-                if dns_record.name == desired_name:
-                    keep_count += 1
-                    continue
-                dns_record.name = desired_name
-                bulk_update_collector[type(dns_record)].append(dns_record)
+            update_result = self._update_executor.apply(
+                writer=self,
+                rule=rule,
+                source_obj=source_obj,
+                tracking_record=tracking_record,
+                desired_record_data=desired_record,
+                phase=PHASE_UPDATE_RECONCILE,
+                bulk_update_collector=bulk_update_collector,
+            )
+            if update_result == UpdateResult.UPDATED:
                 updated_count += 1
+            elif update_result == UpdateResult.UNCHANGED:
+                keep_count += 1
             else:
-                update_result = self._update_tracking_record_dns_record(
-                    rule=rule,
-                    source_obj=source_obj,
-                    tracking_record=tracking_record,
-                    desired_record_data=desired_record,
-                    phase=PHASE_UPDATE_RECONCILE,
-                )
-                if update_result == "updated":
-                    updated_count += 1
-                elif update_result == "unchanged":
-                    keep_count += 1
-                else:
-                    skipped_update += 1
+                skipped_update += 1
 
         created_records = []
         if records_to_create:
@@ -264,10 +250,12 @@ class RecordWriter:
                     DNSRuleRecord.objects.bulk_create(tracking_rows, batch_size=batch_size)
 
     def _update_tracking_record_dns_record(self, rule, source_obj, tracking_record, desired_record_data, phase):
-        dns_record = tracking_record.dns_record
+        dns_record = self._resolve_prefetched_dns_record(tracking_record)
+        if dns_record is None:
+            return UpdateResult.FAILED
         desired_name = desired_record_data["name"]
         if dns_record.name == desired_name:
-            return "unchanged"
+            return UpdateResult.UNCHANGED
         try:
             updated = type(dns_record).objects.filter(pk=dns_record.pk).update(name=desired_name)
             if updated != 1:
@@ -275,9 +263,9 @@ class RecordWriter:
             dns_record.name = desired_name
         except (ValidationError, IntegrityError, ValueError) as exc:
             self._engine_logger.log_record_update_failure(rule, source_obj, desired_record_data, exc, phase=phase)
-            return "failed"
+            return UpdateResult.FAILED
 
-        return "updated"
+        return UpdateResult.UPDATED
 
     def flush_bulk_rename_updates(self, bulk_update_collector):
         """Execute queued rename updates in bulk."""
@@ -287,6 +275,33 @@ class RecordWriter:
             record_model.objects.bulk_update(
                 update_entries, ["name"], batch_size=self._context.bulk_rename_update_batch_size
             )
+
+    def flush_bulk_delete_queue(self, bulk_delete_collector):
+        """Execute queued DNS-record deletes in bulk by model/content type."""
+        if not bulk_delete_collector:
+            return
+        batch_size = self._context.bulk_delete_batched_pipeline_size
+        content_types = ContentType.objects.in_bulk(bulk_delete_collector.keys())
+        for record_content_type_id, record_ids in bulk_delete_collector.items():
+            if not record_ids:
+                continue
+
+            record_content_type = content_types[record_content_type_id]
+            record_model = record_content_type.model_class()
+            if record_model is None:
+                raise DNSRecordContentTypeResolutionError(
+                    "Unable to resolve DNS record content type to model class: "
+                    f"id={record_content_type_id} "
+                    f"label={record_content_type.app_label}.{record_content_type.model}"
+                )
+            record_ids_list = list(record_ids)
+            for offset in range(0, len(record_ids_list), batch_size):
+                chunk = record_ids_list[offset : offset + batch_size]
+                self._delete_executor.delete_chunk(
+                    record_model=record_model,
+                    record_content_type_id=record_content_type_id,
+                    record_ids=chunk,
+                )
 
     def delete_tracking_and_dns_record(self, tracking_record):
         """Delete one DNS record for a tracking row.
@@ -314,9 +329,15 @@ class RecordWriter:
 
         return deleted_count
 
-    def cleanup_records_for_rule_prefetched(self, tracking_by_rule_id, rule_id):
+    def cleanup_records_for_rule_prefetched(self, tracking_by_rule_id, rule_id, bulk_delete_collector=None):
         """Delete prefetched tracking rows (and DNS records) for one rule id."""
         tracking_rows = tracking_by_rule_id.pop(rule_id, [])
+        if bulk_delete_collector is not None:
+            for tracking_row in tracking_rows:
+                bulk_delete_collector[tracking_row.dns_record_content_type_id].add(tracking_row.dns_record_object_id)
+
+            return len(tracking_rows)
+
         for tracking_row in tracking_rows:
             self.delete_tracking_and_dns_record(tracking_row)
 
@@ -334,15 +355,25 @@ class RecordWriter:
 
         return deleted_count
 
-    def cleanup_orphaned_records_prefetched(self, tracking_by_rule_id, applicable_rule_ids):
+    def cleanup_orphaned_records_prefetched(self, tracking_by_rule_id, applicable_rule_ids, bulk_delete_collector=None):
         """Delete prefetched tracking rows for rule ids outside applicable set."""
         deleted_count = 0
         for rule_id in list(tracking_by_rule_id.keys()):
             if rule_id in applicable_rule_ids:
                 continue
-            deleted_count += self.cleanup_records_for_rule_prefetched(tracking_by_rule_id, rule_id)
+            deleted_count += self.cleanup_records_for_rule_prefetched(
+                tracking_by_rule_id, rule_id, bulk_delete_collector=bulk_delete_collector
+            )
 
         return deleted_count
+
+    @staticmethod
+    def _resolve_prefetched_dns_record(tracking_record):
+        """Resolve DNS record from prefetch cache when available."""
+        dns_record = getattr(tracking_record, "_prefetched_dns_record", None)
+        if dns_record is None:
+            dns_record = tracking_record.dns_record
+        return dns_record
 
     @staticmethod
     def _get_record_class(record_type):

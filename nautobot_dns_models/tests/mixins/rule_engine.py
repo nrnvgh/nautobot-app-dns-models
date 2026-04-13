@@ -131,20 +131,16 @@ class BaseRuleEngineMixin:
 
     def _calc_desired_record_data(self, rule, obj):
         """Helper for invoking the engine private API in tests."""
-        # pylint: disable=protected-access
-        return list(self.engine._calculate_desired_record_data(rule, obj))
+        return list(self.engine._materializer.calculate_desired_record_data(rule, obj, phase="unknown"))
 
     def _render_template(self, template_str, context, field_name):
         """Wrapper around the engine's private _render_template helper."""
-        # pylint: disable=protected-access
-        return self.engine._render_template(template_str, context, field_name)
+        return self.engine._materializer.render_template(template_str, context, field_name)
 
     def _get_object_location(self, obj):
         """Wrapper around engine object-location extraction."""
-        # pylint: disable=protected-access
-        return self.engine._get_object_location(obj)
+        return self.engine._resolver.get_object_location(obj)
 
     def _get_object_tenant(self, obj):
         """Wrapper around engine object-tenant extraction."""
-        # pylint: disable=protected-access
-        return self.engine._get_object_tenant(obj)
+        return self.engine._resolver.get_object_tenant(obj)
