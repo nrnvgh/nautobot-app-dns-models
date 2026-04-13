@@ -96,8 +96,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_single_object_mode_processes_requested_object(self, mock_dns_rule_engine_class):
         """Single-object mode should call process_object exactly once."""
-        selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingMetrics()
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_object.return_value = ObjectProcessingMetrics()
         job = ReconcileDNSObjectJob()
 
         result = job.run(
@@ -106,7 +106,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             object_id=str(self.interface.id),
         )
 
-        selected_engine.process_object.assert_called_once_with(self.interface, created=False)
+        rule_engine.process_object.assert_called_once_with(self.interface, created=False)
         self.assertEqual(result["schema_version"], 1)
         self.assertEqual(result["execution"]["targets_selected_count"], 1)
         self.assertEqual(result["execution"]["targets_processed_count"], 1)
@@ -120,8 +120,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_single_object_parent_mode_includes_supported_children(self, mock_dns_rule_engine_class):
         """Single-object parent mode should reconcile both parent and child objects when requested."""
-        selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingMetrics()
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_object.return_value = ObjectProcessingMetrics()
         DNSRule.objects.create(
             name="job-device-reconcile",
             content_type=ContentType.objects.get_for_model(Device),
@@ -140,14 +140,14 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             include_interfaces=True,
         )
 
-        selected_engine.process_object.assert_has_calls(
+        rule_engine.process_object.assert_has_calls(
             [
                 call(self.device, created=False),
                 call(self.interface, created=False),
             ],
             any_order=False,
         )
-        self.assertEqual(selected_engine.process_object.call_count, 2)
+        self.assertEqual(rule_engine.process_object.call_count, 2)
         self.assertEqual(result["scope"]["scanned_models"], ["dcim.device", "dcim.interface"])
         self.assertEqual(result["execution"]["targets_selected_count"], 2)
         self.assertEqual(result["execution"]["targets_processed_count"], 2)
@@ -161,8 +161,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_single_object_parent_mode_includes_module_bay_interfaces(self, mock_dns_rule_engine_class):
         """Single-object parent mode should include interfaces installed on modules in module bays."""
-        selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingMetrics()
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_object.return_value = ObjectProcessingMetrics()
 
         module_interface = self._create_module_bay_interface_for_device(
             name_prefix="object-include-children",
@@ -178,15 +178,15 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             include_interfaces=True,
         )
 
-        processed_objects = [call_args.args[0] for call_args in selected_engine.process_object.call_args_list]
+        processed_objects = [call_args.args[0] for call_args in rule_engine.process_object.call_args_list]
         self.assertIn(module_interface, processed_objects)
         self.assertIn("dcim.interface", result["scope"]["scanned_models"])
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_single_object_parent_mode_includes_child_devices_and_interfaces(self, mock_dns_rule_engine_class):
         """Single-object parent mode should include child devices and their interfaces."""
-        selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingMetrics()
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_object.return_value = ObjectProcessingMetrics()
         DNSRule.objects.create(
             name="job-device-ip-child-reconcile",
             content_type=ContentType.objects.get_for_model(Device),
@@ -210,7 +210,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             include_interfaces=True,
         )
 
-        processed_objects = [call_args.args[0] for call_args in selected_engine.process_object.call_args_list]
+        processed_objects = [call_args.args[0] for call_args in rule_engine.process_object.call_args_list]
         self.assertIn(child_device, processed_objects)
         self.assertIn(child_interface, processed_objects)
         self.assertIn("dcim.device", result["scope"]["scanned_models"])
@@ -219,8 +219,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_job_aggregates_engine_processing_summary(self, mock_dns_rule_engine_class):
         """Job output should aggregate per-object processing summary counters from the rule engine."""
-        selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.side_effect = [
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_object.side_effect = [
             ObjectProcessingMetrics(
                 had_existing_rule_records=True,
                 existing_rule_record_count=2,
@@ -273,8 +273,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_object_job_path_uses_process_object_not_pipeline(self, mock_dns_rule_engine_class):
         """Object reconcile job flow should call process_object and not process_objects_pipeline."""
-        selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_object.return_value = ObjectProcessingMetrics()
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_object.return_value = ObjectProcessingMetrics()
         job = ReconcileDNSObjectJob()
 
         result = job.run(
@@ -283,8 +283,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             object_id=str(self.interface.id),
         )
 
-        selected_engine.process_object.assert_called_once_with(self.interface, created=False)
-        selected_engine.process_objects_pipeline.assert_not_called()
+        rule_engine.process_object.assert_called_once_with(self.interface, created=False)
+        rule_engine.process_objects_pipeline.assert_not_called()
         self.assertEqual(result["execution"]["targets_processed_count"], 1)
         self.assertEqual(result["execution"]["targets_failed_count"], 0)
 
@@ -416,7 +416,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_dryrun_mode_does_not_apply_updates(self, mock_dns_rule_engine_class):
         """Dry-run should enumerate targets without calling process_object."""
-        selected_engine = mock_dns_rule_engine_class.return_value
+        rule_engine = mock_dns_rule_engine_class.return_value
         job = ReconcileDNSObjectJob()
 
         result = job.run(
@@ -425,7 +425,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             object_id=str(self.interface.id),
         )
 
-        selected_engine.process_object.assert_not_called()
+        rule_engine.process_object.assert_not_called()
         self.assertTrue(result["mode"]["dryrun"])
         self.assertEqual(result["execution"]["targets_selected_count"], 1)
         self.assertEqual(result["execution"]["targets_processed_count"], 0)
@@ -446,9 +446,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_bulk_mode_uses_standard_execution_mode_by_default(self, mock_dns_rule_engine_class):
         """Bulk mode should default to standard execution mode."""
-        selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_objects_pipeline.return_value = []
-        selected_engine.get_pipeline_metrics.return_value = {
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_objects_pipeline.return_value = []
+        rule_engine.get_pipeline_metrics.return_value = {
             "batches": 0,
             "objects_total": 0,
             "tracking_rows_total": 0,
@@ -473,9 +473,9 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_bulk_mode_accepts_fast_mode(self, mock_dns_rule_engine_class):
         """Bulk mode should map fast_mode flag to fast execution mode."""
-        selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_objects_pipeline.return_value = []
-        selected_engine.get_pipeline_metrics.return_value = {
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_objects_pipeline.return_value = []
+        rule_engine.get_pipeline_metrics.return_value = {
             "batches": 0,
             "objects_total": 0,
             "tracking_rows_total": 0,
@@ -506,8 +506,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_bulk_mode_include_children_includes_child_devices_and_interfaces(self, mock_dns_rule_engine_class):
         """Bulk mode include-children should process child devices and their interfaces from in-scope parents."""
-        selected_engine = mock_dns_rule_engine_class.return_value
-        selected_engine.process_objects_pipeline.side_effect = lambda model_objects: [
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_objects_pipeline.side_effect = lambda model_objects: [
             ObjectProcessingMetrics() for _ in model_objects
         ]
         out_of_scope_location = Location.objects.create(
@@ -541,7 +541,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         )
 
         processed_objects = []
-        for call_args in selected_engine.process_objects_pipeline.call_args_list:
+        for call_args in rule_engine.process_objects_pipeline.call_args_list:
             processed_objects.extend(call_args.args[0])
 
         self.assertIn(child_device, processed_objects)
@@ -554,7 +554,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_invalid_source_model_marks_job_failed(self, mock_dns_rule_engine_class):
         """Submitting an unsupported source model should fail and skip processing."""
-        selected_engine = mock_dns_rule_engine_class.return_value
+        rule_engine = mock_dns_rule_engine_class.return_value
         unsupported_content_type = ContentType.objects.get_for_model(Location)
         unsupported_label = f"{unsupported_content_type.app_label}.{unsupported_content_type.model}"
         result = ReconcileDNSBulkJob().run(
@@ -563,7 +563,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         )
 
         # Invalid source model input should fail during validation before any object processing is attempted.
-        selected_engine.process_object.assert_not_called()
+        rule_engine.process_object.assert_not_called()
 
         self.assertIn("error", result)
         self.assertEqual(result["error"], "invalid_source_models")

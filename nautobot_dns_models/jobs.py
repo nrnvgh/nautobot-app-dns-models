@@ -333,7 +333,7 @@ class ReconcileDNSBulkJob(Job):
             "Enable faster reconciliation; no per-record changelogs or delete signals."
             ' See <a href="/static/nautobot_dns_models/docs/user/rules/reconciliation_jobs.html">the documentation</a>'
             " for more details."
-        )
+        ),
     )
     dryrun = DryRunVar(description="Preview targets only; do not apply reconciliation updates.")
 
@@ -354,7 +354,7 @@ class ReconcileDNSBulkJob(Job):
         started_at = perf_counter()
 
         selected_execution_mode = ExecutionMode.FAST if fast_mode else ExecutionMode.STANDARD
-        selected_engine = DNSRuleEngine(execution_mode=selected_execution_mode)
+        rule_engine = DNSRuleEngine(execution_mode=selected_execution_mode)
 
         location_ids = {location.id for location in (locations or [])}
         tenant_ids = {tenant.id for tenant in (tenants or [])}
@@ -406,7 +406,7 @@ class ReconcileDNSBulkJob(Job):
             self._process_pipeline_targets_in_batches(
                 targets,
                 summary=summary,
-                selected_engine=selected_engine,
+                rule_engine=rule_engine,
                 dryrun=dryrun,
                 limit=limit,
                 batch_size=batch_size,
@@ -435,7 +435,7 @@ class ReconcileDNSBulkJob(Job):
             batch_size=batch_size,
         )
         result["execution"]["runtime_seconds"] = round(perf_counter() - started_at, 3)
-        result["mode"]["pipeline_stage_metrics"] = selected_engine.get_pipeline_metrics()
+        result["mode"]["pipeline_stage_metrics"] = rule_engine.get_pipeline_metrics()
 
         _log_result_summary(self.logger, result)
 
@@ -632,7 +632,7 @@ class ReconcileDNSBulkJob(Job):
         targets,
         *,
         summary,
-        selected_engine,
+        rule_engine,
         dryrun,
         limit,
         batch_size,
@@ -648,7 +648,7 @@ class ReconcileDNSBulkJob(Job):
                 self._process_pipeline_target_batch(
                     object_batch,
                     summary=summary,
-                    selected_engine=selected_engine,
+                    rule_engine=rule_engine,
                     dryrun=dryrun,
                     limit=limit,
                 )
@@ -658,7 +658,7 @@ class ReconcileDNSBulkJob(Job):
             self._process_pipeline_target_batch(
                 object_batch,
                 summary=summary,
-                selected_engine=selected_engine,
+                rule_engine=rule_engine,
                 dryrun=dryrun,
                 limit=limit,
             )
@@ -668,7 +668,7 @@ class ReconcileDNSBulkJob(Job):
         object_batch,
         *,
         summary,
-        selected_engine,
+        rule_engine,
         dryrun,
         limit,
     ):
@@ -690,7 +690,7 @@ class ReconcileDNSBulkJob(Job):
         for model_class, model_objects in targets_by_model_class.items():
             model_label = _model_label(model_class)
             try:
-                batch_summaries = selected_engine.process_objects_pipeline(model_objects)
+                batch_summaries = rule_engine.process_objects_pipeline(model_objects)
             except DNSRuleEngineIntegrityError:
                 raise
             except (
@@ -867,7 +867,7 @@ class ReconcileDNSObjectJob(Job):
     def _process_targets(self, targets, *, dryrun, limit, batch_size):
         """Process target iterator and return aggregated execution/reconciliation summary."""
         summary = ReconcileRunSummary()
-        selected_engine = DNSRuleEngine()
+        rule_engine = DNSRuleEngine()
 
         object_batch = []
         for model_class, obj in targets:
@@ -879,7 +879,7 @@ class ReconcileDNSObjectJob(Job):
                 self._process_target_batch(
                     object_batch,
                     summary=summary,
-                    selected_engine=selected_engine,
+                    rule_engine=rule_engine,
                     dryrun=dryrun,
                     limit=limit,
                 )
@@ -889,7 +889,7 @@ class ReconcileDNSObjectJob(Job):
             self._process_target_batch(
                 object_batch,
                 summary=summary,
-                selected_engine=selected_engine,
+                rule_engine=rule_engine,
                 dryrun=dryrun,
                 limit=limit,
             )
@@ -901,7 +901,7 @@ class ReconcileDNSObjectJob(Job):
         object_batch,
         *,
         summary,
-        selected_engine,
+        rule_engine,
         dryrun,
         limit,
     ):
@@ -924,7 +924,7 @@ class ReconcileDNSObjectJob(Job):
         for model_class, obj in targets_in_scope:
             model_label = _model_label(model_class)
             try:
-                processing_summary = selected_engine.process_object(obj, created=False)
+                processing_summary = rule_engine.process_object(obj, created=False)
                 summary.mark_processed_success(processing_summary)
             except DNSRuleEngineIntegrityError:
                 raise
