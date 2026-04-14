@@ -36,6 +36,9 @@ class FastDeleteExecutor(DeleteExecutor):
         """Delete via raw SQL and return deleted DNS record-model count."""
         db_alias = record_model.objects.db
         record_ids_list = list(record_ids)
+
+        # Intentionally use raw SQL path in FAST mode to avoid ORM collector side effects.
+        # pylint: disable=protected-access
         with transaction.atomic(using=db_alias):
             DNSRuleRecord.objects.filter(
                 dns_record_content_type_id=record_content_type_id,
@@ -58,3 +61,4 @@ class FastDeleteExecutor(DeleteExecutor):
             )._raw_delete(using=db_alias)
 
             return record_model.objects.filter(pk__in=record_ids_list)._raw_delete(using=db_alias)
+        # pylint: enable=protected-access

@@ -22,7 +22,7 @@ class ScopeResolver:
         """
         self._engine_logger = engine_logger
 
-    def get_object_location(self, source_obj):
+    def get_object_location(self, source_obj):  # pylint: disable=too-many-return-statements
         """Resolve location across supported source object types."""
         if isinstance(source_obj, dcim_models.Interface):
             if source_obj.device:
@@ -54,6 +54,7 @@ class ScopeResolver:
         if isinstance(source_obj, virtualization_models.VMInterface):
             if source_obj.virtual_machine:
                 return source_obj.virtual_machine.location
+
             return None
 
         if isinstance(source_obj, dcim_models.Device):
@@ -65,13 +66,15 @@ class ScopeResolver:
         if isinstance(source_obj, ipam_models.Service):
             if source_obj.device:
                 return source_obj.device.location
+
             if source_obj.virtual_machine:
                 return source_obj.virtual_machine.location
+
             return None
 
         return None
 
-    def get_object_tenant(self, source_obj):
+    def get_object_tenant(self, source_obj):  # pylint: disable=too-many-return-statements
         """Resolve tenant across supported source object types."""
         if isinstance(source_obj, dcim_models.Interface):
             if source_obj.device:

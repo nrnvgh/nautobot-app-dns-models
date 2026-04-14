@@ -119,11 +119,12 @@ class EngineLogger:
         return getattr(meta, "label_lower", obj.__class__.__name__)
 
     @staticmethod
-    def _infer_reason_code(exc, default_reason):
+    def _infer_reason_code(exc, default_reason):  # pylint: disable=too-many-return-statements
         """Infer stable reason code from known exception shapes."""
         if isinstance(exc, DNSRuleRenderedValueLookupError):
             if exc.reason_code:
                 return exc.reason_code
+
             return default_reason
 
         if isinstance(exc, DNSRuleTemplateRenderedEmptyError):

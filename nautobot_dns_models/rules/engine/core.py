@@ -38,19 +38,19 @@ class DNSRuleEngine:
 
     def __init__(self, *, execution_mode=ExecutionMode.STANDARD):
         """Initialize DNS rule engine caches and pipeline state."""
-        self._cache = EngineCache()
-        self._batched_create_state = BatchedCreateState()
+        cache = EngineCache()
+        batched_create_state = BatchedCreateState()
         self._pipeline_metrics = PipelineMetrics()
         #
         # Another way to do this would be to apply an overlay to the base environment which
         # set trim_blocks=True, lstrip_blocks=True, and possibly even undefined=StrictUndefined.
         # This could be useful, but would be different than how the nautobot core sets up its environment.
         # Currently optimizing for consistency rather than maximizing ease of use for DNS rules.
-        self._jinja_env = django_template_engines["jinja"].env
+        jinja_env = django_template_engines["jinja"].env
 
         selected_execution_mode = ExecutionMode(execution_mode)
-        self._context = EngineContext(
-            jinja_env=self._jinja_env,
+        context = EngineContext(
+            jinja_env=jinja_env,
             bulk_rename_update_batch_size=self.BULK_RENAME_UPDATE_BATCH_SIZE,
             bulk_create_batched_pipeline_size=self.BULK_CREATE_BATCHED_PIPELINE_SIZE,
             bulk_delete_batched_pipeline_size=self.BULK_DELETE_BATCHED_PIPELINE_SIZE,
@@ -58,10 +58,10 @@ class DNSRuleEngine:
         )
 
         self._engine_logger = EngineLogger()
-        self._resolver = RuleResolver(self._cache, self._context, self._engine_logger)
+        self._resolver = RuleResolver(cache, context, self._engine_logger)
         self._materializer = RecordMaterializer(
-            self._cache,
-            self._context,
+            cache,
+            context,
             engine_logger=self._engine_logger,
         )
 
@@ -73,12 +73,12 @@ class DNSRuleEngine:
             update_executor = StandardUpdateExecutor()
 
         self._writer = RecordWriter(
-            self._cache,
-            self._context,
+            cache,
+            context,
             resolver=self._resolver,
             materializer=self._materializer,
             engine_logger=self._engine_logger,
-            batched_create_state=self._batched_create_state,
+            batched_create_state=batched_create_state,
             delete_executor=delete_executor,
             update_executor=update_executor,
         )
@@ -86,10 +86,10 @@ class DNSRuleEngine:
             writer=self._writer,
             resolver=self._resolver,
             materializer=self._materializer,
-            context=self._context,
+            context=context,
             engine_logger=self._engine_logger,
             pipeline_metrics=self._pipeline_metrics,
-            batched_create_state=self._batched_create_state,
+            batched_create_state=batched_create_state,
         )
 
     #
