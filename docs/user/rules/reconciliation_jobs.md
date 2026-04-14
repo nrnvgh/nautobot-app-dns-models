@@ -72,39 +72,45 @@ Example success payload (bulk run):
 
 ```jsonc
 {
+  "schema_version": 1,
   "mode": {
-    "dryrun": false,                 // True for preview-only runs.
-    "single_object": false,          // True for object job runs; false for bulk.
-    "include_child_devices": true,   // Whether child-device expansion was enabled.
-    "include_interfaces": true,      // Whether interface expansion was enabled.
-    "pipeline_stage_metrics": {}     // Bulk-only per-stage timing breakdown.
+    "dryrun": false,                              // True for preview-only runs.
+    "single_object": false,                       // True for object job runs; false for bulk.
+    "include_child_devices": true,                // Whether child-device expansion was enabled.
+    "include_interfaces": true,                   // Whether interface expansion was enabled.
+    "fast_mode": true,                            // True when bulk fast_mode was selected.
+    "execution_mode": "fast",                     // "standard" or "fast".
+    "pipeline_stage_metrics": {}                  // Bulk-only per-stage timing breakdown.
   },
   "scope": {
     "scanned_models": ["dcim.device", "dcim.interface"], // Model labels scanned while selecting targets.
     "filters": {
-      "source_models": ["dcim.device"], // Source-model filters applied.
-      "rule_ids": ["2c2f..."],          // DNSRule UUID filters applied.
-      "location_ids": [],               // Location UUID filters applied.
-      "tenant_ids": [],                 // Tenant UUID filters applied.
-      "limit": 5000,                    // Max in-scope targets allowed.
-      "batch_size": 500                 // Batch size used during processing.
+      "source_models": ["dcim.device"],            // Source-model filters applied.
+      "rule_ids": ["2c2f..."],                     // DNSRule UUID filters applied.
+      "location_ids": [],                          // Location UUID filters applied.
+      "tenant_ids": [],                            // Tenant UUID filters applied.
+      "limit": 5000,                               // Max in-scope targets allowed.
+      "batch_size": 500                            // Batch size used during processing.
     }
   },
   "execution": {
-    "targets_selected_count": 1250,    // Targets selected after scope/filter evaluation.
-    "targets_processed_count": 1250,   // Targets processed by the pipeline.
-    "targets_succeeded_count": 1248,   // Processed targets without target-level failure.
-    "targets_failed_count": 2,         // Processed targets with target-level failure.
-    "runtime_seconds": 7.84            // End-to-end runtime in seconds.
+    "targets_selected_count": 1250,                // Targets selected after scope/filter evaluation.
+    "targets_processed_count": 1250,               // Targets processed by the pipeline.
+    "targets_succeeded_count": 1248,               // Processed targets without target-level failure.
+    "targets_failed_count": 2,                     // Processed targets with target-level failure.
+    "runtime_seconds": 7.84                        // End-to-end runtime in seconds.
   },
   "reconciliation": {
-    "objects_changed": 200,            // Targets with at least one create/update/delete change.
-    "record_ops_create_count": 190,    // DNS records created.
-    "record_ops_delete_count": 10,     // DNS records deleted.
-    "record_ops_update_count": 0,      // DNS records updated in place.
-    "record_ops_total_count": 200,     // Total create+delete+update operations.
-    "changed_record_count": 200,       // Total DNS records changed across operations.
-    "targets_noop_count": 1048         // Targets evaluated with no required changes.
+    "objects_with_existing_rule_records": 175,     // Targets that already had tracking rows.
+    "existing_rule_record_count": 420,             // Total existing tracking rows seen across targets.
+    "objects_changed": 200,                        // Targets with at least one create/update/delete change.
+    "record_ops_create_count": 190,                // DNS records created.
+    "record_ops_delete_count": 10,                 // DNS records deleted.
+    "record_ops_update_count": 0,                  // DNS records updated in place.
+    "record_ops_unchanged_count": 800,             // Existing DNS records evaluated but unchanged.
+    "record_ops_total_count": 200,                 // Total create+delete+update operations.
+    "changed_record_count": 200,                   // Total DNS records changed across operations.
+    "targets_noop_count": 1048                     // Targets evaluated with no required changes.
   }
 }
 ```
@@ -121,9 +127,9 @@ Failure paths can return a reduced payload instead of the full success shape, fo
 
 ```jsonc
 {
-  "error": "invalid_source_models",                 // Stable machine-readable failure code.
-  "message": "Unsupported source_models: foo.bar",  // Human-readable failure detail.
-  "invalid_source_models": ["foo.bar"]              // Offending values from caller input.
+  "dryrun": false,
+  "error": "invalid_source_models",            // Stable machine-readable failure code.
+  "invalid_source_models": ["foo.bar"]         // Offending values from caller input.
 }
 ```
 
@@ -136,6 +142,18 @@ Reconciliation results: mode=<apply|dryrun> models=[...] seen=<n> processed=<n> 
 ```
 
 Use this line for quick run review. Use the full result payload for automation and metric reporting.
+
+## Engine Processing Pipeline
+
+Bulk reconciliation uses a staged pipeline implementation under `nautobot_dns_models.rules.engine`:
+
+1. **Fetch** - Load existing `DNSRuleRecord` tracking rows for the current object batch and prefetch linked DNS records.
+2. **Planning** - Resolve applicable rules and compute per-object work items to evaluate.
+3. **Materialization** - Render templates and build desired record candidates (including per-candidate DNS view/zone resolution).
+4. **Apply** - Reconcile tracked vs desired records and queue create/update/delete operations.
+5. **Bulk Flush** - Flush queued fast-mode rename operations.
+
+The object-scoped job still uses single-object processing, while bulk jobs use this staged pipeline and report per-stage metrics in `mode.pipeline_stage_metrics`.
 
 ## Related Documentation
 
