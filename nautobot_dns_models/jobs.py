@@ -208,9 +208,8 @@ def _build_result_payload(
     batch_size=100,
 ):
     """Build structured job result payload from run context and accumulated counters."""
-    selected_execution_mode = (
-        execution_mode if isinstance(execution_mode, ExecutionMode) else ExecutionMode(str(execution_mode))
-    )
+    selected_execution_mode = ExecutionMode(execution_mode)
+
     return {
         "schema_version": 1,
         "mode": {
