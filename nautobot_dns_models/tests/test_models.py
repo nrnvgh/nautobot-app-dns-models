@@ -13,6 +13,7 @@ from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from nautobot.tenancy.models import Tenant
 
 from nautobot_dns_models.choices import DNSRuleRecordTypeChoices
+from nautobot_dns_models.jinja_literals import collect_literal_validation_errors
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
@@ -1229,6 +1230,41 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         )
 
         rule.full_clean()
+
+    def test_collect_literal_validation_errors_direct(self):
+        """collect_literal_validation_errors should report literal violations by field."""
+        template_fields = [
+            ("zone_template", "site..example"),
+            ("name_template", "{{ 'bad label' }}.-{{ obj.name }}"),
+            ("hyphen_dot_template", "site-.example"),
+            ("dedupe_template", "{{ 'a.-b.-c' }}"),
+            ("value_template", "{{ obj.primary_ip4 }}"),
+            ("empty_template", ""),
+        ]
+
+        literal_errors = collect_literal_validation_errors(template_fields)
+
+        self.assertEqual(
+            literal_errors["zone_template"],
+            ["Consecutive dots '..' are not allowed"],
+        )
+        self.assertEqual(
+            literal_errors["name_template"],
+            [
+                "Whitespace in literals is not allowed; use '-' or '.'",
+                "Dot followed by hyphen '.-' is not allowed",
+            ],
+        )
+        self.assertEqual(
+            literal_errors["hyphen_dot_template"],
+            ["Hyphen followed by dot '-.' is not allowed"],
+        )
+        self.assertEqual(
+            literal_errors["dedupe_template"],
+            ["Dot followed by hyphen '.-' is not allowed"],
+        )
+        self.assertNotIn("value_template", literal_errors)
+        self.assertNotIn("empty_template", literal_errors)
 
     #
     # Uniqueness and scope constraints tests

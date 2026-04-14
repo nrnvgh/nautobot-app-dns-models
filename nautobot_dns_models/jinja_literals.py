@@ -111,7 +111,7 @@ def collect_literal_validation_errors(template_fields):
         Dict mapping field_name to a de-duplicated list of error messages. Fields
         without violations are omitted from the result.
     """
-    results = {}
+    errors_by_field = {}
 
     for field_name, template_content in template_fields:
         if not template_content:
@@ -126,20 +126,14 @@ def collect_literal_validation_errors(template_fields):
         if any(_string_contains_space(frag) for frag in literal_fragments):
             field_errors.append("Whitespace in literals is not allowed; use '-' or '.'")
 
-        for bad, message in INVALID_LITERAL_SUBSTRING_PATTERNS:
-            if any(bad in frag for frag in literal_fragments):
+        for substring, message in INVALID_LITERAL_SUBSTRING_PATTERNS:
+            if any(substring in frag for frag in literal_fragments):
                 field_errors.append(message)
 
         if field_errors:
-            seen = set()
-            unique_errors = []
-            for msg in field_errors:
-                if msg not in seen:
-                    seen.add(msg)
-                    unique_errors.append(msg)
-            results[field_name] = unique_errors
+            errors_by_field[field_name] = list(dict.fromkeys(field_errors))
 
-    return results
+    return errors_by_field
 
 
 def _string_contains_space(value):
