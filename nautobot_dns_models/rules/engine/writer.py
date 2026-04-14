@@ -122,6 +122,22 @@ class RecordWriter:
         bulk_update_collector=None,
     ):
         """Reconcile records for one rule/object pair."""
+        plan = self._build_reconcile_plan(
+            rule=rule,
+            source_obj=source_obj,
+            tracking_records=tracking_records,
+            desired_record_data=desired_record_data,
+        )
+
+        return self._apply_reconcile_plan(
+            plan=plan,
+            rule=rule,
+            source_obj=source_obj,
+            bulk_update_collector=bulk_update_collector,
+        )
+
+    def _build_reconcile_plan(self, *, rule, source_obj, tracking_records=None, desired_record_data=None):
+        """Build reconcile plan from existing tracking rows and desired record data."""
         if tracking_records is None:
             tracking_records = self._get_existing_tracking_records(rule, source_obj)
 
@@ -149,6 +165,10 @@ class RecordWriter:
             desired_records_by_identity=desired_records_by_identity,
         )
 
+        return plan
+
+    def _apply_reconcile_plan(self, *, plan, rule, source_obj, bulk_update_collector=None):
+        """Apply reconcile plan and return operation counts."""
         for identity_key in plan.records_to_delete:
             self.delete_tracking_and_dns_record(plan.existing_records_by_identity[identity_key])
 
