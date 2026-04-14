@@ -49,6 +49,7 @@ class ReconcileRunSummary:
     record_ops_create_count: int = 0
     record_ops_delete_count: int = 0
     record_ops_update_count: int = 0
+    record_ops_unchanged_count: int = 0
     targets_noop_count: int = 0
 
     def mark_target_selected(self):
@@ -76,6 +77,7 @@ class ReconcileRunSummary:
         self.record_ops_create_count += processing_summary.record_ops_create_count
         self.record_ops_delete_count += processing_summary.record_ops_delete_count
         self.record_ops_update_count += processing_summary.record_ops_update_count
+        self.record_ops_unchanged_count += processing_summary.record_ops_unchanged_count
 
         if (
             processing_summary.changed_record_count == 0
@@ -103,6 +105,7 @@ class ReconcileRunSummary:
             "record_ops_create_count": self.record_ops_create_count,
             "record_ops_delete_count": self.record_ops_delete_count,
             "record_ops_update_count": self.record_ops_update_count,
+            "record_ops_unchanged_count": self.record_ops_unchanged_count,
             "record_ops_total_count": (
                 self.record_ops_create_count + self.record_ops_delete_count + self.record_ops_update_count
             ),

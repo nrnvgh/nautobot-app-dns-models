@@ -15,6 +15,7 @@ class ObjectProcessingMetrics:
     record_ops_create_count: int = 0
     record_ops_delete_count: int = 0
     record_ops_update_count: int = 0
+    record_ops_unchanged_count: int = 0
 
 
 @dataclass

@@ -93,4 +93,5 @@ class FastUpdateExecutor(UpdateExecutor):
 
         dns_record.name = desired_name
         bulk_update_collector[type(dns_record)].append(dns_record)
+
         return UpdateResult.UPDATED

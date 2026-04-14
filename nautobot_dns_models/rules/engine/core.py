@@ -115,7 +115,8 @@ class DNSRuleEngine:
         summary.changed_record_count = change_result["changed_record_count"]
         summary.record_ops_create_count = change_result["record_ops_create_count"]
         summary.record_ops_delete_count = change_result["record_ops_delete_count"]
-        summary.record_ops_update_count = change_result.get("record_ops_update_count", 0)
+        summary.record_ops_update_count = change_result["record_ops_update_count"]
+        summary.record_ops_unchanged_count = change_result["record_ops_unchanged_count"]
 
         return summary
 

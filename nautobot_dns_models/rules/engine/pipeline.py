@@ -310,6 +310,7 @@ class EnginePipeline:
         )
         create_count = 0
         update_count = 0
+        unchanged_count = 0
 
         for rule in rules:
             if needed_rule_ids and rule.pk not in needed_rule_ids:
@@ -333,11 +334,13 @@ class EnginePipeline:
             )
             create_count += reconcile_summary["create"]
             delete_count += reconcile_summary["delete"]
-            update_count += reconcile_summary.get("update", 0)
+            update_count += reconcile_summary["update"]
+            unchanged_count += reconcile_summary["unchanged"]
 
         summary.changed_record_count = create_count + delete_count + update_count
         summary.record_ops_create_count = create_count
         summary.record_ops_delete_count = delete_count
         summary.record_ops_update_count = update_count
+        summary.record_ops_unchanged_count = unchanged_count
 
         return summary

@@ -81,6 +81,7 @@ class RecordWriter:
             "record_ops_create_count": changed_record_count,
             "record_ops_delete_count": 0,
             "record_ops_update_count": 0,
+            "record_ops_unchanged_count": 0,
         }
 
     def update_dns_records_for_object(self, source_obj, applicable_rules):
@@ -88,15 +89,19 @@ class RecordWriter:
         delete_count = self.cleanup_orphaned_records(source_obj, applicable_rules)
         create_count = 0
         update_count = 0
+        unchanged_count = 0
+
         for rule in applicable_rules:
             if not self._resolver.object_needs_dns_records_for_rule(source_obj, rule):
                 delete_count += self._cleanup_records_for_rule(rule, source_obj)
                 continue
+
             try:
                 reconcile_summary = self.reconcile_records_for_rule(rule, source_obj)
                 create_count += reconcile_summary["create"]
                 delete_count += reconcile_summary["delete"]
-                update_count += reconcile_summary.get("update", 0)
+                update_count += reconcile_summary["update"]
+                unchanged_count += reconcile_summary["unchanged"]
             except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                 self._engine_logger.log_rule_processing_error(
                     rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
@@ -111,6 +116,7 @@ class RecordWriter:
             "record_ops_create_count": create_count,
             "record_ops_delete_count": delete_count,
             "record_ops_update_count": update_count,
+            "record_ops_unchanged_count": unchanged_count,
         }
 
     def reconcile_records_for_rule(
@@ -173,7 +179,7 @@ class RecordWriter:
             self.delete_tracking_and_dns_record(plan.existing_records_by_identity[identity_key])
 
         updated_count = 0
-        keep_count = 0
+        unchanged_count = 0
         skipped_update = 0
         for identity_key in plan.records_to_check_for_update:
             tracking_record = plan.existing_records_by_identity[identity_key]
@@ -190,8 +196,8 @@ class RecordWriter:
             if update_result == UpdateResult.UPDATED:
                 updated_count += 1
             elif update_result == UpdateResult.UNCHANGED:
-                keep_count += 1
-            else:
+                unchanged_count += 1
+            elif update_result == UpdateResult.FAILED:
                 skipped_update += 1
 
         created_records = []
@@ -207,6 +213,7 @@ class RecordWriter:
             "create": len(created_records),
             "delete": len(plan.records_to_delete),
             "update": updated_count,
+            "unchanged": unchanged_count,
             "skipped": skipped_create + skipped_update,
         }
 

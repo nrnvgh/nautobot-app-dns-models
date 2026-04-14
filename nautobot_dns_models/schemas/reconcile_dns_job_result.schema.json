@@ -162,6 +162,7 @@
         "record_ops_create_count",
         "record_ops_delete_count",
         "record_ops_update_count",
+        "record_ops_unchanged_count",
         "record_ops_total_count",
         "changed_record_count",
         "targets_noop_count"
@@ -173,6 +174,7 @@
         "record_ops_create_count": { "type": "integer", "minimum": 0 },
         "record_ops_delete_count": { "type": "integer", "minimum": 0 },
         "record_ops_update_count": { "type": "integer", "minimum": 0 },
+        "record_ops_unchanged_count": { "type": "integer", "minimum": 0 },
         "record_ops_total_count": { "type": "integer", "minimum": 0 },
         "changed_record_count": { "type": "integer", "minimum": 0 },
         "targets_noop_count": { "type": "integer", "minimum": 0 }
