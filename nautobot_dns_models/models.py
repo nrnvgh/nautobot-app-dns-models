@@ -708,9 +708,7 @@ class DNSRule(PrimaryModel):
                 if not model_class:
                     errors["content_type"].append("Selected content type does not exist")
             except ObjectDoesNotExist:
-                errors["content_type"].append(
-                    f"Invalid content type '{self.content_type.app_label}.{self.content_type.model}'"
-                )
+                errors["content_type"].append("Invalid content type reference")
 
         if errors:
             raise ValidationError(dict(errors))
