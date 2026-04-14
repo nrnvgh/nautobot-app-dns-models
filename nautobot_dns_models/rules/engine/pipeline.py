@@ -18,6 +18,7 @@ from nautobot_dns_models.models import DNSRuleRecord, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name_if_enabled
 from nautobot_dns_models.rules.engine.constants import PHASE_UPDATE_RECONCILE
 from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
+from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics, PipelineBatchMetrics
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
 from nautobot_dns_models.rules.engine.types import (
@@ -41,7 +42,6 @@ class EnginePipeline:
         resolver,
         materializer,
         context,
-        engine_logger,
         pipeline_metrics,
         batched_create_state,
     ):
@@ -52,7 +52,6 @@ class EnginePipeline:
             resolver: Rule resolver collaborator for scope and applicability.
             materializer: Record materializer used for desired data generation.
             context: Engine runtime context (including execution mode).
-            engine_logger: Structured logger helper for pipeline errors.
             pipeline_metrics: Metrics collector for per-batch timing and counts.
             batched_create_state: Shared mutable state for batched-create queueing.
         """
@@ -60,7 +59,7 @@ class EnginePipeline:
         self._resolver = resolver
         self._materializer = materializer
         self._context = context
-        self._engine_logger = engine_logger
+        self._engine_logger = DEFAULT_ENGINE_LOGGER
         self._pipeline_metrics = pipeline_metrics
         self._batched_create_state = batched_create_state
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 import uuid
 
@@ -13,14 +12,12 @@ from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSR
 from nautobot_dns_models.models import DNSZone
 from nautobot_dns_models.rules.engine.constants import (
     PHASE_CANDIDATE_EXPANSION,
-    REASON_INVALID_ADDRESS_UUID,
     REASON_VIEW_NOT_FOUND,
     REASON_VIEW_TEMPLATE_EMPTY,
     REASON_ZONE_NOT_FOUND,
 )
+from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
-
-logger = logging.getLogger(__name__)
 
 
 class RecordCandidateBuilder:
@@ -39,6 +36,7 @@ class RecordCandidateBuilder:
         self._render_template = render_template
         self._default_view_getter = default_view_getter
         self._apply_record_type_fields = apply_record_type_fields
+        self._engine_logger = DEFAULT_ENGINE_LOGGER
 
     def get_record_data_variations_for_rule(self, rule, context, base_record_data):
         """Build list of record data dictionaries (1 for single, N for multiple records)."""
@@ -66,20 +64,10 @@ class RecordCandidateBuilder:
             try:
                 parsed_address_id = uuid.UUID(address_id)
             except ValueError:
-                logger.warning(
-                    "dnsrule_candidate_skipped reason=%s rule=%s invalid_address_id=%s",
-                    REASON_INVALID_ADDRESS_UUID,
-                    rule.name,
-                    address_id,
-                    extra={
-                        "event": "dnsrule_engine",
-                        "reason_code": REASON_INVALID_ADDRESS_UUID,
-                        "phase": PHASE_CANDIDATE_EXPANSION,
-                        "rule_id": str(rule.pk),
-                        "rule_name": rule.name,
-                        "record_type": rule.record_type,
-                        "invalid_address_id": address_id,
-                    },
+                self._engine_logger.log_candidate_invalid_address_uuid(
+                    rule=rule,
+                    invalid_address_id=address_id,
+                    phase=PHASE_CANDIDATE_EXPANSION,
                 )
                 continue
 

@@ -12,6 +12,7 @@ from nautobot_dns_models.exceptions import DNSRecordContentTypeResolutionError, 
 from nautobot_dns_models.models import DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
 from nautobot_dns_models.rules.engine.constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
+from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.reconcile import ReconcilePlanner
 from nautobot_dns_models.rules.engine.update_strategies import UpdateResult
 
@@ -28,7 +29,6 @@ class RecordWriter:
         *,
         resolver,
         materializer,
-        engine_logger,
         batched_create_state,
         delete_executor,
         update_executor,
@@ -41,7 +41,6 @@ class RecordWriter:
             context: Engine runtime context containing execution settings.
             resolver: Rule resolver collaborator used for applicability checks.
             materializer: Desired-record materialization collaborator.
-            engine_logger: Structured logger helper for reconcile operations.
             batched_create_state: Shared mutable state for batched-create queueing.
             delete_executor: Delete strategy for standard/fast execution modes.
             update_executor: Update strategy for standard/fast execution modes.
@@ -54,7 +53,7 @@ class RecordWriter:
         self._batched_create_state = batched_create_state
         self._delete_executor = delete_executor
         self._update_executor = update_executor
-        self._engine_logger = engine_logger
+        self._engine_logger = DEFAULT_ENGINE_LOGGER
         self._reconcile_planner = reconcile_planner or ReconcilePlanner()
 
     def create_dns_records_for_object(self, source_obj, applicable_rules):

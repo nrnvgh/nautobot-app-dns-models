@@ -798,7 +798,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         class ParentNotDevice:
             pass
 
-        with patch("nautobot_dns_models.rules.engine.scope.logger.warning") as mock_warning:
+        with patch("nautobot_dns_models.rules.engine.logging.logger.warning") as mock_warning:
             with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
                 with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
                     module_property.return_value = ModuleWithoutTenant()

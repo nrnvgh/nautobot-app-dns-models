@@ -1,26 +1,19 @@
 """Scope resolution helpers for DNS rule source objects."""
 
-import logging
-
 from nautobot.dcim import models as dcim_models
 from nautobot.ipam import models as ipam_models
 from nautobot.virtualization import models as virtualization_models
 
-from nautobot_dns_models.rules.engine.constants import PHASE_UNKNOWN, REASON_INTERFACE_PARENT_FALLBACK_FAILED
-
-logger = logging.getLogger(__name__)
+from nautobot_dns_models.rules.engine.constants import PHASE_UNKNOWN
+from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 
 
 class ScopeResolver:
     """Resolve location/tenant scope for supported source object types."""
 
-    def __init__(self, engine_logger):
-        """Store structured logger helper used for warning context.
-
-        Args:
-            engine_logger: Structured logger helper for model labels/metadata.
-        """
-        self._engine_logger = engine_logger
+    def __init__(self):
+        """Store structured logger helper used for warning context."""
+        self._engine_logger = DEFAULT_ENGINE_LOGGER
 
     def get_object_location(self, source_obj):  # pylint: disable=too-many-return-statements
         """Resolve location across supported source object types."""
@@ -32,22 +25,11 @@ class ScopeResolver:
             if isinstance(parent, dcim_models.Device):
                 return parent.location
 
-            logger.warning(
-                "dnsrule_interface_parent_fallback_failed field=%s source=%s:%s parent_type=%s",
-                "location",
-                self._engine_logger._safe_model_label(source_obj),  # pylint: disable=protected-access
-                source_obj.pk,
-                type(parent).__name__,
-                extra={
-                    "event": "dnsrule_engine",
-                    "reason_code": REASON_INTERFACE_PARENT_FALLBACK_FAILED,
-                    "phase": PHASE_UNKNOWN,
-                    "source_ct": self._engine_logger._safe_model_label(source_obj),  # pylint: disable=protected-access
-                    "source_id": str(source_obj.pk),
-                    "source_repr": str(source_obj),
-                    "resolution_field": "location",
-                    "parent_type": type(parent).__name__,
-                },
+            self._engine_logger.log_interface_parent_fallback_failed(
+                source_obj=source_obj,
+                resolution_field="location",
+                parent_type=type(parent).__name__,
+                phase=PHASE_UNKNOWN,
             )
             return None
 
@@ -88,22 +70,11 @@ class ScopeResolver:
             if isinstance(parent, dcim_models.Device):
                 return parent.tenant
 
-            logger.warning(
-                "dnsrule_interface_parent_fallback_failed field=%s source=%s:%s parent_type=%s",
-                "tenant",
-                self._engine_logger._safe_model_label(source_obj),  # pylint: disable=protected-access
-                source_obj.pk,
-                type(parent).__name__,
-                extra={
-                    "event": "dnsrule_engine",
-                    "reason_code": REASON_INTERFACE_PARENT_FALLBACK_FAILED,
-                    "phase": PHASE_UNKNOWN,
-                    "source_ct": self._engine_logger._safe_model_label(source_obj),  # pylint: disable=protected-access
-                    "source_id": str(source_obj.pk),
-                    "source_repr": str(source_obj),
-                    "resolution_field": "tenant",
-                    "parent_type": type(parent).__name__,
-                },
+            self._engine_logger.log_interface_parent_fallback_failed(
+                source_obj=source_obj,
+                resolution_field="tenant",
+                parent_type=type(parent).__name__,
+                phase=PHASE_UNKNOWN,
             )
             return None
 

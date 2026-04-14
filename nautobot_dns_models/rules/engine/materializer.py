@@ -9,6 +9,7 @@ from nautobot_dns_models import models as dns_models
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.normalization import normalize_dns_name_if_enabled
 from nautobot_dns_models.rules.engine.candidates import RecordCandidateBuilder
+from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.rendering import TemplateRenderer
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
 
@@ -18,17 +19,16 @@ logger = logging.getLogger(__name__)
 class RecordMaterializer:
     """Materialize rendered DNS candidate data from rules and objects."""
 
-    def __init__(self, cache, context, *, engine_logger):
+    def __init__(self, cache, context):
         """Store collaborator references and shared runtime context.
 
         Args:
             cache: Shared engine cache for template/view/zone lookups.
             context: Engine runtime context (Jinja env and execution settings).
-            engine_logger: Structured logger helper for candidate/rule failures.
         """
         self._cache = cache
         self._context = context
-        self._engine_logger = engine_logger
+        self._engine_logger = DEFAULT_ENGINE_LOGGER
         self._record_type_field_hooks = self._build_record_type_field_hooks()
         self._renderer = TemplateRenderer(cache, context)
         self._candidate_builder = RecordCandidateBuilder(

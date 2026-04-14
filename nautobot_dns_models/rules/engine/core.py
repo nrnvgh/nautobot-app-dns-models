@@ -12,7 +12,7 @@ from nautobot_dns_models.rules.engine.cache import EngineCache
 from nautobot_dns_models.rules.engine.context import EngineContext
 from nautobot_dns_models.rules.engine.delete_strategies import FastDeleteExecutor, StandardDeleteExecutor
 from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
-from nautobot_dns_models.rules.engine.logging import EngineLogger
+from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.materializer import RecordMaterializer
 from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics, PipelineMetrics
 from nautobot_dns_models.rules.engine.pipeline import EnginePipeline
@@ -57,13 +57,9 @@ class DNSRuleEngine:
             execution_mode=selected_execution_mode,
         )
 
-        self._engine_logger = EngineLogger()
-        self._resolver = RuleResolver(cache, context, self._engine_logger)
-        self._materializer = RecordMaterializer(
-            cache,
-            context,
-            engine_logger=self._engine_logger,
-        )
+        self._engine_logger = DEFAULT_ENGINE_LOGGER
+        self._resolver = RuleResolver(cache, context)
+        self._materializer = RecordMaterializer(cache, context)
 
         if selected_execution_mode == ExecutionMode.FAST:
             delete_executor = FastDeleteExecutor()
@@ -77,7 +73,6 @@ class DNSRuleEngine:
             context,
             resolver=self._resolver,
             materializer=self._materializer,
-            engine_logger=self._engine_logger,
             batched_create_state=batched_create_state,
             delete_executor=delete_executor,
             update_executor=update_executor,
@@ -87,7 +82,6 @@ class DNSRuleEngine:
             resolver=self._resolver,
             materializer=self._materializer,
             context=context,
-            engine_logger=self._engine_logger,
             pipeline_metrics=self._pipeline_metrics,
             batched_create_state=batched_create_state,
         )

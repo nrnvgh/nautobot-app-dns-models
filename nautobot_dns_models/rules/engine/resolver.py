@@ -7,6 +7,7 @@ from nautobot.dcim import models as dcim_models
 from nautobot.ipam import models as ipam_models
 from nautobot.virtualization import models as virtualization_models
 
+from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.ruleset import RuleSetSelector
 from nautobot_dns_models.rules.engine.scope import ScopeResolver
 
@@ -16,18 +17,17 @@ logger = logging.getLogger(__name__)
 class RuleResolver:
     """Resolve applicable DNS rules for source objects."""
 
-    def __init__(self, cache, context, engine_logger):
+    def __init__(self, cache, context):
         """Store collaborator references and shared runtime context.
 
         Args:
             cache: Shared engine cache for applicable-rule memoization.
             context: Engine runtime context consumed by resolver collaborators.
-            engine_logger: Structured logger helper passed into scope resolver.
         """
         self._cache = cache
         self._context = context
-        self._engine_logger = engine_logger
-        self._scope_resolver = ScopeResolver(engine_logger)
+        self._engine_logger = DEFAULT_ENGINE_LOGGER
+        self._scope_resolver = ScopeResolver()
         self._ruleset_selector = RuleSetSelector()
 
     def get_applicable_rules(self, source_obj):
