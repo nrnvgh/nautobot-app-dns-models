@@ -69,7 +69,6 @@ class DNSRuleEngine:
             update_executor = StandardUpdateExecutor()
 
         self._writer = RecordWriter(
-            cache,
             context,
             resolver=self._resolver,
             materializer=self._materializer,

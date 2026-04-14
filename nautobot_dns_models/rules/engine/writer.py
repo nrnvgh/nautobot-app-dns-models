@@ -24,7 +24,6 @@ class RecordWriter:
 
     def __init__(
         self,
-        cache,
         context,
         *,
         resolver,
@@ -36,7 +35,6 @@ class RecordWriter:
         """Store collaborator references and shared runtime context.
 
         Args:
-            cache: Shared engine cache for model/content-type memoization.
             context: Engine runtime context containing execution settings.
             resolver: Rule resolver collaborator used for applicability checks.
             materializer: Desired-record materialization collaborator.
@@ -44,7 +42,6 @@ class RecordWriter:
             delete_executor: Delete strategy for standard/fast execution modes.
             update_executor: Update strategy for standard/fast execution modes.
         """
-        self._cache = cache
         self._context = context
         self._resolver = resolver
         self._materializer = materializer
@@ -221,6 +218,7 @@ class RecordWriter:
         """Batch-resolve GenericFK dns_record objects and attach them to tracking rows."""
         if not tracking_rows:
             return
+
         tracking_rows_by_record_content_type = defaultdict(list)
         for tracking_row in tracking_rows:
             tracking_rows_by_record_content_type[tracking_row.dns_record_content_type_id].append(tracking_row)
@@ -236,10 +234,11 @@ class RecordWriter:
                     f"label={record_content_type.app_label}.{record_content_type.model} "
                     f"tracking_rows={len(rows)}"
                 )
+
             record_ids = [tracking_row.dns_record_object_id for tracking_row in rows]
             records_by_id = record_model.objects.in_bulk(record_ids)
             for tracking_row in rows:
-                tracking_row._prefetched_dns_record = records_by_id.get(tracking_row.dns_record_object_id)
+                tracking_row._prefetched_dns_record = records_by_id.get(tracking_row.dns_record_object_id)  # pylint: disable=protected-access
 
     def _create_records_from_data(self, source_obj, rule, record_data_list, phase=PHASE_CREATE):
         if self._batched_create_state.active:
@@ -282,6 +281,7 @@ class RecordWriter:
     def _queue_records_for_batched_create(self, rule, source_obj, record_data_list):
         if not record_data_list:
             return []
+
         record_class = self._get_record_class(rule.record_type)
         source_content_type_id = ContentType.objects.get_for_model(source_obj).pk
         dns_record_content_type_id = ContentType.objects.get_for_model(record_class).pk
@@ -308,6 +308,7 @@ class RecordWriter:
             for record_class, queued_rows in self._batched_create_state.pending_by_record_class.items():
                 if not queued_rows:
                     continue
+
                 for offset in range(0, len(queued_rows), batch_size):
                     chunk_rows = queued_rows[offset : offset + batch_size]
                     dns_records = [record_class(**queued_row["record_data"]) for queued_row in chunk_rows]  # pylint: disable=not-callable
@@ -328,13 +329,16 @@ class RecordWriter:
         dns_record = self._resolve_prefetched_dns_record(tracking_record)
         if dns_record is None:
             return UpdateResult.FAILED
+
         desired_name = desired_record_data["name"]
         if dns_record.name == desired_name:
             return UpdateResult.UNCHANGED
+
         try:
             updated = type(dns_record).objects.filter(pk=dns_record.pk).update(name=desired_name)
             if updated != 1:
                 raise ValueError(f"Failed to update DNS record '{dns_record.pk}'")
+
             dns_record.name = desired_name
         except (ValidationError, IntegrityError, ValueError) as exc:
             self._engine_logger.log_record_update_failure(rule, source_obj, desired_record_data, exc, phase=phase)
@@ -347,6 +351,7 @@ class RecordWriter:
         for record_model, update_entries in bulk_update_collector.items():
             if not update_entries:
                 continue
+
             record_model.objects.bulk_update(
                 update_entries, ["name"], batch_size=self._context.bulk_rename_update_batch_size
             )
@@ -369,6 +374,7 @@ class RecordWriter:
                     f"id={record_content_type_id} "
                     f"label={record_content_type.app_label}.{record_content_type.model}"
                 )
+
             record_ids_list = list(record_ids)
             for offset in range(0, len(record_ids_list), batch_size):
                 chunk = record_ids_list[offset : offset + batch_size]
