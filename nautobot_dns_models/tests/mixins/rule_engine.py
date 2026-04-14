@@ -18,14 +18,24 @@ class BaseRuleEngineMixin:
     @classmethod
     def setUpTestData(cls):  # pylint: disable=invalid-name
         """Set up comprehensive shared test data for all test cases."""
+
+        def ensure_status(model_class, default_name):
+            status = Status.objects.get_for_model(model_class).first()
+            if status is not None:
+                return status
+            status, _ = Status.objects.get_or_create(name=default_name)
+            status.content_types.add(ContentType.objects.get_for_model(model_class))
+            return status
+
         # Create location infrastructure
         cls.location_type = LocationType.objects.create(name="Test Location Type")
         cls.location_type.content_types.add(ContentType.objects.get_for_model(Device))
+        cls.location_status = ensure_status(Location, "Test Location Status")
 
         cls.location = Location.objects.create(
             name="Test Location",
             location_type=cls.location_type,
-            status=Status.objects.get_for_model(Location).first(),
+            status=cls.location_status,
         )
 
         # Create tenant infrastructure
@@ -37,7 +47,7 @@ class BaseRuleEngineMixin:
         cls.device_type = DeviceType.objects.create(manufacturer=cls.manufacturer, model="Test Device Type")
         cls.device_role = Role.objects.create(name="Test Device Role")
         cls.device_role.content_types.add(ContentType.objects.get_for_model(Device))
-        cls.interface_status = Status.objects.get_for_model(Interface).first()
+        cls.interface_status = ensure_status(Interface, "Test Interface Status")
 
         # Create shared device and interface for tests
         cls.device = Device.objects.create(
@@ -45,7 +55,7 @@ class BaseRuleEngineMixin:
             device_type=cls.device_type,
             location=cls.location,
             role=cls.device_role,
-            status=Status.objects.get_for_model(Device).first(),
+            status=ensure_status(Device, "Test Device Status"),
         )
 
         cls.interface = Interface.objects.create(
@@ -57,7 +67,7 @@ class BaseRuleEngineMixin:
 
         # Create namespace and prefix for IP addresses
         cls.namespace = Namespace.objects.create(name="Test Namespace")
-        cls.prefix_status = Status.objects.get_for_model(Prefix).first()
+        cls.prefix_status = ensure_status(Prefix, "Test Prefix Status")
         cls.prefix = Prefix.objects.create(
             network="192.168.1.0",
             prefix_length=24,
@@ -72,7 +82,7 @@ class BaseRuleEngineMixin:
             status=cls.prefix_status,
         )
 
-        cls.ip_status = Status.objects.get_for_model(IPAddress).first()
+        cls.ip_status = ensure_status(IPAddress, "Test IPAddress Status")
         # Create 3 IPv4 addresses within the namespace and associate with parent prefix
         cls.ip_addresses = []
         for i in range(10, 13):
@@ -103,7 +113,7 @@ class BaseRuleEngineMixin:
         # Create VM infrastructure for VM-attached services
         cls.cluster_type = ClusterType.objects.create(name="Test Cluster Type")
         cls.cluster = Cluster.objects.create(name="Test Cluster", cluster_type=cls.cluster_type, location=cls.location)
-        cls.vm_status = Status.objects.get_for_model(VirtualMachine).first()
+        cls.vm_status = ensure_status(VirtualMachine, "Test VM Status")
         cls.vm = VirtualMachine.objects.create(cluster=cls.cluster, name="test-vm", status=cls.vm_status)
 
         cls.service_vm_attached = Service.objects.create(
@@ -119,7 +129,7 @@ class BaseRuleEngineMixin:
         cls.service_content_type = ContentType.objects.get_for_model(Service)
 
         # Additional status objects that some tests expect
-        cls.device_status = Status.objects.get_for_model(Device).first()
+        cls.device_status = ensure_status(Device, "Test Device Status")
 
         # Additional roles
         cls.interface_role = Role.objects.create(name="Test Interface Role")

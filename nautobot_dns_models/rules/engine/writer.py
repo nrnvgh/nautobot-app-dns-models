@@ -11,6 +11,7 @@ from jinja2 import TemplateError
 from nautobot_dns_models.exceptions import DNSRecordContentTypeResolutionError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
+from nautobot_dns_models.rules.engine.reconcile import ReconcilePlanner
 from nautobot_dns_models.rules.engine.update_strategies import UpdateResult
 
 from nautobot_dns_models.rules.engine.constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
@@ -21,25 +22,51 @@ logger = logging.getLogger(__name__)
 class RecordWriter:
     """Create, reconcile, and cleanup DNS records."""
 
-    def __init__(self, engine, cache, context, *, delete_executor, update_executor):
-        """Store collaborator references and shared runtime context."""
-        self._engine = engine
+    def __init__(
+        self,
+        cache,
+        context,
+        *,
+        resolver,
+        materializer,
+        engine_logger,
+        batched_create_state,
+        delete_executor,
+        update_executor,
+        reconcile_planner=None,
+    ):
+        """Store collaborator references and shared runtime context.
+
+        Args:
+            cache: Shared engine cache for model/content-type memoization.
+            context: Engine runtime context containing execution settings.
+            resolver: Rule resolver collaborator used for applicability checks.
+            materializer: Desired-record materialization collaborator.
+            engine_logger: Structured logger helper for reconcile operations.
+            batched_create_state: Shared mutable state for batched-create queueing.
+            delete_executor: Delete strategy for standard/fast execution modes.
+            update_executor: Update strategy for standard/fast execution modes.
+            reconcile_planner: Optional planner for reconcile create/delete/update diffs.
+        """
         self._cache = cache
         self._context = context
+        self._resolver = resolver
+        self._materializer = materializer
+        self._batched_create_state = batched_create_state
         self._delete_executor = delete_executor
         self._update_executor = update_executor
-        self._pending_batched_creates = engine._pending_batched_creates
-        self._engine_logger = engine._engine_logger
+        self._engine_logger = engine_logger
+        self._reconcile_planner = reconcile_planner or ReconcilePlanner()
 
     def create_dns_records_for_object(self, source_obj, applicable_rules):
         """Create records for one source object."""
         changed_record_count = 0
         for rule in applicable_rules:
-            if not self._engine._resolver.object_needs_dns_records_for_rule(source_obj, rule):
+            if not self._resolver.object_needs_dns_records_for_rule(source_obj, rule):
                 continue
 
             try:
-                desired_record_data_list = self._engine._materializer.calculate_desired_record_data(
+                desired_record_data_list = self._materializer.calculate_desired_record_data(
                     rule, source_obj, phase=PHASE_CREATE
                 )
                 if not desired_record_data_list:
@@ -66,7 +93,7 @@ class RecordWriter:
         create_count = 0
         update_count = 0
         for rule in applicable_rules:
-            if not self._engine._resolver.object_needs_dns_records_for_rule(source_obj, rule):
+            if not self._resolver.object_needs_dns_records_for_rule(source_obj, rule):
                 delete_count += self._cleanup_records_for_rule(rule, source_obj)
                 continue
             try:
@@ -101,8 +128,9 @@ class RecordWriter:
         """Reconcile records for one rule/object pair."""
         if tracking_records is None:
             tracking_records = self._get_existing_tracking_records(rule, source_obj)
+
         if desired_record_data is None:
-            desired_record_data = self._engine._materializer.calculate_desired_record_data(
+            desired_record_data = self._materializer.calculate_desired_record_data(
                 rule, source_obj, phase=PHASE_UPDATE_RECONCILE
             )
 
@@ -111,6 +139,7 @@ class RecordWriter:
             dns_record = self._resolve_prefetched_dns_record(tracking_record)
             if dns_record is None:
                 continue
+
             identity_key = self._get_record_identity_key(dns_record)
             existing_records_by_identity[identity_key] = tracking_record
 
@@ -119,21 +148,20 @@ class RecordWriter:
             identity_key = self._get_record_identity_key_from_data(record_data, rule.record_type)
             desired_records_by_identity[identity_key] = record_data
 
-        existing_identity_keys = set(existing_records_by_identity.keys())
-        desired_identity_keys = set(desired_records_by_identity.keys())
-        records_to_delete = existing_identity_keys - desired_identity_keys
-        records_to_create = desired_identity_keys - existing_identity_keys
-        records_to_check_for_update = existing_identity_keys & desired_identity_keys
+        plan = self._reconcile_planner.build_plan(
+            existing_records_by_identity=existing_records_by_identity,
+            desired_records_by_identity=desired_records_by_identity,
+        )
 
-        for identity_key in records_to_delete:
-            self.delete_tracking_and_dns_record(existing_records_by_identity[identity_key])
+        for identity_key in plan.records_to_delete:
+            self.delete_tracking_and_dns_record(plan.existing_records_by_identity[identity_key])
 
         updated_count = 0
         keep_count = 0
         skipped_update = 0
-        for identity_key in records_to_check_for_update:
-            tracking_record = existing_records_by_identity[identity_key]
-            desired_record = desired_records_by_identity[identity_key]
+        for identity_key in plan.records_to_check_for_update:
+            tracking_record = plan.existing_records_by_identity[identity_key]
+            desired_record = plan.desired_records_by_identity[identity_key]
             update_result = self._update_executor.apply(
                 writer=self,
                 rule=rule,
@@ -151,23 +179,23 @@ class RecordWriter:
                 skipped_update += 1
 
         created_records = []
-        if records_to_create:
-            records_to_create_data = [desired_records_by_identity[key] for key in records_to_create]
+        if plan.records_to_create:
+            records_to_create_data = [plan.desired_records_by_identity[key] for key in plan.records_to_create]
             created_records = self._create_records_from_data(
                 source_obj, rule, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
             )
 
-        skipped_create = len(records_to_create) - len(created_records)
+        skipped_create = len(plan.records_to_create) - len(created_records)
 
         return {
             "create": len(created_records),
-            "delete": len(records_to_delete),
+            "delete": len(plan.records_to_delete),
             "update": updated_count,
             "skipped": skipped_create + skipped_update,
         }
 
     def _create_records_from_data(self, source_obj, rule, record_data_list, phase=PHASE_CREATE):
-        if self._engine._batched_create_queue_active:
+        if self._batched_create_state.active:
             return self._queue_records_for_batched_create(
                 rule=rule, source_obj=source_obj, record_data_list=record_data_list
             )
@@ -210,7 +238,7 @@ class RecordWriter:
         record_class = self._get_record_class(rule.record_type)
         source_content_type_id = ContentType.objects.get_for_model(source_obj).pk
         dns_record_content_type_id = ContentType.objects.get_for_model(record_class).pk
-        queue_rows = self._pending_batched_creates[record_class]
+        queue_rows = self._batched_create_state.pending_by_record_class[record_class]
         for record_data in record_data_list:
             queue_rows.append(
                 {
@@ -226,11 +254,11 @@ class RecordWriter:
 
     def flush_batched_create_queue(self):
         """Flush queued create rows with chunked bulk inserts."""
-        if not self._pending_batched_creates:
+        if not self._batched_create_state.pending_by_record_class:
             return
         batch_size = self._context.bulk_create_batched_pipeline_size
         with transaction.atomic():
-            for record_class, queued_rows in self._pending_batched_creates.items():
+            for record_class, queued_rows in self._batched_create_state.pending_by_record_class.items():
                 if not queued_rows:
                     continue
                 for offset in range(0, len(queued_rows), batch_size):
@@ -373,6 +401,7 @@ class RecordWriter:
         dns_record = getattr(tracking_record, "_prefetched_dns_record", None)
         if dns_record is None:
             dns_record = tracking_record.dns_record
+
         return dns_record
 
     @staticmethod

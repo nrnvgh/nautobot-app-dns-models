@@ -799,7 +799,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         class ParentNotDevice:
             pass
 
-        with patch("nautobot_dns_models.rules.engine.core.logger.warning") as mock_warning:
+        with patch("nautobot_dns_models.rules.engine.scope.logger.warning") as mock_warning:
             with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
                 with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
                     module_property.return_value = ModuleWithoutTenant()
@@ -2087,10 +2087,10 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         self.assertEqual(ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(), 0)
 
         with patch.object(
-            type(self.engine),
+            type(self.engine._writer),  # pylint: disable=protected-access
             "_queue_records_for_batched_create",
             autospec=True,
-            wraps=type(self.engine)._queue_records_for_batched_create,
+            wraps=type(self.engine._writer)._queue_records_for_batched_create,  # pylint: disable=protected-access
         ) as batched_queue_mock:
             self.interface.ip_addresses.add(self.ip_addresses[0])
 
@@ -3338,7 +3338,7 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
         exc = ValidationError("test logging error")
 
         # pylint: disable=protected-access
-        extra = self.engine._build_log_extra(
+        extra = self.engine._engine_logger._build_log_extra(  # pylint: disable=protected-access
             rule=rule,
             source_obj=self.interface,
             reason_code="TEST_REASON",
@@ -3370,19 +3370,19 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
     def test_infer_reason_code_template_error_maps_to_candidate_template_error(self):
         """TemplateError should map to CANDIDATE_TEMPLATE_ERROR reason code."""
         # pylint: disable=protected-access
-        reason = self.engine._infer_reason_code(TemplateError("template failure"), "DEFAULT")
+        reason = self.engine._engine_logger._infer_reason_code(TemplateError("template failure"), "DEFAULT")  # pylint: disable=protected-access
         self.assertEqual(reason, "CANDIDATE_TEMPLATE_ERROR")
 
     def test_infer_reason_code_view_and_zone_validation_mappings(self):
         """ValidationError message_dict values should map to stable reason codes."""
         # pylint: disable=protected-access
-        view_empty_reason = self.engine._infer_reason_code(
+        view_empty_reason = self.engine._engine_logger._infer_reason_code(  # pylint: disable=protected-access
             ValidationError({"view_template": "view_template rendered no DNS view names."}), "DEFAULT"
         )
-        view_missing_reason = self.engine._infer_reason_code(
+        view_missing_reason = self.engine._engine_logger._infer_reason_code(  # pylint: disable=protected-access
             ValidationError({"view_template": "DNS view(s) not found from view_template: MissingView"}), "DEFAULT"
         )
-        zone_missing_reason = self.engine._infer_reason_code(
+        zone_missing_reason = self.engine._engine_logger._infer_reason_code(  # pylint: disable=protected-access
             ValidationError({"zone_template": "Zone 'x' does not exist in selected DNS view(s): Default"}), "DEFAULT"
         )
 
@@ -3433,8 +3433,12 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
             with patch.object(self.engine._resolver, "object_needs_dns_records_for_rule", return_value=True):
                 with patch.object(self.engine._writer, "reconcile_records_for_rule", side_effect=TemplateError("boom")):
                     with patch.object(self.engine._engine_logger, "log_rule_processing_error") as log_error_mock:
-                        with patch.object(self.engine._writer, "_cleanup_records_for_rule", return_value=0) as cleanup_rule_mock:
-                            self.engine._writer.update_dns_records_for_object(self.interface, DNSRule.objects.filter(pk=rule.pk))
+                        with patch.object(
+                            self.engine._writer, "_cleanup_records_for_rule", return_value=0
+                        ) as cleanup_rule_mock:
+                            self.engine._writer.update_dns_records_for_object(
+                                self.interface, DNSRule.objects.filter(pk=rule.pk)
+                            )
 
         cleanup_orphaned_mock.assert_called_once()
         log_error_mock.assert_called_once()
@@ -3483,7 +3487,7 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
 
         # pylint: disable=protected-access
         with self.assertRaises(DNSRuleTemplateRenderedEmptyError) as exc:
-            self.engine._get_record_data_variations_for_rule(rule, context, base_record_data)
+            self.engine._materializer.get_record_data_variations_for_rule(rule, context, base_record_data)  # pylint: disable=protected-access
         self.assertIn("Template value_template rendered empty", str(exc.exception))
 
 

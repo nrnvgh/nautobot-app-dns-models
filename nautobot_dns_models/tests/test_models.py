@@ -1,7 +1,6 @@
 """Test DNS Models (DNS zones, records, and rules)."""
 # pylint: disable=too-many-lines
 
-
 from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
