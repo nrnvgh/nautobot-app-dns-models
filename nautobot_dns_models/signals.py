@@ -73,11 +73,11 @@ def has_model_field_changes(instance, debug_context="object"):
             # Debug logging showing field change analysis
             has_changes = len(changed_fields) > 0
             if has_changes:
-                logger.debug(f"{debug_context.title()} {instance} fields changed: {changed_fields}")
-                logger.debug(f"{debug_context.title()} {instance} fields unchanged: {unchanged_fields}")
+                logger.debug("%s %s fields changed: %s", debug_context.title(), instance, changed_fields)
+                logger.debug("%s %s fields unchanged: %s", debug_context.title(), instance, unchanged_fields)
             else:
-                logger.debug(f"{debug_context.title()} {instance} - no relevant field changes detected")
-                logger.debug(f"{debug_context.title()} {instance} all fields unchanged: {unchanged_fields}")
+                logger.debug("%s %s - no relevant field changes detected", debug_context.title(), instance)
+                logger.debug("%s %s all fields unchanged: %s", debug_context.title(), instance, unchanged_fields)
 
             return has_changes
 
@@ -94,9 +94,12 @@ def has_model_field_changes(instance, debug_context="object"):
 
 
 #
-# XXX: This is currently a POC just to show what's possible. We may not want to do this at all, or we
-# XXX: may want to install simpler rules, like:
-# XXX: A/AAAA: ^[0-9a-z-.]
+# NOTE: This is currently a POC just to show what's possible. We may not want to do this at all, or we
+# NOTE: may want to install simpler rules, like:
+# NOTE: A/AAAA: ^[0-9a-z-.]
+#
+# NOTE: This is here to start a discussion about whether to do this. It's certainly
+# NOTE: safe to merge, but we may not want it in the final version.
 def post_migrate_create_data_validation_rules(sender, apps=global_apps, **kwargs):
     """Create data validation rules for DNS models after database migration."""
     regexp_rule_model = _get_regexp_rule_model(apps)
@@ -158,7 +161,7 @@ def capture_object_change_state(sender, instance, **kwargs):
         **kwargs: Additional signal arguments
     """
     model_name = sender._meta.model_name
-    logger.debug(f"[SIGNAL] [capture_object_change_state] {model_name}: {instance}")
+    logger.debug("[SIGNAL] [capture_object_change_state] %s: %s", model_name, instance)
 
     instance._dns_needs_processing = has_model_field_changes(instance, debug_context=model_name)  # pylint: disable=protected-access
 
@@ -183,7 +186,7 @@ def handle_object_save(sender, instance, created, **kwargs):  # pylint: disable=
         created: Boolean indicating if this was a new object
         **kwargs: Additional signal arguments
     """
-    logger.debug(f"[SIGNAL] [handle_object_save] {sender} / {instance} / {created=}")
+    logger.debug("[SIGNAL] [handle_object_save] %s / %s / created=%s", sender, instance, created)
     _process_dns_rules_if_needed(instance, created, context="object_save")
 
 
@@ -216,7 +219,7 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
         **kwargs: Additional signal arguments
     """
     model_name = sender._meta.model_name
-    logger.debug(f"[SIGNAL] [handle_object_with_interfaces_save] {model_name} {instance} / {created=}")
+    logger.debug("[SIGNAL] [handle_object_with_interfaces_save] %s %s / created=%s", model_name, instance, created)
 
     try:
         # Process parent object's DNS rules only if needed
@@ -281,10 +284,16 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
     # Check if DNS processing is needed (set by pre_save handler)
     should_process = created or instance._dns_needs_processing  # pylint: disable=protected-access
 
-    logger.debug(f"[SIGNAL] [_process_dns_rules_if_needed] [{context}] {instance} / {created=} / {should_process=}")
+    logger.debug(
+        "[SIGNAL] [_process_dns_rules_if_needed] [%s] %s / created=%s / should_process=%s",
+        context,
+        instance,
+        created,
+        should_process,
+    )
 
     if should_process:
-        logger.debug(f"[SIGNAL] [_process_dns_rules_if_needed] [{context}] Processing DNS rules for {instance}")
+        logger.debug("[SIGNAL] [_process_dns_rules_if_needed] [%s] Processing DNS rules for %s", context, instance)
         try:
             DNSRuleEngine().process_object(instance, created=created)
         except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -292,7 +301,9 @@ def _process_dns_rules_if_needed(instance, created, context="save"):
             logger.error("[SIGNAL] [%s] Failed to process DNS rules for %s: %s", context, instance, exc)
     else:
         logger.debug(
-            f"[SIGNAL] [_process_dns_rules_if_needed] [{context}] Skipping DNS processing for {instance} - no relevant field changes"
+            "[SIGNAL] [_process_dns_rules_if_needed] [%s] Skipping DNS processing for %s - no relevant field changes",
+            context,
+            instance,
         )
 
 
@@ -334,7 +345,12 @@ def handle_ipaddresstointerface_save(sender, instance, **kwargs):  # pylint: dis
         instance: IPAddressToInterface instance that was saved
         **kwargs: Additional signal arguments
     """
-    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_save] {sender=} / '{instance=}' ({kwargs=})")
+    logger.debug(
+        "[SIGNAL] [handle_ipaddresstointerface_save] sender=%s / instance=%r (kwargs=%r)",
+        sender,
+        instance,
+        kwargs,
+    )
 
     #
     # We pass created=False because while the IPAddressToInterface is a new object, the interface is not.
@@ -356,7 +372,12 @@ def handle_ipaddresstointerface_delete(sender, instance, **kwargs):  # pylint: d
         instance: IPAddress object being removed from the interface
         **kwargs: Additional signal arguments
     """
-    logger.debug(f"[SIGNAL] [handle_ipaddresstointerface_delete] {sender=} / {instance=} ({kwargs=})")
+    logger.debug(
+        "[SIGNAL] [handle_ipaddresstointerface_delete] sender=%s / instance=%r (kwargs=%r)",
+        sender,
+        instance,
+        kwargs,
+    )
     source_obj = instance.interface or instance.vm_interface
     if source_obj is None:
         logger.debug(
@@ -395,11 +416,11 @@ def handle_m2m_changed(sender, instance, action, **kwargs):  # pylint: disable=u
     if not action.startswith("post_"):
         return
 
-    logger.debug(f"[SIGNAL] [handle_m2m_changed] {action} on {instance} (sender: {sender.__name__})")
+    logger.debug("[SIGNAL] [handle_m2m_changed] %s on %s (sender: %s)", action, instance, sender.__name__)
 
     try:
         # Process the instance that had its relationships changed
-        logger.debug(f"[SIGNAL] [handle_m2m_changed] Processing M2M change on {instance}")
+        logger.debug("[SIGNAL] [handle_m2m_changed] Processing M2M change on %s", instance)
         DNSRuleEngine().process_object(instance, created=False)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Log the error but don't let it break the original operation
