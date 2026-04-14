@@ -130,55 +130,11 @@ class EnginePipeline:
         batch_address_ids = set()
 
         for source_obj in source_objects:
-            rules = self._resolver.get_applicable_rules(source_obj)
-            desired_by_rule_id = {}
-            failed_rule_ids = set()
-            needed_rule_ids = set()
-
-            for rule in rules:
-                needs_records = self._resolver.object_needs_dns_records_for_rule(source_obj, rule)
-                if not needs_records:
-                    continue
-
-                needed_rule_ids.add(rule.pk)
-                try:
-                    base_context = {"obj": wrap_for_template(source_obj)}
-                    rendered_name = self._materializer.render_template(
-                        rule.name_template, base_context, "name_template"
-                    )
-                    shared_record_data = {"name": normalize_dns_name_if_enabled(rendered_name)}
-                    record_variations = self._materializer.get_record_data_variations_for_rule(
-                        rule, base_context, shared_record_data
-                    )
-                    requires_ip_context = self._materializer.requires_ip_context(rule)
-                    if requires_ip_context:
-                        for record_data in record_variations:
-                            address_id = record_data.get("address_id")
-                            if address_id:
-                                batch_address_ids.add(address_id)
-
-                    rule_work_items[rule.pk].append(
-                        RuleWorkItem(
-                            object_id=source_obj.pk,
-                            rule=rule,
-                            base_context=base_context,
-                            record_variations=record_variations,
-                            requires_ip_context=requires_ip_context,
-                        )
-                    )
-                except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                    self._engine_logger.log_rule_processing_error(
-                        rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
-                    )
-                    failed_rule_ids.add(rule.pk)
-
-            prepared_entry = PreparedReconcileEntry(
+            prepared_entry = self._build_prepared_entry_for_object(
                 source_obj=source_obj,
-                rules=rules,
-                needed_rule_ids=needed_rule_ids,
-                desired_by_rule_id=desired_by_rule_id,
-                failed_rule_ids=failed_rule_ids,
                 tracking_rows=tracking_by_object_id.get(source_obj.pk, []),
+                rule_work_items=rule_work_items,
+                batch_address_ids=batch_address_ids,
             )
             prepared_entries.append(prepared_entry)
             prepared_entry_by_object_id[source_obj.pk] = prepared_entry
@@ -190,6 +146,82 @@ class EnginePipeline:
             batch_address_ids=batch_address_ids,
             pending_rule_calculations=sum(len(items) for items in rule_work_items.values()),
         )
+
+    def _build_prepared_entry_for_object(
+        self,
+        *,
+        source_obj,
+        tracking_rows,
+        rule_work_items,
+        batch_address_ids,
+    ):
+        """Build one prepared reconcile entry and enqueue deferred rule work items."""
+        rules = self._resolver.get_applicable_rules(source_obj)
+        prepared_entry = PreparedReconcileEntry(
+            source_obj=source_obj,
+            rules=rules,
+            tracking_rows=tracking_rows,
+        )
+
+        for rule in rules:
+            needs_records, failed, work_item = self._build_rule_work_item(
+                source_obj=source_obj,
+                rule=rule,
+                batch_address_ids=batch_address_ids,
+            )
+            if not needs_records:
+                continue
+
+            prepared_entry.needed_rule_ids.add(rule.pk)
+            if failed:
+                prepared_entry.failed_rule_ids.add(rule.pk)
+                continue
+
+            if work_item is not None:
+                rule_work_items[rule.pk].append(work_item)
+
+        return prepared_entry
+
+    def _build_rule_work_item(self, *, source_obj, rule, batch_address_ids):
+        """Build deferred work for one object/rule pair."""
+        if not self._resolver.object_needs_dns_records_for_rule(source_obj, rule):
+            return False, False, None
+
+        try:
+            base_context = {"obj": wrap_for_template(source_obj)}
+            rendered_name = self._materializer.render_template(rule.name_template, base_context, "name_template")
+            shared_record_data = {"name": normalize_dns_name_if_enabled(rendered_name)}
+            record_variations = self._materializer.get_record_data_variations_for_rule(
+                rule, base_context, shared_record_data
+            )
+            requires_ip_context = self._materializer.requires_ip_context(rule)
+            if requires_ip_context:
+                self._collect_batch_address_ids(record_variations, batch_address_ids)
+
+            return (
+                True,
+                False,
+                RuleWorkItem(
+                    object_id=source_obj.pk,
+                    rule=rule,
+                    base_context=base_context,
+                    record_variations=record_variations,
+                    requires_ip_context=requires_ip_context,
+                ),
+            )
+        except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
+            self._engine_logger.log_rule_processing_error(
+                rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
+            )
+            return True, True, None
+
+    @staticmethod
+    def _collect_batch_address_ids(record_variations, batch_address_ids):
+        """Collect address IDs used by IP-context record variations."""
+        for record_data in record_variations:
+            address_id = record_data.get("address_id")
+            if address_id:
+                batch_address_ids.add(address_id)
 
     def _materialize_desired_data(
         self,
