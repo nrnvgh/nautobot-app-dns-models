@@ -9,9 +9,8 @@ from nautobot.dcim import models as dcim_models
 from nautobot.ipam import models as ipam_models
 from nautobot.virtualization import models as virtualization_models
 
-from nautobot_dns_models.models import DNSRule
-
-from .constants import PHASE_UNKNOWN, REASON_INTERFACE_PARENT_FALLBACK_FAILED
+from nautobot_dns_models.rules.engine.ruleset import RuleSetSelector
+from nautobot_dns_models.rules.engine.scope import ScopeResolver
 
 logger = logging.getLogger(__name__)
 

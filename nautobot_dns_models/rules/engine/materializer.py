@@ -13,14 +13,9 @@ from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSR
 from nautobot_dns_models.models import DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name_if_enabled
 
-from .constants import (
-    PHASE_CANDIDATE_EXPANSION,
-    REASON_INVALID_ADDRESS_UUID,
-    REASON_VIEW_NOT_FOUND,
-    REASON_VIEW_TEMPLATE_EMPTY,
-    REASON_ZONE_NOT_FOUND,
-)
-from .template_proxies import wrap_for_template
+from nautobot_dns_models.rules.engine.candidates import RecordCandidateBuilder
+from nautobot_dns_models.rules.engine.rendering import TemplateRenderer
+from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
 
 logger = logging.getLogger(__name__)
 

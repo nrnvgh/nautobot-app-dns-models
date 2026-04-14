@@ -37,7 +37,7 @@ from nautobot_dns_models.rules.engine.constants import (
 )
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
 
-from .mixins.rule_engine import BaseRuleEngineMixin
+from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
 TEST_LOGGING_CONFIG = {
     "version": 1,

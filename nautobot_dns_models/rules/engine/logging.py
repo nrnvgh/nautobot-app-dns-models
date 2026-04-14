@@ -8,7 +8,7 @@ from jinja2 import TemplateError
 
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
 
-from .constants import (
+from nautobot_dns_models.rules.engine.constants import (
     REASON_CANDIDATE_ERROR,
     REASON_CANDIDATE_TEMPLATE_ERROR,
     REASON_RECORD_INTEGRITY_ERROR,

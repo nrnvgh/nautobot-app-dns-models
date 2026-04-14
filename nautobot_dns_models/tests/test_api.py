@@ -30,7 +30,7 @@ from nautobot_dns_models.models import (
     TXTRecord,
 )
 
-from .mixins.api import (
+from nautobot_dns_models.tests.mixins.api import (
     RuleEngineDeviceIPAssignmentAPIMixin,
     RuleEngineInterfaceIPAssignmentAPIMixin,
 )

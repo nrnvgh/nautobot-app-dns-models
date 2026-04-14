@@ -13,7 +13,7 @@ from nautobot_dns_models.models import DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
 from nautobot_dns_models.rules.engine.update_strategies import UpdateResult
 
-from .constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
+from nautobot_dns_models.rules.engine.constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
 
 logger = logging.getLogger(__name__)
 
