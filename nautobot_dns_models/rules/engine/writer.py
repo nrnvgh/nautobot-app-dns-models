@@ -32,7 +32,6 @@ class RecordWriter:
         batched_create_state,
         delete_executor,
         update_executor,
-        reconcile_planner=None,
     ):
         """Store collaborator references and shared runtime context.
 
@@ -44,7 +43,6 @@ class RecordWriter:
             batched_create_state: Shared mutable state for batched-create queueing.
             delete_executor: Delete strategy for standard/fast execution modes.
             update_executor: Update strategy for standard/fast execution modes.
-            reconcile_planner: Optional planner for reconcile create/delete/update diffs.
         """
         self._cache = cache
         self._context = context
@@ -54,7 +52,7 @@ class RecordWriter:
         self._delete_executor = delete_executor
         self._update_executor = update_executor
         self._engine_logger = DEFAULT_ENGINE_LOGGER
-        self._reconcile_planner = reconcile_planner or ReconcilePlanner()
+        self._reconcile_planner = ReconcilePlanner()
 
     def create_dns_records_for_object(self, source_obj, applicable_rules):
         """Create records for one source object."""
