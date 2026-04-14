@@ -45,10 +45,6 @@ class RuleResolver:
 
         return selected_rules
 
-    def _resolve_applicable_rules_for_scope(self, content_type, object_location, object_tenant):
-        """Resolve rules for a specific content-type/location/tenant scope."""
-        return self._ruleset_selector.resolve_for_scope(content_type, object_location, object_tenant)
-
     def object_needs_dns_records_for_rule(self, source_obj, rule):
         """Return whether this object should produce records for the given rule."""
         if rule.record_type not in ("A", "AAAA"):
@@ -87,3 +83,7 @@ class RuleResolver:
         when relationship data is incomplete for interface-like objects.
         """
         return self._scope_resolver.get_object_tenant(source_obj)
+
+    def _resolve_applicable_rules_for_scope(self, content_type, object_location, object_tenant):
+        """Resolve rules for a specific content-type/location/tenant scope."""
+        return self._ruleset_selector.resolve_for_scope(content_type, object_location, object_tenant)

@@ -39,16 +39,6 @@ class RecordMaterializer:
             apply_record_type_fields=self._apply_record_type_fields,
         )
 
-    @cached_property
-    def _default_view(self):
-        """Return the default DNS view, cached per engine instance."""
-        logger.debug("[default_view] Getting default DNS view")
-        return dns_models.DNSView.objects.get(pk=dns_models.get_default_view_pk())
-
-    def _get_default_view(self):
-        """Return cached default view via callable for candidate builder."""
-        return self._default_view
-
     def render_template(self, template_str, context, field_name):
         """Render from cached compiled Jinja templates."""
         return self._renderer.render_template(template_str, context, field_name)
@@ -98,6 +88,33 @@ class RecordMaterializer:
             base_record_data=base_record_data,
         )
 
+    def get_dns_views_for_rule(self, rule, context):
+        """Cache DNS view resolution for repeated templates."""
+        return self._candidate_builder.get_dns_views_for_rule(rule, context)
+
+    def get_zones_for_rule(self, rule, context, selected_views):
+        """Cache zone lookups by zone-name and view-id tuple."""
+        return self._candidate_builder.get_zones_for_rule(rule, context, selected_views)
+
+    def _build_record_context(self, base_context, record_data):
+        return self._candidate_builder.build_record_context(base_context, record_data)
+
+    def build_record_context_with_preloaded_ips(self, base_context, record_data, preloaded_ip_by_id):
+        """Build context using preloaded batch IP map, with fallback lookup for misses."""
+        return self._candidate_builder.build_record_context_with_preloaded_ips(
+            base_context, record_data, preloaded_ip_by_id
+        )
+
+    @cached_property
+    def _default_view(self):
+        """Return the default DNS view, cached per engine instance."""
+        logger.debug("[default_view] Getting default DNS view")
+        return dns_models.DNSView.objects.get(pk=dns_models.get_default_view_pk())
+
+    def _get_default_view(self):
+        """Return cached default view via callable for candidate builder."""
+        return self._default_view
+
     def _build_record_type_field_hooks(self):
         """Build record-type hook mapping from local materializer methods."""
         hooks = {}
@@ -121,20 +138,3 @@ class RecordMaterializer:
         """Apply per-record-type field hooks when a local hook exists."""
         if record_type_method := self._record_type_field_hooks.get(rule.record_type):
             record_type_method(rule, context, record_data)
-
-    def get_dns_views_for_rule(self, rule, context):
-        """Cache DNS view resolution for repeated templates."""
-        return self._candidate_builder.get_dns_views_for_rule(rule, context)
-
-    def get_zones_for_rule(self, rule, context, selected_views):
-        """Cache zone lookups by zone-name and view-id tuple."""
-        return self._candidate_builder.get_zones_for_rule(rule, context, selected_views)
-
-    def _build_record_context(self, base_context, record_data):
-        return self._candidate_builder.build_record_context(base_context, record_data)
-
-    def build_record_context_with_preloaded_ips(self, base_context, record_data, preloaded_ip_by_id):
-        """Build context using preloaded batch IP map, with fallback lookup for misses."""
-        return self._candidate_builder.build_record_context_with_preloaded_ips(
-            base_context, record_data, preloaded_ip_by_id
-        )

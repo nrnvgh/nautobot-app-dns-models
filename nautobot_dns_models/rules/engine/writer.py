@@ -194,6 +194,30 @@ class RecordWriter:
             "skipped": skipped_create + skipped_update,
         }
 
+    def prefetch_tracking_dns_records(self, tracking_rows):
+        """Batch-resolve GenericFK dns_record objects and attach them to tracking rows."""
+        if not tracking_rows:
+            return
+        tracking_rows_by_record_content_type = defaultdict(list)
+        for tracking_row in tracking_rows:
+            tracking_rows_by_record_content_type[tracking_row.dns_record_content_type_id].append(tracking_row)
+
+        content_types = ContentType.objects.in_bulk(tracking_rows_by_record_content_type.keys())
+        for record_content_type_id, rows in tracking_rows_by_record_content_type.items():
+            record_content_type = content_types[record_content_type_id]
+            record_model = record_content_type.model_class()
+            if record_model is None:
+                raise DNSRecordContentTypeResolutionError(
+                    "Unable to resolve DNS record content type to model class: "
+                    f"id={record_content_type_id} "
+                    f"label={record_content_type.app_label}.{record_content_type.model} "
+                    f"tracking_rows={len(rows)}"
+                )
+            record_ids = [tracking_row.dns_record_object_id for tracking_row in rows]
+            records_by_id = record_model.objects.in_bulk(record_ids)
+            for tracking_row in rows:
+                tracking_row._prefetched_dns_record = records_by_id.get(tracking_row.dns_record_object_id)
+
     def _create_records_from_data(self, source_obj, rule, record_data_list, phase=PHASE_CREATE):
         if self._batched_create_state.active:
             return self._queue_records_for_batched_create(
@@ -450,26 +474,3 @@ class RecordWriter:
             rule=rule, content_type=ContentType.objects.get_for_model(source_obj), object_id=source_obj.id
         )
 
-    def prefetch_tracking_dns_records(self, tracking_rows):
-        """Batch-resolve GenericFK dns_record objects and attach them to tracking rows."""
-        if not tracking_rows:
-            return
-        tracking_rows_by_record_content_type = defaultdict(list)
-        for tracking_row in tracking_rows:
-            tracking_rows_by_record_content_type[tracking_row.dns_record_content_type_id].append(tracking_row)
-
-        content_types = ContentType.objects.in_bulk(tracking_rows_by_record_content_type.keys())
-        for record_content_type_id, rows in tracking_rows_by_record_content_type.items():
-            record_content_type = content_types[record_content_type_id]
-            record_model = record_content_type.model_class()
-            if record_model is None:
-                raise DNSRecordContentTypeResolutionError(
-                    "Unable to resolve DNS record content type to model class: "
-                    f"id={record_content_type_id} "
-                    f"label={record_content_type.app_label}.{record_content_type.model} "
-                    f"tracking_rows={len(rows)}"
-                )
-            record_ids = [tracking_row.dns_record_object_id for tracking_row in rows]
-            records_by_id = record_model.objects.in_bulk(record_ids)
-            for tracking_row in rows:
-                tracking_row._prefetched_dns_record = records_by_id.get(tracking_row.dns_record_object_id)

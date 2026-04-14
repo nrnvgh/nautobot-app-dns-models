@@ -93,9 +93,7 @@ class DNSRuleEngine:
         )
 
     #
-    # Public API
-    #
-
+    # Object processing methods
     def process_object(self, source_obj, created=False):
         """Process one source object against applicable rules."""
         summary = ObjectProcessingMetrics()
@@ -127,9 +125,9 @@ class DNSRuleEngine:
 
         return summary
 
-    def process_objects_pipeline(self, source_objects):
-        """Process one batch of source objects."""
-        return self._pipeline.process_objects_pipeline(source_objects)
+    def get_applicable_rules(self, source_obj):
+        """Return applicable DNS rules for a source object."""
+        return self._resolver.get_applicable_rules(source_obj)
 
     def delete_dns_records_for_object(self, source_obj):
         """Delete all DNS records created from a source object."""
@@ -139,10 +137,13 @@ class DNSRuleEngine:
         for rule_record in rule_records:
             self._writer.delete_tracking_and_dns_record(rule_record)
 
+    #
+    # Pipeline methods
+    def process_objects_pipeline(self, source_objects):
+        """Process one batch of source objects."""
+        return self._pipeline.process_objects_pipeline(source_objects)
+
     def get_pipeline_metrics(self):
         """Return cumulative and per-batch stage metrics for current run."""
         return self._pipeline_metrics.as_report()
 
-    def get_applicable_rules(self, source_obj):
-        """Return applicable DNS rules for a source object."""
-        return self._resolver.get_applicable_rules(source_obj)
