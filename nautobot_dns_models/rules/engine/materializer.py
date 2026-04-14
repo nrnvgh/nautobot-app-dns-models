@@ -8,7 +8,6 @@ from jinja2 import TemplateError
 from nautobot_dns_models import models as dns_models
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.normalization import normalize_dns_name_if_enabled
-
 from nautobot_dns_models.rules.engine.candidates import RecordCandidateBuilder
 from nautobot_dns_models.rules.engine.rendering import TemplateRenderer
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template

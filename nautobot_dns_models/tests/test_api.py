@@ -29,7 +29,6 @@ from nautobot_dns_models.models import (
     SRVRecord,
     TXTRecord,
 )
-
 from nautobot_dns_models.tests.mixins.api import (
     RuleEngineDeviceIPAssignmentAPIMixin,
     RuleEngineInterfaceIPAssignmentAPIMixin,

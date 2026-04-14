@@ -146,4 +146,3 @@ class DNSRuleEngine:
     def get_pipeline_metrics(self):
         """Return cumulative and per-batch stage metrics for current run."""
         return self._pipeline_metrics.as_report()
-

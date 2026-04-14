@@ -11,10 +11,9 @@ from jinja2 import TemplateError
 from nautobot_dns_models.exceptions import DNSRecordContentTypeResolutionError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule, DNSRuleRecord, DNSZone
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
+from nautobot_dns_models.rules.engine.constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
 from nautobot_dns_models.rules.engine.reconcile import ReconcilePlanner
 from nautobot_dns_models.rules.engine.update_strategies import UpdateResult
-
-from nautobot_dns_models.rules.engine.constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
 
 logger = logging.getLogger(__name__)
 
@@ -473,4 +472,3 @@ class RecordWriter:
         return DNSRuleRecord.objects.filter(
             rule=rule, content_type=ContentType.objects.get_for_model(source_obj), object_id=source_obj.id
         )
-

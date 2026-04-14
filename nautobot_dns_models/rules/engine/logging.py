@@ -7,7 +7,6 @@ from django.db import IntegrityError
 from jinja2 import TemplateError
 
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
-
 from nautobot_dns_models.rules.engine.constants import (
     REASON_CANDIDATE_ERROR,
     REASON_CANDIDATE_TEMPLATE_ERROR,
@@ -188,4 +187,3 @@ class EngineLogger:
             extra["candidate_zone_id"] = str(zone.id) if zone is not None else ""
 
         return extra
-
