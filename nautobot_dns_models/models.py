@@ -69,11 +69,11 @@ class DNSModel(PrimaryModel):
 
         self._normalize_or_validate_field("name", errors)
 
-        cleaned_fields = [x for x in self.FIELDS_TO_NORMALIZE_OR_VALIDATE if x not in ("name",)]
+        cleaned_fields = [x for x in self.FIELDS_TO_NORMALIZE_OR_VALIDATE if x != "name"]
         for field in cleaned_fields:
             self._normalize_or_validate_field(field, errors)
 
-        config_dns_validation_level = getattr(constance_config, "nautobot_dns_models__DNS_VALIDATION_LEVEL")
+        config_dns_validation_level = getattr(constance_config, "nautobot_dns_models__DNS_VALIDATION_LEVEL", None)
         if config_dns_validation_level == "wire-format":
             self._validate_wire_format_for_field(field_name="name", errors=errors)
 
@@ -82,7 +82,7 @@ class DNSModel(PrimaryModel):
 
     def _normalize_or_validate_field(self, field_name, errors):
         """Normalize or validate the DNS records."""
-        normalize_dns_records_enabled = getattr(constance_config, "nautobot_dns_models__NORMALIZE_DNS_RECORDS")
+        normalize_dns_records_enabled = getattr(constance_config, "nautobot_dns_models__NORMALIZE_DNS_RECORDS", False)
         field_value = getattr(self, field_name)
         normalized_value = normalize_dns_name(field_value)
 

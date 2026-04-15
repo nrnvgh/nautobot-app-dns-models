@@ -24,11 +24,7 @@ def normalize_dns_name(value):
     - Do not drop empty labels; upstream validation will catch them if present.
     - See _normalize_label() for per-label rules.
     """
-    if value is None:
-        return value
-
-    # Fast path for empty strings
-    if value == "":
+    if not value:
         return value
 
     labels = value.split(".")
