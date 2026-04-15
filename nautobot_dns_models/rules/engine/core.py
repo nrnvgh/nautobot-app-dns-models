@@ -89,7 +89,7 @@ class DNSRuleEngine:
         """Process one source object against applicable rules."""
         summary = ObjectProcessingMetrics()
         content_type = ContentType.objects.get_for_model(source_obj)
-        rules = self._resolver.get_applicable_rules(source_obj)
+        rules = self.get_applicable_rules(source_obj)
 
         if not rules:
             logger.debug(
