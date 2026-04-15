@@ -17,6 +17,7 @@ from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.ipam.choices import IPAddressVersionChoices
 
 from nautobot_dns_models.choices import DNSRuleRecordTypeChoices
+from nautobot_dns_models.constants import SUPPORTED_SOURCE_MODELS
 from nautobot_dns_models.jinja_literals import collect_literal_validation_errors
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
@@ -700,15 +701,24 @@ class DNSRule(PrimaryModel):
 
         errors = self._validate_templates()
 
-        # Validate content type exists
-        if self.content_type_id:
-            try:
-                content_type = self.content_type
-                model_class = content_type.model_class()
-                if not model_class:
-                    errors["content_type"].append("Selected content type does not exist")
-            except ObjectDoesNotExist:
-                errors["content_type"].append("Invalid content type reference")
+        try:
+            content_type = self.content_type
+        except ObjectDoesNotExist:
+            # Catching this allows the entirely sufficient ValidationError from django's
+            # clean_fields() to bubble up without additional work needed.
+            pass
+        else:
+            model_class = content_type.model_class()
+            # If this fails, the Nautobot install has issues: django_content_types has an entry
+            # but there is no corresponding model available in code. This guard is here mostly to
+            # future-proof support for creating DNSRules for app-supplied models if support for that
+            # is added.
+            if not model_class:
+                errors["content_type"].append(
+                    f"Selected content type {content_type} could not be resolved to a model class"
+                )
+            elif model_class not in SUPPORTED_SOURCE_MODELS:
+                errors["content_type"].append(f"Selected content type {content_type} is not supported")
 
         if errors:
             raise ValidationError(dict(errors))
