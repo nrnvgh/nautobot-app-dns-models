@@ -49,5 +49,5 @@ class TemplateRenderer:
     @staticmethod
     def requires_ip_context(rule):
         """Return whether rule templates reference `ip` context."""
-        template_text = " ".join([rule.view_template or "", rule.zone_template or ""])
-        return bool(re.search(r"\bip\b", template_text))
+        template_content = " ".join([rule.view_template or "", rule.zone_template or ""])
+        return bool(re.search(r"\bip\b", template_content))
