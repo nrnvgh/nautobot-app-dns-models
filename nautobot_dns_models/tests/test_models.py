@@ -32,8 +32,6 @@ from nautobot_dns_models.models import (
 )
 
 # Helper for generating unicode labels of a specific IDNA-encoded length
-
-
 def _make_unicode_label_with_idna_length(char, target_length):
     """Return a string of repeated `char` whose IDNA-encoded length is exactly `target_length` bytes."""
     label = ""
