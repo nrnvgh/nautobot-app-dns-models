@@ -303,6 +303,7 @@ class RecordWriter:
         """Flush queued create rows with chunked bulk inserts."""
         if not self._batched_create_state.pending_by_record_class:
             return
+
         batch_size = self._context.bulk_create_batched_pipeline_size
         with transaction.atomic():
             for record_class, queued_rows in self._batched_create_state.pending_by_record_class.items():
