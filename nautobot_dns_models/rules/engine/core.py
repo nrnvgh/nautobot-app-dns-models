@@ -12,7 +12,6 @@ from nautobot_dns_models.rules.engine.cache import EngineCache
 from nautobot_dns_models.rules.engine.context import EngineContext
 from nautobot_dns_models.rules.engine.delete_strategies import FastDeleteExecutor, StandardDeleteExecutor
 from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
-from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.materializer import RecordMaterializer
 from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics, PipelineMetrics
 from nautobot_dns_models.rules.engine.pipeline import EnginePipeline
@@ -57,7 +56,6 @@ class DNSRuleEngine:
             execution_mode=selected_execution_mode,
         )
 
-        self._engine_logger = DEFAULT_ENGINE_LOGGER
         self._resolver = RuleResolver(cache, context)
         self._materializer = RecordMaterializer(cache, context)
 

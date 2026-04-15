@@ -35,6 +35,7 @@ from nautobot_dns_models.rules.engine.constants import (
     REASON_VIEW_TEMPLATE_EMPTY,
     REASON_ZONE_NOT_FOUND,
 )
+from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
@@ -3321,6 +3322,11 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
     """Structured logging field coverage for DNS rule engine helpers."""
 
+    def setUp(self):
+        """Set test-local logger handle for helper assertions and patches."""
+        super().setUp()
+        self._engine_logger = DEFAULT_ENGINE_LOGGER
+
     def test_build_log_extra_exposes_candidate_and_error_fields(self):
         """Ensure structured extra contains documented candidate/error fields."""
         rule = DNSRule.objects.create(
@@ -3337,7 +3343,7 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
         exc = ValidationError("test logging error")
 
         # pylint: disable=protected-access
-        extra = self.engine._engine_logger._build_log_extra(  # pylint: disable=protected-access
+        extra = self._engine_logger._build_log_extra(  # pylint: disable=protected-access
             rule=rule,
             source_obj=self.interface,
             reason_code="TEST_REASON",
@@ -3369,19 +3375,19 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
     def test_infer_reason_code_template_error_maps_to_candidate_template_error(self):
         """TemplateError should map to CANDIDATE_TEMPLATE_ERROR reason code."""
         # pylint: disable=protected-access
-        reason = self.engine._engine_logger._infer_reason_code(TemplateError("template failure"), "DEFAULT")  # pylint: disable=protected-access
+        reason = self._engine_logger._infer_reason_code(TemplateError("template failure"), "DEFAULT")  # pylint: disable=protected-access
         self.assertEqual(reason, "CANDIDATE_TEMPLATE_ERROR")
 
     def test_infer_reason_code_view_and_zone_validation_mappings(self):
         """ValidationError message_dict values should map to stable reason codes."""
         # pylint: disable=protected-access
-        view_empty_reason = self.engine._engine_logger._infer_reason_code(  # pylint: disable=protected-access
+        view_empty_reason = self._engine_logger._infer_reason_code(  # pylint: disable=protected-access
             ValidationError({"view_template": "view_template rendered no DNS view names."}), "DEFAULT"
         )
-        view_missing_reason = self.engine._engine_logger._infer_reason_code(  # pylint: disable=protected-access
+        view_missing_reason = self._engine_logger._infer_reason_code(  # pylint: disable=protected-access
             ValidationError({"view_template": "DNS view(s) not found from view_template: MissingView"}), "DEFAULT"
         )
-        zone_missing_reason = self.engine._engine_logger._infer_reason_code(  # pylint: disable=protected-access
+        zone_missing_reason = self._engine_logger._infer_reason_code(  # pylint: disable=protected-access
             ValidationError({"zone_template": "Zone 'x' does not exist in selected DNS view(s): Default"}), "DEFAULT"
         )
 
@@ -3431,7 +3437,7 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
         with patch.object(self.engine._writer, "cleanup_orphaned_records", return_value=0) as cleanup_orphaned_mock:
             with patch.object(self.engine._resolver, "object_needs_dns_records_for_rule", return_value=True):
                 with patch.object(self.engine._writer, "reconcile_records_for_rule", side_effect=TemplateError("boom")):
-                    with patch.object(self.engine._engine_logger, "log_rule_processing_error") as log_error_mock:
+                    with patch.object(self._engine_logger, "log_rule_processing_error") as log_error_mock:
                         with patch.object(
                             self.engine._writer, "_cleanup_records_for_rule", return_value=0
                         ) as cleanup_rule_mock:
