@@ -16,7 +16,15 @@ class ScopeResolver:
         self._engine_logger = DEFAULT_ENGINE_LOGGER
 
     def get_object_location(self, source_obj):  # pylint: disable=too-many-return-statements
-        """Resolve location across supported source object types."""
+        """Resolve location across supported source object types.
+
+        Location resolution paths by object type:
+          * Interface: interface.device.location (or interface.parent.location fallback)
+          * Service: service.device.location or service.virtual_machine.location
+          * VMInterface: vminterface.virtual_machine.location
+          * Device: device.location
+          * VirtualMachine: virtual_machine.location
+        """
         if isinstance(source_obj, dcim_models.Interface):
             if source_obj.device:
                 return source_obj.device.location
@@ -57,7 +65,15 @@ class ScopeResolver:
         return None
 
     def get_object_tenant(self, source_obj):  # pylint: disable=too-many-return-statements
-        """Resolve tenant across supported source object types."""
+        """Resolve tenant across supported source object types.
+
+        Tenant resolution paths by object type:
+          * Interface: interface.device.tenant, interface.module.tenant, or interface.parent.tenant
+          * Service: service.device.tenant or vm.tenant fallback to vm.cluster.tenant
+          * VMInterface: vm.tenant fallback to vm.cluster.tenant
+          * Device: device.tenant
+          * VirtualMachine: vm.tenant fallback to vm.cluster.tenant
+        """
         if isinstance(source_obj, dcim_models.Interface):
             if source_obj.device:
                 return source_obj.device.tenant

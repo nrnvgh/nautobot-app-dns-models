@@ -164,9 +164,6 @@ def capture_object_change_state(sender, instance, **kwargs):
     This consolidated handler works for any model type by using the model name
     as the debug context and detecting changes via the shared helper function.
 
-    Location-aware processing: Device location changes trigger cascade updates
-    for all interfaces on that device to handle location-scoped DNS rules.
-
     Args:
         sender: The model class being saved (Device, Interface, etc.)
         instance: The model instance being saved
@@ -377,11 +374,11 @@ def handle_ipaddresstointerface_save(sender, instance, **kwargs):  # pylint: dis
 
 @receiver(post_delete, sender=IPAddressToInterface)
 def handle_ipaddresstointerface_delete(sender, instance, **kwargs):  # pylint: disable=unused-argument
-    """Handle IPAddressToInterface delete events to clean up associated DNS records.
+    """Handle IPAddressToInterface delete events to trigger DNS rule re-evaluation.
 
     Args:
         sender: IPAddressToInterface model class
-        instance: IPAddress object being removed from the interface
+        instance: IPAddressToInterface instance that was deleted
         **kwargs: Additional signal arguments
     """
     logger.debug(
@@ -406,22 +403,14 @@ def handle_m2m_changed(sender, instance, action, **kwargs):  # pylint: disable=u
     """
     Handle many-to-many relationship changes to trigger DNS rule processing.
 
-    Location-aware processing: IP assignments trigger DNS rule evaluation
-    using location-scoped rules based on the object's location:
-      * interface.device.location,
-      * service.device.location,
-      * service.virtual_machine.cluster.location,
-      * vminterface.virtual_machine.cluster.location
-      * vminterface.virtual_machine.cluster.location
-
     This is specifically needed for through table changes where the post_save signal
     fires before the M2M relationship is updated.
 
     Args:
         sender: The intermediate model
-        instance: The instance being modified (Interface, Service, or VMInterface)
+        instance: The object on which the M2M update occurred (typically Interface,
+                  Service, or VMInterface, depending on relation direction)
         action: The type of update (e.g., 'post_add', 'post_remove', 'post_clear')
-        pk_set: Set of primary keys affected
         **kwargs: Additional signal arguments
     """
     # Only process post_* actions (after the change is committed)
