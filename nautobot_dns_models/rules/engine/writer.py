@@ -261,6 +261,9 @@ class RecordWriter:
         created_records = []
         for record_data in record_data_list:
             try:
+                # This nested atomic creates a savepoint per record attempt. It lets us roll back only
+                # this record+tracking write on exceptions and continue processing without poisoning the
+                # outer transaction.
                 with transaction.atomic():
                     dns_record = record_class(**record_data)  # pylint: disable=not-callable
                     dns_record.validated_save()
