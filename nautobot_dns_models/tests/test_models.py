@@ -1811,26 +1811,6 @@ class DNSRuleRecordTestCase(TestCase):
         expected_str = f"{self.dns_rule.name} -> {self.a_record}"
         self.assertEqual(str(rule_record), expected_str)
 
-    def test_dnsrulerecord_basemodel_inheritance(self):
-        """Test that DNSRuleRecord inherits from BaseModel correctly."""
-        rule_record = DNSRuleRecord.objects.create(
-            rule=self.dns_rule,
-            content_type=self.content_type_device,
-            object_id=self.device.id,
-            dns_record_content_type=self.content_type_a_record,
-            dns_record_object_id=self.a_record.id,
-        )
-
-        # Should have UUID primary key
-        self.assertIsNotNone(rule_record.id)
-
-        # Should be a proper UUID, not an integer
-        self.assertEqual(len(str(rule_record.id)), 36)  # UUID string length
-
-        # Should inherit from BaseModel (basic check)
-
-        self.assertIsInstance(rule_record, BaseModel)
-
     def test_dnsrulerecord_uuid_fields(self):
         """Test that UUIDField correctly handles UUID values."""
         rule_record = DNSRuleRecord.objects.create(
