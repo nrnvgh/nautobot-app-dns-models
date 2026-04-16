@@ -46,12 +46,10 @@ def has_model_field_changes(instance, debug_context="object"):
     #
     # Fields to exclude from change detection.
     #
-    # id: never changes, so no need to check
-    #
-    # created: never changes, so no need to check
-    #
-    # last_updated: always when an object is saved, so could trigger actions
-    # every time the object is saved, even if no fields were changed.
+    # * id: never changes, so no need to check
+    # * created: never changes, so no need to check
+    # * last_updated: always when an object is saved, so could trigger actions
+    #   every time the object is saved, even if no fields were changed.
     exclude_fields = ("id", "created", "last_updated")
 
     # Normalize None and empty string as equivalent (common Django form behavior)
