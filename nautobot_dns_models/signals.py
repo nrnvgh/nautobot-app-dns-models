@@ -43,6 +43,16 @@ def has_model_field_changes(instance, debug_context="object"):
     Returns:
         bool: True if any fields have changed, False otherwise
     """
+    #
+    # Fields to exclude from change detection.
+    #
+    # id: never changes, so no need to check
+    #
+    # created: never changes, so no need to check
+    #
+    # last_updated: always when an object is saved, so could trigger actions
+    # every time the object is saved, even if no fields were changed.
+    exclude_fields = ("id", "created", "last_updated")
 
     # Normalize None and empty string as equivalent (common Django form behavior)
     def normalize_value(value):
@@ -59,6 +69,10 @@ def has_model_field_changes(instance, debug_context="object"):
 
             # Check all model fields for changes
             for field in instance._meta.fields:
+                # Exclude internal field and explicitly excluded fields.
+                if field.name.startswith("_") or field.name in exclude_fields:
+                    continue
+
                 old_value = getattr(old_instance, field.name, None)
                 new_value = getattr(instance, field.name, None)
 
