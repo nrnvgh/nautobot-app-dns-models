@@ -54,55 +54,53 @@ def has_model_field_changes(instance, debug_context="object"):
 
     # Normalize None and empty string as equivalent (common Django form behavior)
     def normalize_value(value):
-        return value if value not in (None, "") else None
+        return None if value in (None, "") else value
 
-    if not instance._state.adding:  # pylint: disable=protected-access
-        # Only for existing objects
-        try:
-            model_class = type(instance)
-            old_instance = model_class.objects.get(pk=instance.pk)
-
-            changed_fields = []
-            unchanged_fields = []
-
-            # Check all model fields for changes
-            for field in instance._meta.fields:
-                # Exclude internal field and explicitly excluded fields.
-                if field.name.startswith("_") or field.name in exclude_fields:
-                    continue
-
-                old_value = getattr(old_instance, field.name, None)
-                new_value = getattr(instance, field.name, None)
-
-                old_normalized = normalize_value(old_value)
-                new_normalized = normalize_value(new_value)
-
-                if old_normalized != new_normalized:
-                    changed_fields.append(f"{field.name}: '{old_value}' → '{new_value}'")
-                else:
-                    unchanged_fields.append(field.name)
-
-            # Debug logging showing field change analysis
-            has_changes = len(changed_fields) > 0
-            if has_changes:
-                logger.debug("%s %s fields changed: %s", debug_context.title(), instance, changed_fields)
-                logger.debug("%s %s fields unchanged: %s", debug_context.title(), instance, unchanged_fields)
-            else:
-                logger.debug("%s %s - no relevant field changes detected", debug_context.title(), instance)
-                logger.debug("%s %s all fields unchanged: %s", debug_context.title(), instance, unchanged_fields)
-
-            return has_changes
-
-        except model_class.DoesNotExist:
-            # Shouldn't happen for existing objects, but handle gracefully
-            logger.warning(
-                "%s %s - could not find existing object for change detection", debug_context.title(), instance
-            )
-            return False
-    else:
+    if instance._state.adding:  # pylint: disable=protected-access
         # New objects always need processing
         # logger.debug(f"{debug_context.title()} {instance} - new object, will process DNS rules")
         return True
+
+    model_class = type(instance)
+    try:
+        old_instance = model_class.objects.get(pk=instance.pk)
+    except model_class.DoesNotExist:
+        # Shouldn't happen for existing objects, but handle gracefully
+        logger.warning(
+            "%s %s - could not find existing object for change detection", debug_context.title(), instance
+        )
+        return False
+
+    changed_fields = []
+    unchanged_fields = []
+
+    # Check all model fields for changes.
+    for field in instance._meta.fields:
+        # Exclude internal field and explicitly excluded fields.
+        if field.name.startswith("_") or field.name in exclude_fields:
+            continue
+
+        # Using field.attname saves SQL queries when FK fields are populated vs using field.name.
+        attr_name = field.attname
+        old_value = getattr(old_instance, attr_name, None)
+        new_value = getattr(instance, attr_name, None)
+
+        if normalize_value(old_value) != normalize_value(new_value):
+            changed_fields.append(f"{attr_name}: '{old_value}' -> '{new_value}'")
+        else:
+            unchanged_fields.append(attr_name)
+
+    # Debug logging showing field change analysis.
+    has_changes = len(changed_fields) > 0
+    if has_changes:
+        logger.debug("%s %s fields changed: %s", debug_context.title(), instance, changed_fields)
+        logger.debug("%s %s fields unchanged: %s", debug_context.title(), instance, unchanged_fields)
+    else:
+        logger.debug("%s %s - no relevant field changes detected", debug_context.title(), instance)
+        logger.debug("%s %s all fields unchanged: %s", debug_context.title(), instance, unchanged_fields)
+
+    return has_changes
+
 
 
 #
