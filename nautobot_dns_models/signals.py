@@ -369,7 +369,15 @@ def handle_ipaddresstointerface_save(sender, instance, **kwargs):  # pylint: dis
         logger.debug("[SIGNAL] [handle_ipaddresstointerface_save] No interface/vm_interface on %s, skipping", instance)
         return
 
-    DNSRuleEngine().process_object(source_obj, created=False)
+    try:
+        DNSRuleEngine().process_object(source_obj, created=False)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Log the error but don't let it break the original IP assignment operation.
+        logger.error(
+            "[SIGNAL] [handle_ipaddresstointerface_save] Failed to process DNS rules for %s: %s",
+            source_obj,
+            exc,
+        )
 
 
 @receiver(post_delete, sender=IPAddressToInterface)
@@ -394,7 +402,15 @@ def handle_ipaddresstointerface_delete(sender, instance, **kwargs):  # pylint: d
         )
         return
 
-    DNSRuleEngine().process_object(source_obj, created=False)
+    try:
+        DNSRuleEngine().process_object(source_obj, created=False)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Log the error but don't let it break the original IP removal operation.
+        logger.error(
+            "[SIGNAL] [handle_ipaddresstointerface_delete] Failed to process DNS rules for %s: %s",
+            source_obj,
+            exc,
+        )
 
 
 @receiver(m2m_changed, sender=Service.ip_addresses.through)
