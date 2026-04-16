@@ -1953,9 +1953,69 @@ class DNSRuleRecordTestCase(TestCase):
 
         rule_record_id = rule_record.id
 
-        # Delete the DNS rule
         self.dns_rule.delete()
 
         # DNSRuleRecord should be cascade deleted
-        with self.assertRaises(DNSRuleRecord.DoesNotExist):
-            DNSRuleRecord.objects.get(id=rule_record_id)
+        self.assertFalse(DNSRuleRecord.objects.filter(id=rule_record_id).exists())
+
+    def test_dnsrulerecord_cascade_delete_on_dns_record_deletion(self):
+        """Test DNSRuleRecord is deleted when the associated DNS record is deleted."""
+        # Ensure IPv6 fixture exists for AAAA subtest.
+        Prefix.objects.get_or_create(
+            prefix="2001:db8:ffff::/64",
+            namespace=self.namespace,
+            defaults={"type": "Pool", "status": self.status},
+        )
+        ipv6_address = IPAddress.objects.create(
+            address="2001:db8:ffff::1/128",
+            namespace=self.namespace,
+            status=self.status,
+        )
+
+        cases = [
+            {
+                "record_type": "A",
+                "record_model": ARecord,
+                "address": self.ip_address,
+                "value_template": "{{ obj.primary_ip4 }}",
+            },
+            {
+                "record_type": "AAAA",
+                "record_model": AAAARecord,
+                "address": ipv6_address,
+                "value_template": "{{ obj.primary_ip6 }}",
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(record_type=case["record_type"]):
+                dns_rule = DNSRule.objects.create(
+                    name=f"manual-delete-{case['record_type'].lower()}-rule",
+                    content_type=self.content_type_device,
+                    zone_template="example.com",
+                    record_type=case["record_type"],
+                    name_template="{{ obj.name }}",
+                    value_template=case["value_template"],
+                )
+
+                dns_record = case["record_model"].objects.create(
+                    name=f"manual-delete-{case['record_type'].lower()}",
+                    address=case["address"],
+                    zone=self.dns_zone,
+                )
+                dns_record_ct = ContentType.objects.get_for_model(case["record_model"])
+
+                rule_record = DNSRuleRecord.objects.create(
+                    rule=dns_rule,
+                    content_type=self.content_type_device,
+                    object_id=self.device.id,
+                    dns_record_content_type=dns_record_ct,
+                    dns_record_object_id=dns_record.id,
+                )
+
+                dns_record.delete()
+
+                self.assertFalse(
+                    DNSRuleRecord.objects.filter(id=rule_record.id).exists(),
+                    "Tracking row should be deleted when linked DNS record is deleted.",
+                )
