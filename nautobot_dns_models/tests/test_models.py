@@ -1042,7 +1042,7 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         self.assertIn("not a valid choice", context.exception.message_dict["record_type"][0])
 
     #
-    # Field validation tests
+    # Template validation tests
     #
     def test_dnsrule_optional_template_fields_can_be_blank(self):
         """Test that optional template fields can be blank."""
@@ -1085,85 +1085,67 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                     any("Template syntax error" in message for message in ctx.exception.message_dict[field_name])
                 )
 
-    def test_dnsrule_required_fields_throw_validation_errors_when_missing(self):
-        """Test that all required fields throw validation errors when missing."""
-        test_cases = [
-            (
-                "name",
-                {
-                    "content_type": self.content_type_device,
-                    "zone_template": "test.com",
-                    "record_type": "A",
-                    "name_template": "{{ obj.name }}",
-                    "value_template": "{{ obj.primary_ip4 }}",
-                },
-                "This field cannot be blank.",
-            ),
-            (
-                "zone_template",
-                {
-                    "name": "missing-zone-template",
-                    "content_type": self.content_type_device,
-                    "record_type": "A",
-                    "name_template": "{{ obj.name }}",
-                    "value_template": "{{ obj.primary_ip4 }}",
-                },
-                "This field cannot be blank.",
-            ),
-            (
-                "name_template",
-                {
-                    "name": "missing-name-template",
-                    "content_type": self.content_type_device,
-                    "zone_template": "test.com",
-                    "record_type": "A",
-                    "value_template": "{{ obj.primary_ip4 }}",
-                },
-                "This field cannot be blank.",
-            ),
-            (
-                "record_type",
-                {
-                    "name": "missing-record-type",
-                    "content_type": self.content_type_device,
-                    "zone_template": "test.com",
-                    "name_template": "{{ obj.name }}",
-                    "value_template": "{{ obj.primary_ip4 }}",
-                },
-                "This field cannot be blank.",
-            ),
-            (
-                "value_template",
-                {
-                    "name": "missing-value-template",
-                    "content_type": self.content_type_device,
-                    "zone_template": "test.com",
-                    "record_type": "A",
-                    "name_template": "{{ obj.name }}",
-                },
-                "This field cannot be blank.",
-            ),
-            (
-                "content_type",
-                {
-                    "name": "missing-content-type",
-                    "zone_template": "test.com",
-                    "record_type": "A",
-                    "name_template": "{{ obj.name }}",
-                    "value_template": "{{ obj.primary_ip4 }}",
-                },
-                "This field cannot be null.",
-            ),
+    def test_dnsrule_syntax_error_skips_literal_validation_for_same_field(self):
+        """Syntax-invalid hostname template should not also report literal validation errors."""
+        rule = DNSRule(
+            name="syntax-skips-literal-validation",
+            content_type=self.content_type_device,
+            zone_template="{{ 'bad zone' ",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+            enabled=False,
+        )
+
+        with self.assertRaises(ValidationError) as ctx:
+            rule.full_clean()
+
+        zone_errors = ctx.exception.message_dict.get("zone_template", [])
+        self.assertTrue(any("Template syntax error" in message for message in zone_errors))
+
+        literal_error_fragments = [
+            "Whitespace in literals is not allowed",
+            "Consecutive dots '..' are not allowed",
+            "Hyphen followed by dot '-.' is not allowed",
+            "Dot followed by hyphen '.-' is not allowed",
+        ]
+        for fragment in literal_error_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertFalse(any(fragment in message for message in zone_errors))
+
+    def test_dnsrule_template_expression_required_for_statement_or_comment_tags(self):
+        """Templates with {%...%} or {#...#} and no {{...}} expression should be rejected."""
+        base_kwargs = {
+            "name": "expression-required-base",
+            "content_type": self.content_type_device,
+            "zone_template": "test.com",
+            "record_type": "A",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.primary_ip4 }}",
+            "view_template": "Default",
+            "enabled": False,
+        }
+        field_cases = [
+            ("zone_template", "{% if True %}test.com{% endif %}"),
+            ("name_template", "{% if True %}device{% endif %}"),
+            ("value_template", "{% if True %}1.2.3.4{% endif %}"),
+            ("view_template", "{# comment #}Default View"),
         ]
 
-        for missing_field, kwargs, expected_message in test_cases:
-            with self.subTest(field=missing_field):
+        for field_name, invalid_template in field_cases:
+            with self.subTest(field=field_name):
+                kwargs = dict(base_kwargs)
+                kwargs["name"] = f"expression-required-{field_name}"
+                kwargs[field_name] = invalid_template
+                rule = DNSRule(**kwargs)
+
                 with self.assertRaises(ValidationError) as context:
-                    rule = DNSRule(**kwargs)
                     rule.full_clean()
 
-                self.assertIn(missing_field, context.exception.message_dict)
-                self.assertIn(expected_message, context.exception.message_dict[missing_field][0])
+                self.assertIn(field_name, context.exception.message_dict)
+                self.assertTrue(
+                    any("has no {{ expression" in message for message in context.exception.message_dict[field_name])
+                )
 
     def test_dnsrule_whitespace_disallowed_all_record_types(self):
         """Whitespace is disallowed in zone_template and name_template for all supported record types."""
@@ -1259,6 +1241,109 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         self.assertNotIn("empty_template", literal_errors)
 
     #
+    # Content type validation tests
+    #
+    def test_dnsrule_required_fields_throw_validation_errors_when_missing(self):
+        """Test that all required fields throw validation errors when missing."""
+        test_cases = [
+            (
+                "name",
+                {
+                    "content_type": self.content_type_device,
+                    "zone_template": "test.com",
+                    "record_type": "A",
+                    "name_template": "{{ obj.name }}",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be blank.",
+            ),
+            (
+                "zone_template",
+                {
+                    "name": "missing-zone-template",
+                    "content_type": self.content_type_device,
+                    "record_type": "A",
+                    "name_template": "{{ obj.name }}",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be blank.",
+            ),
+            (
+                "name_template",
+                {
+                    "name": "missing-name-template",
+                    "content_type": self.content_type_device,
+                    "zone_template": "test.com",
+                    "record_type": "A",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be blank.",
+            ),
+            (
+                "record_type",
+                {
+                    "name": "missing-record-type",
+                    "content_type": self.content_type_device,
+                    "zone_template": "test.com",
+                    "name_template": "{{ obj.name }}",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be blank.",
+            ),
+            (
+                "value_template",
+                {
+                    "name": "missing-value-template",
+                    "content_type": self.content_type_device,
+                    "zone_template": "test.com",
+                    "record_type": "A",
+                    "name_template": "{{ obj.name }}",
+                },
+                "This field cannot be blank.",
+            ),
+            (
+                "content_type",
+                {
+                    "name": "missing-content-type",
+                    "zone_template": "test.com",
+                    "record_type": "A",
+                    "name_template": "{{ obj.name }}",
+                    "value_template": "{{ obj.primary_ip4 }}",
+                },
+                "This field cannot be null.",
+            ),
+        ]
+
+        for missing_field, kwargs, expected_message in test_cases:
+            with self.subTest(field=missing_field):
+                with self.assertRaises(ValidationError) as context:
+                    rule = DNSRule(**kwargs)
+                    rule.full_clean()
+
+                self.assertIn(missing_field, context.exception.message_dict)
+                self.assertIn(expected_message, context.exception.message_dict[missing_field][0])
+
+    def test_dnsrule_unsupported_content_type_rejected(self):
+        """Unsupported content_type values should fail DNSRule model validation."""
+        unsupported_content_type = ContentType.objects.get_for_model(Namespace)
+        rule = DNSRule(
+            name="unsupported-content-type-rule",
+            content_type=unsupported_content_type,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            rule.full_clean()
+
+        self.assertIn("content_type", context.exception.message_dict)
+        self.assertTrue(
+            any("is not supported" in message for message in context.exception.message_dict["content_type"])
+        )
+
+    #
     # Uniqueness and scope constraints tests
     #
     def test_dnsrule_name_unique(self):
@@ -1286,6 +1371,58 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
 
         self.assertIn("name", context.exception.message_dict)
         self.assertIn("already exists", context.exception.message_dict["name"][0])
+
+    def test_dnsrule_same_scope_different_record_types_can_coexist(self):
+        """Enabled rules with same scope/content_type but different record_type should coexist."""
+        shared_kwargs = {
+            "content_type": self.content_type_device,
+            "zone_template": "test.com",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.primary_ip4 }}",
+            "location": self.location,
+            "tenant": self.tenant,
+            "enabled": True,
+        }
+        DNSRule.objects.create(name="same-scope-record-type-a", record_type="A", **shared_kwargs)
+        DNSRule.objects.create(name="same-scope-record-type-aaaa", record_type="AAAA", **shared_kwargs)
+
+        self.assertEqual(
+            DNSRule.objects.filter(
+                enabled=True,
+                content_type=self.content_type_device,
+                location=self.location,
+                tenant=self.tenant,
+                record_type__in=["A", "AAAA"],
+            ).count(),
+            2,
+        )
+
+    def test_dnsrule_same_scope_different_content_types_can_coexist(self):
+        """Enabled rules with same scope/record_type but different content_type should coexist."""
+        shared_kwargs = {
+            "zone_template": "test.com",
+            "record_type": "A",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.primary_ip4 }}",
+            "location": self.location,
+            "tenant": self.tenant,
+            "enabled": True,
+        }
+        DNSRule.objects.create(name="same-scope-content-type-device", content_type=self.content_type_device, **shared_kwargs)
+        DNSRule.objects.create(
+            name="same-scope-content-type-interface", content_type=self.content_type_interface, **shared_kwargs
+        )
+
+        self.assertEqual(
+            DNSRule.objects.filter(
+                enabled=True,
+                record_type="A",
+                location=self.location,
+                tenant=self.tenant,
+                content_type__in=[self.content_type_device, self.content_type_interface],
+            ).count(),
+            2,
+        )
 
     def test_dnsrule_different_enabled_scopes_can_coexist(self):
         """Enabled rules with different scope tuples should coexist."""
@@ -1315,7 +1452,10 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
                 rule.full_clean()
                 rule.save()
 
-        self.assertEqual(DNSRule.objects.filter(enabled=True, content_type=self.content_type_device, record_type="A").count(), 4)
+        self.assertEqual(
+            DNSRule.objects.filter(enabled=True, content_type=self.content_type_device, record_type="A").count(),
+            4,
+        )
 
     def test_dnsrule_same_scope_different_view_template_not_allowed(self):
         """Test enabled rules with same scope are rejected even when view_template values differ."""
