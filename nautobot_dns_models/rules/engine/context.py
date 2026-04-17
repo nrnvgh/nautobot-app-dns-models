@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from jinja2 import Environment
+
 from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
 
 
@@ -9,7 +11,7 @@ from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
 class EngineContext:
     """Cross-collaborator runtime dependencies and static knobs."""
 
-    jinja_env: object
+    jinja_env: Environment
     bulk_rename_update_batch_size: int
     bulk_create_batched_pipeline_size: int
     bulk_delete_batched_pipeline_size: int
