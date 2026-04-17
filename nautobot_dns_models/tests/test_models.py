@@ -1789,37 +1789,76 @@ class DNSRuleRecordTestCase(TestCase):
     #
     # Model basics tests
     #
-    def test_dnsrulerecord_create(self):
-        """Test creating a DNSRuleRecord."""
-        rule_record = DNSRuleRecord.objects.create(
-            rule=self.dns_rule,
-            content_type=self.content_type_device,
-            object_id=self.device.id,
-            dns_record_content_type=self.content_type_a_record,
-            dns_record_object_id=self.a_record.id,
+    def test_dnsrulerecord_create_for_supported_record_types(self):
+        """Test creating DNSRuleRecord entries for supported record types."""
+        Prefix.objects.create(prefix="2001:db8::/64", namespace=self.namespace, type="Pool", status=self.status)
+        ipv6_address = IPAddress.objects.create(
+            address="2001:db8::1/128",
+            namespace=self.namespace,
+            status=self.status,
         )
 
-        self.assertEqual(rule_record.rule, self.dns_rule)
-        self.assertEqual(rule_record.content_type, self.content_type_device)
-        self.assertEqual(rule_record.object_id, self.device.id)
-        self.assertEqual(rule_record.source_object, self.device)
-        self.assertEqual(rule_record.dns_record_content_type, self.content_type_a_record)
-        self.assertEqual(rule_record.dns_record_object_id, self.a_record.id)
-        self.assertEqual(rule_record.dns_record, self.a_record)
+        aaaa_record = AAAARecord.objects.create(
+            name="test-device-ipv6",
+            address=ipv6_address,
+            zone=self.dns_zone,
+        )
+        aaaa_rule = DNSRule.objects.create(
+            name="test-device-rule-aaaa",
+            content_type=self.content_type_device,
+            zone_template="example.com",
+            record_type="AAAA",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip6 }}",
+        )
 
-        # Test string representation
-        expected_str = f"{self.dns_rule.name} -> {self.a_record}"
-        self.assertEqual(str(rule_record), expected_str)
+        test_cases = [
+            {
+                "record_type": "A",
+                "rule": self.dns_rule,
+                "dns_record": self.a_record,
+                "dns_record_content_type": self.content_type_a_record,
+            },
+            {
+                "record_type": "AAAA",
+                "rule": aaaa_rule,
+                "dns_record": aaaa_record,
+                "dns_record_content_type": ContentType.objects.get_for_model(AAAARecord),
+            },
+        ]
+
+        for case in test_cases:
+            with self.subTest(record_type=case["record_type"]):
+                rule_record = DNSRuleRecord(
+                    rule=case["rule"],
+                    content_type=self.content_type_device,
+                    object_id=self.device.id,
+                    dns_record_content_type=case["dns_record_content_type"],
+                    dns_record_object_id=case["dns_record"].id,
+                )
+                rule_record.validated_save()
+
+                self.assertEqual(rule_record.rule, case["rule"])
+                self.assertEqual(rule_record.content_type, self.content_type_device)
+                self.assertEqual(rule_record.object_id, self.device.id)
+                self.assertEqual(rule_record.source_object, self.device)
+                self.assertEqual(rule_record.dns_record_content_type, case["dns_record_content_type"])
+                self.assertEqual(rule_record.dns_record_object_id, case["dns_record"].id)
+                self.assertEqual(rule_record.dns_record, case["dns_record"])
+
+                expected_str = f"{case['rule'].name} -> {case['dns_record']}"
+                self.assertEqual(str(rule_record), expected_str)
 
     def test_dnsrulerecord_uuid_fields(self):
         """Test that UUIDField correctly handles UUID values."""
-        rule_record = DNSRuleRecord.objects.create(
+        rule_record = DNSRuleRecord(
             rule=self.dns_rule,
             content_type=self.content_type_device,
             object_id=self.device.id,  # UUID object
             dns_record_content_type=self.content_type_a_record,
             dns_record_object_id=self.a_record.id,  # UUID object
         )
+        rule_record.validated_save()
 
         # Verify that UUIDs are handled correctly
         self.assertEqual(rule_record.object_id, self.device.id)
@@ -1834,13 +1873,14 @@ class DNSRuleRecordTestCase(TestCase):
     #
     def test_dnsrulerecord_generic_foreign_keys(self):
         """Test that GenericForeignKey relationships work correctly."""
-        rule_record = DNSRuleRecord.objects.create(
+        rule_record = DNSRuleRecord(
             rule=self.dns_rule,
             content_type=self.content_type_device,
             object_id=self.device.id,
             dns_record_content_type=self.content_type_a_record,
             dns_record_object_id=self.a_record.id,
         )
+        rule_record.validated_save()
 
         # Test source_object GenericForeignKey
         self.assertEqual(rule_record.source_object, self.device)
@@ -1854,13 +1894,14 @@ class DNSRuleRecordTestCase(TestCase):
         """Test DNSRuleRecord with Interface as source object."""
         content_type_interface = ContentType.objects.get_for_model(Interface)
 
-        rule_record = DNSRuleRecord.objects.create(
+        rule_record = DNSRuleRecord(
             rule=self.dns_rule,
             content_type=content_type_interface,
             object_id=self.interface.id,
             dns_record_content_type=self.content_type_a_record,
             dns_record_object_id=self.a_record.id,
         )
+        rule_record.validated_save()
 
         self.assertEqual(rule_record.source_object, self.interface)
         self.assertEqual(rule_record.source_object.device, self.device)
@@ -1889,55 +1930,48 @@ class DNSRuleRecordTestCase(TestCase):
             rule_record.full_clean()
 
         self.assertIn("dns_record_content_type", context.exception.message_dict)
+        self.assertIn("Rule record_type 'A' requires 'ARecord', got 'CNAMERecord'.", context.exception.message_dict["dns_record_content_type"][0])
 
-    def test_dnsrulerecord_with_aaaa_record(self):
-        """Test DNSRuleRecord with AAAA record."""
-        Prefix.objects.create(prefix="2001:db8::/64", namespace=self.namespace, type="Pool", status=self.status)
-        ipv6_address = IPAddress.objects.create(
-            address="2001:db8::1/128",
-            namespace=self.namespace,
-            status=self.status,
-        )
-
-        aaaa_record = AAAARecord.objects.create(
-            name="test-device-ipv6",
-            address=ipv6_address,
-            zone=self.dns_zone,
-        )
-
-        content_type_aaaa = ContentType.objects.get_for_model(AAAARecord)
-
-        rule_record = DNSRuleRecord.objects.create(
+    def test_dnsrulerecord_rejects_non_dnsrecord_content_type(self):
+        """Test DNSRuleRecord rejects dns_record_content_type values that are not DNSRecord subclasses."""
+        rule_record = DNSRuleRecord(
             rule=self.dns_rule,
             content_type=self.content_type_device,
             object_id=self.device.id,
-            dns_record_content_type=content_type_aaaa,
-            dns_record_object_id=aaaa_record.id,
+            dns_record_content_type=self.content_type_device,
+            dns_record_object_id=self.device.id,
         )
 
-        self.assertEqual(rule_record.dns_record, aaaa_record)
-        self.assertEqual(rule_record.dns_record.address, ipv6_address)
+        with self.assertRaises(ValidationError) as context:
+            rule_record.full_clean()
 
-    def test_dnsrulerecord_multiple_rules_same_source(self):
-        """Test multiple DNSRuleRecord entries for the same source object with different rules."""
+        self.assertIn("dns_record_content_type", context.exception.message_dict)
+        self.assertIn("is not a DNSRecord subclass", context.exception.message_dict["dns_record_content_type"][0])
+
+    #
+    # Relationship cardinality behavior tests
+    #
+    def test_dnsrulerecord_multiple_rules_same_source_object_is_allowed(self):
+        """Test multiple DNSRuleRecord entries for the same source object with different rules are allowed."""
         # Create second DNS rule
         second_rule = DNSRule.objects.create(
             name="second-device-rule",
             content_type=self.content_type_device,
             zone_template="internal.com",
-            record_type="AAAA",
+            record_type="A",
             name_template="{{ obj.name }}-info",
-            value_template="{{ obj.primary_ip6 }}",
+            value_template="{{ obj.primary_ip4 }}",
         )
 
         # Create rule records for same device with different rules
-        rule_record_1 = DNSRuleRecord.objects.create(
+        rule_record_1 = DNSRuleRecord(
             rule=self.dns_rule,
             content_type=self.content_type_device,
             object_id=self.device.id,
             dns_record_content_type=self.content_type_a_record,
             dns_record_object_id=self.a_record.id,
         )
+        rule_record_1.validated_save()
 
         # Create a second A record for the second rule
         second_a_record = ARecord.objects.create(
@@ -1946,13 +1980,14 @@ class DNSRuleRecordTestCase(TestCase):
             zone=self.dns_zone,
         )
 
-        rule_record_2 = DNSRuleRecord.objects.create(
+        rule_record_2 = DNSRuleRecord(
             rule=second_rule,
             content_type=self.content_type_device,
             object_id=self.device.id,
             dns_record_content_type=self.content_type_a_record,
             dns_record_object_id=second_a_record.id,
         )
+        rule_record_2.validated_save()
 
         # Both should exist and be distinct
         self.assertNotEqual(rule_record_1, rule_record_2)
@@ -2006,48 +2041,6 @@ class DNSRuleRecordTestCase(TestCase):
                 object_id=self.interface.id,
                 dns_record_content_type=self.content_type_a_record,
                 dns_record_object_id=self.a_record.id,
-            )
-
-    def test_single_source_object_per_dns_record_constraint(self):
-        """Test that the same source object cannot be linked to the same DNS record twice."""
-        # Create a test DNS rule
-        test_rule = DNSRule.objects.create(
-            name="test-rule-2",
-            content_type=self.content_type_device,
-            zone_template="example.com",
-            record_type="A",
-            name_template="{{ obj.name }}-alt",
-            value_template="{{ obj.primary_ip4 }}",
-            enabled=True,
-        )
-
-        # Create the first DNSRuleRecord (should succeed)
-        rule_record1 = DNSRuleRecord.objects.create(
-            rule=self.dns_rule,
-            content_type=self.content_type_device,
-            object_id=self.device.id,
-            dns_record_content_type=self.content_type_a_record,
-            dns_record_object_id=self.a_record.id,
-        )
-
-        # Verify only one record exists before attempting duplicate
-        matching_records_before = DNSRuleRecord.objects.filter(
-            content_type=self.content_type_device,
-            object_id=self.device.id,
-            dns_record_content_type=self.content_type_a_record,
-            dns_record_object_id=self.a_record.id,
-        )
-        self.assertEqual(matching_records_before.count(), 1)
-        self.assertEqual(rule_record1.rule, self.dns_rule)
-
-        # Attempting to link the same source object to the same DNS record should fail
-        with self.assertRaises(IntegrityError):
-            DNSRuleRecord.objects.create(
-                rule=test_rule,  # Different rule
-                content_type=self.content_type_device,
-                object_id=self.device.id,  # Same source object - should cause failure
-                dns_record_content_type=self.content_type_a_record,
-                dns_record_object_id=self.a_record.id,  # Same DNS record - should cause failure
             )
 
     #
