@@ -329,7 +329,7 @@ class RecordWriter:
                     ]
                     DNSRuleRecord.objects.bulk_create(tracking_rows, batch_size=batch_size)
 
-    def _update_tracking_record_dns_record(self, rule, source_obj, tracking_record, desired_record_data, phase):
+    def _update_tracked_dns_record_name(self, rule, source_obj, tracking_record, desired_record_data, phase):
         dns_record = self._resolve_prefetched_dns_record(tracking_record)
         if dns_record is None:
             return UpdateResult.FAILED
@@ -339,7 +339,11 @@ class RecordWriter:
             return UpdateResult.UNCHANGED
 
         try:
-            updated = type(dns_record).objects.filter(pk=dns_record.pk).update(name=desired_name)
+            # Isolate per-record update failures so a single DB error does not
+            # poison an outer transaction for subsequent operations.
+            with transaction.atomic():
+                updated = type(dns_record).objects.filter(pk=dns_record.pk).update(name=desired_name)
+
             if updated != 1:
                 raise ValueError(f"Failed to update DNS record '{dns_record.pk}'")
 
