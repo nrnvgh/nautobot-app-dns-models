@@ -110,10 +110,10 @@ class DNSRuleEngine:
             change_result = self._writer.update_dns_records_for_object(source_obj, rules)
 
         summary.changed_record_count = change_result["changed_record_count"]
-        summary.record_ops_create_count = change_result["record_ops_create_count"]
-        summary.record_ops_delete_count = change_result["record_ops_delete_count"]
-        summary.record_ops_update_count = change_result["record_ops_update_count"]
-        summary.record_ops_unchanged_count = change_result["record_ops_unchanged_count"]
+        summary.dns_record_create_count = change_result["dns_record_create_count"]
+        summary.dns_record_delete_count = change_result["dns_record_delete_count"]
+        summary.dns_record_update_count = change_result["dns_record_update_count"]
+        summary.dns_record_unchanged_count = change_result["dns_record_unchanged_count"]
 
         return summary
 

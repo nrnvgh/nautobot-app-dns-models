@@ -48,7 +48,7 @@ class StandardUpdateExecutor(UpdateExecutor):
     ):
         """Apply update through writer ORM path for one tracking record."""
         _ = bulk_update_collector
-        return writer._update_tracking_record_dns_record(  # pylint: disable=protected-access
+        return writer._update_tracked_dns_record_name(  # pylint: disable=protected-access
             rule=rule,
             source_obj=source_obj,
             tracking_record=tracking_record,

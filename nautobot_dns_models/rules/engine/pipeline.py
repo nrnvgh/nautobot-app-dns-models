@@ -370,9 +370,9 @@ class EnginePipeline:
             unchanged_count += reconcile_summary["unchanged"]
 
         summary.changed_record_count = create_count + delete_count + update_count
-        summary.record_ops_create_count = create_count
-        summary.record_ops_delete_count = delete_count
-        summary.record_ops_update_count = update_count
-        summary.record_ops_unchanged_count = unchanged_count
+        summary.dns_record_create_count = create_count
+        summary.dns_record_delete_count = delete_count
+        summary.dns_record_update_count = update_count
+        summary.dns_record_unchanged_count = unchanged_count
 
         return summary

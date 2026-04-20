@@ -37,6 +37,7 @@ from nautobot_dns_models.rules.engine.constants import (
 )
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
+from nautobot_dns_models.rules.engine.update_strategies import UpdateResult
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
 TEST_LOGGING_CONFIG = {
@@ -2097,6 +2098,151 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         batched_queue_mock.assert_not_called()
         self.assertEqual(ARecord.objects.filter(name=expected_name, zone=self.dns_zone).count(), 1)
 
+    def test_update_tracked_dns_record_name_integrity_error_does_not_poison_outer_transaction(self):
+        """Writer update should return FAILED and keep the outer transaction usable."""
+        rule = self._create_dns_rule_for_interface_a_record(name="writer-update-savepoint-isolation")
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        tracking_record = DNSRuleRecord.objects.get(rule=rule, object_id=self.interface.id)
+        original_record = tracking_record.dns_record
+        desired_name = "conflicting.target.name"
+        ARecord.objects.create(name=desired_name, zone=self.dns_zone, address=self.ip_addresses[0])
+
+        with transaction.atomic():
+            result = self.engine._writer._update_tracked_dns_record_name(  # pylint: disable=protected-access
+                rule=rule,
+                source_obj=self.interface,
+                tracking_record=tracking_record,
+                desired_record_data={
+                    "name": desired_name,
+                    "zone": self.dns_zone,
+                    "address_id": self.ip_addresses[0].id,
+                },
+                phase="test_update_reconcile",
+            )
+            self.assertEqual(result, UpdateResult.FAILED)
+            self.assertEqual(ARecord.objects.filter(pk=original_record.pk).count(), 1)
+
+        original_record.refresh_from_db()
+        self.assertEqual(original_record.name, f"{self.interface.name}.{self.device.name}")
+
+    def test_process_objects_pipeline_continues_after_conflicting_object_update_failure(self):
+        """Pipeline should continue processing later objects after one update conflict failure."""
+        DNSRule.objects.create(
+            name="pipeline-batch-continue-on-update-failure",
+            description="Create A records for interfaces",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}-{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=True,
+        )
+
+        interface_name = "uplink0"
+        source_a_device_name = "batch-continue-source-a"
+        source_b_device_name = "batch-continue-source-b"
+
+        source_a_device = Device(
+            name=source_a_device_name,
+            device_type=self.device_type,
+            location=self.location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        source_a_device.validated_save()
+        source_a_interface = Interface(
+            name=interface_name,
+            device=source_a_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        source_a_interface.validated_save()
+
+        tenant_b = Tenant.objects.create(name="Batch Continue Tenant B", tenant_group=self.tenant_group)
+        source_b_device = Device(
+            name=source_b_device_name,
+            device_type=self.device_type,
+            location=self.location,
+            tenant=tenant_b,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        source_b_device.validated_save()
+        source_b_interface = Interface(
+            name=interface_name,
+            device=source_b_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        source_b_interface.validated_save()
+
+        success_device = Device(
+            name="batch-continue-success-old",
+            device_type=self.device_type,
+            location=self.location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        success_device.validated_save()
+        success_interface = Interface(
+            name="uplink1",
+            device=success_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        success_interface.validated_save()
+
+        shared_ip = self.ip_addresses[0]
+        success_ip = self.ip_addresses[1]
+        source_a_interface.ip_addresses.add(shared_ip)
+        source_b_interface.ip_addresses.add(shared_ip)
+        success_interface.ip_addresses.add(success_ip)
+
+        Device.objects.filter(pk=source_b_device.pk).update(name=source_a_device_name)
+        Device.objects.filter(pk=success_device.pk).update(name="batch-continue-success-new")
+
+        source_b_interface.refresh_from_db()
+        success_interface.refresh_from_db()
+
+        with transaction.atomic():
+            summaries = self.engine.process_objects_pipeline([source_b_interface, success_interface])
+            self.assertEqual(Interface.objects.filter(pk=success_interface.pk).count(), 1)
+
+        self.assertEqual(len(summaries), 2)
+        # First summary entry is the conflict object; failed update applies no DNS mutations.
+        self.assertEqual(summaries[0].changed_record_count, 0)
+        # Second summary entry is the control object; one rename update succeeds.
+        self.assertEqual(summaries[1].changed_record_count, 1)
+        self.assertEqual(summaries[1].dns_record_update_count, 1)
+
+        self.assertEqual(
+            ARecord.objects.filter(
+                name=f"{interface_name}-{source_b_device_name}", zone=self.dns_zone, address=shared_ip
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            ARecord.objects.filter(
+                name=f"{interface_name}-{source_a_device_name}", zone=self.dns_zone, address=shared_ip
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            ARecord.objects.filter(
+                name="uplink1-batch-continue-success-new", zone=self.dns_zone, address=success_ip
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            ARecord.objects.filter(
+                name="uplink1-batch-continue-success-old", zone=self.dns_zone, address=success_ip
+            ).count(),
+            0,
+        )
+
     def test_interface_a_record_created_on_ip_addition_via_custom_method(self):
         """Test that A records are created when IP is added to interface via custom add_ip_addresses method."""
         # Verify no A records exist initially
@@ -2295,6 +2441,92 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         self.assertEqual(updated_records.count(), 1, "Device name change should trigger interface record update")
         self.assertEqual(old_records.count(), 0, "Old record should be gone after device name change")
         self.assertEqual(updated_records.first().address, self.ip_addresses[0])
+
+    def test_device_rename_with_shared_ip_name_convergence_breaks_atomic_transaction(self):
+        """Device rename with shared IP and converging names should complete without transaction breakage."""
+        rule = DNSRule(
+            name="shared-ip-device-rename-collision",
+            description="Create A records for interfaces",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}-{{ obj.device.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=True,
+        )
+        rule.validated_save()
+
+        source_a_device_name = "rename-collision-source-a"
+        source_b_device_name = "rename-collision-source-b"
+        interface_name = "uplink0"
+        tenant_a = self.tenant
+        tenant_b = Tenant.objects.create(
+            name="Rename Collision Tenant B",
+            tenant_group=self.tenant_group,
+        )
+
+        existing_device = Device(
+            name=source_a_device_name,
+            device_type=self.device_type,
+            location=self.location,
+            tenant=tenant_a,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        existing_device.validated_save()
+        existing_interface = Interface(
+            name=interface_name,
+            device=existing_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        existing_interface.validated_save()
+
+        renamed_device = Device(
+            name=source_b_device_name,
+            device_type=self.device_type,
+            location=self.location,
+            tenant=tenant_b,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        renamed_device.validated_save()
+        renamed_interface = Interface(
+            name=interface_name,
+            device=renamed_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        renamed_interface.validated_save()
+
+        shared_ip = self.ip_addresses[0]
+        existing_interface.ip_addresses.add(shared_ip)
+        renamed_interface.ip_addresses.add(shared_ip)
+
+        self.assertEqual(
+            ARecord.objects.filter(
+                name=f"{interface_name}-{source_a_device_name}", address=shared_ip, zone=self.dns_zone
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            ARecord.objects.filter(
+                name=f"{interface_name}-{source_b_device_name}", address=shared_ip, zone=self.dns_zone
+            ).count(),
+            1,
+        )
+
+        with transaction.atomic():
+            renamed_device.name = source_a_device_name
+            renamed_device.validated_save()
+            self.assertEqual(
+                ARecord.objects.filter(
+                    name=f"{interface_name}-{source_a_device_name}",
+                    address=shared_ip,
+                    zone=self.dns_zone,
+                ).count(),
+                1,
+            )
 
     def test_a_records_cascade_when_device_renamed_many_interfaces_one_ip_each(self):
         """Cascade path: parent rename updates one A record per interface when each has a single IP.

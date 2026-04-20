@@ -5,7 +5,6 @@ from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
-from nautobot.apps.models import BaseModel
 from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.dcim.models import Device, DeviceType, Interface, Location, LocationType, Manufacturer
 from nautobot.extras.models import Role, Status
@@ -1408,7 +1407,9 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
             "tenant": self.tenant,
             "enabled": True,
         }
-        DNSRule.objects.create(name="same-scope-content-type-device", content_type=self.content_type_device, **shared_kwargs)
+        DNSRule.objects.create(
+            name="same-scope-content-type-device", content_type=self.content_type_device, **shared_kwargs
+        )
         DNSRule.objects.create(
             name="same-scope-content-type-interface", content_type=self.content_type_interface, **shared_kwargs
         )
@@ -1930,7 +1931,10 @@ class DNSRuleRecordTestCase(TestCase):
             rule_record.full_clean()
 
         self.assertIn("dns_record_content_type", context.exception.message_dict)
-        self.assertIn("Rule record_type 'A' requires 'ARecord', got 'CNAMERecord'.", context.exception.message_dict["dns_record_content_type"][0])
+        self.assertIn(
+            "Rule record_type 'A' requires 'ARecord', got 'CNAMERecord'.",
+            context.exception.message_dict["dns_record_content_type"][0],
+        )
 
     def test_dnsrulerecord_rejects_non_dnsrecord_content_type(self):
         """Test DNSRuleRecord rejects dns_record_content_type values that are not DNSRecord subclasses."""

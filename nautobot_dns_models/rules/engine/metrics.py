@@ -7,20 +7,49 @@ from time import perf_counter
 
 @dataclass
 class ObjectProcessingMetrics:
-    """Per-object result returned by the engine's processing paths."""
+    """Per-object result returned by the engine's processing paths.
+
+    Attributes:
+        had_existing_rule_records: True when the source object had at least one
+            pre-existing `DNSRuleRecord` before reconciliation.
+        existing_rule_record_count: Number of pre-existing `DNSRuleRecord` rows
+            found for the source object at processing start.
+        changed_record_count: Total number of create, delete, and update
+            operations applied for the source object.
+        dns_record_create_count: Number of DNS records created for the source
+            object during reconciliation.
+        dns_record_delete_count: Number of DNS records deleted for the source
+            object during reconciliation.
+        dns_record_update_count: Number of DNS records updated in place for the
+            source object during reconciliation.
+        dns_record_unchanged_count: Number of existing DNS records evaluated
+            and left unchanged for the source object.
+    """
 
     had_existing_rule_records: bool = False
     existing_rule_record_count: int = 0
     changed_record_count: int = 0
-    record_ops_create_count: int = 0
-    record_ops_delete_count: int = 0
-    record_ops_update_count: int = 0
-    record_ops_unchanged_count: int = 0
+    dns_record_create_count: int = 0
+    dns_record_delete_count: int = 0
+    dns_record_update_count: int = 0
+    dns_record_unchanged_count: int = 0
 
 
 @dataclass
 class PipelineStageMetrics:
-    """Accumulate elapsed seconds for each pipeline stage."""
+    """Accumulate elapsed seconds for each pipeline stage.
+
+    Attributes:
+        fetch: Cumulative seconds spent loading tracking rows and related DNS
+            record objects.
+        planning: Cumulative seconds spent resolving rules and materializing
+            desired candidate data.
+        apply: Cumulative seconds spent reconciling desired vs existing state
+            and queueing writes.
+        bulk_flush: Cumulative seconds spent flushing queued bulk updates.
+        total: End-to-end cumulative seconds spent across complete pipeline
+            batch executions.
+    """
 
     fetch: float = 0.0
     planning: float = 0.0
@@ -52,7 +81,17 @@ class PipelineStageMetrics:
 
 @dataclass
 class PipelineBatchMetrics:
-    """Per-batch counters and stage timing prior to accumulation."""
+    """Per-batch counters and stage timing prior to accumulation.
+
+    Attributes:
+        objects: Number of source objects included in this pipeline batch.
+        tracking_rows: Number of `DNSRuleRecord` rows fetched for this batch.
+        pending_rule_calculations: Number of deferred rule work items generated
+            during planning for this batch.
+        pending_bulk_updates: Number of queued rename updates prepared for bulk
+            flush in this batch.
+        stage_metrics: Per-stage elapsed time accumulator for this batch.
+    """
 
     objects: int = 0
     tracking_rows: int = 0
@@ -72,7 +111,22 @@ class PipelineBatchMetrics:
 
 @dataclass
 class PipelineMetrics:
-    """Cumulative pipeline metrics across all processed batches."""
+    """Cumulative pipeline metrics across all processed batches.
+
+    Attributes:
+        batches: Number of processed pipeline batches accumulated in this
+            metrics instance.
+        objects_total: Total number of source objects processed across all
+            recorded batches.
+        tracking_rows_total: Total number of fetched tracking rows across all
+            recorded batches.
+        pending_rule_calculations_total: Total number of deferred rule work
+            items generated across all recorded batches.
+        pending_bulk_updates_total: Total number of queued bulk rename updates
+            accumulated across all recorded batches.
+        stage_metrics: Cumulative per-stage elapsed-time totals across all
+            recorded batches.
+    """
 
     batches: int = 0
     objects_total: int = 0

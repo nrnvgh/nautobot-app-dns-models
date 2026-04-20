@@ -46,10 +46,10 @@ class ReconcileRunSummary:
     existing_rule_record_count: int = 0
     objects_changed: int = 0
     changed_record_count: int = 0
-    record_ops_create_count: int = 0
-    record_ops_delete_count: int = 0
-    record_ops_update_count: int = 0
-    record_ops_unchanged_count: int = 0
+    dns_record_create_count: int = 0
+    dns_record_delete_count: int = 0
+    dns_record_update_count: int = 0
+    dns_record_unchanged_count: int = 0
     targets_noop_count: int = 0
 
     def mark_target_selected(self):
@@ -74,16 +74,16 @@ class ReconcileRunSummary:
             self.objects_changed += 1
             self.changed_record_count += processing_summary.changed_record_count
 
-        self.record_ops_create_count += processing_summary.record_ops_create_count
-        self.record_ops_delete_count += processing_summary.record_ops_delete_count
-        self.record_ops_update_count += processing_summary.record_ops_update_count
-        self.record_ops_unchanged_count += processing_summary.record_ops_unchanged_count
+        self.dns_record_create_count += processing_summary.dns_record_create_count
+        self.dns_record_delete_count += processing_summary.dns_record_delete_count
+        self.dns_record_update_count += processing_summary.dns_record_update_count
+        self.dns_record_unchanged_count += processing_summary.dns_record_unchanged_count
 
         if (
             processing_summary.changed_record_count == 0
-            and processing_summary.record_ops_create_count == 0
-            and processing_summary.record_ops_delete_count == 0
-            and processing_summary.record_ops_update_count == 0
+            and processing_summary.dns_record_create_count == 0
+            and processing_summary.dns_record_delete_count == 0
+            and processing_summary.dns_record_update_count == 0
         ):
             self.targets_noop_count += 1
 
@@ -102,12 +102,12 @@ class ReconcileRunSummary:
             "objects_with_existing_rule_records": self.objects_with_existing_rule_records,
             "existing_rule_record_count": self.existing_rule_record_count,
             "objects_changed": self.objects_changed,
-            "record_ops_create_count": self.record_ops_create_count,
-            "record_ops_delete_count": self.record_ops_delete_count,
-            "record_ops_update_count": self.record_ops_update_count,
-            "record_ops_unchanged_count": self.record_ops_unchanged_count,
-            "record_ops_total_count": (
-                self.record_ops_create_count + self.record_ops_delete_count + self.record_ops_update_count
+            "dns_record_create_count": self.dns_record_create_count,
+            "dns_record_delete_count": self.dns_record_delete_count,
+            "dns_record_update_count": self.dns_record_update_count,
+            "dns_record_unchanged_count": self.dns_record_unchanged_count,
+            "dns_record_total_count": (
+                self.dns_record_create_count + self.dns_record_delete_count + self.dns_record_update_count
             ),
             "changed_record_count": self.changed_record_count,
             "targets_noop_count": self.targets_noop_count,
@@ -251,7 +251,7 @@ def _log_result_summary(logger, result):
             "mode=%s "
             "models=[%s] "
             "seen=%d processed=%d success=%d failure=%d "
-            "objects_changed=%d record_ops(create=%d delete=%d update=%d total=%d) "
+            "objects_changed=%d dns_record_ops(create=%d delete=%d update=%d total=%d) "
             "runtime_s=%.3f"
         ),
         "dryrun" if mode["dryrun"] else "apply",
@@ -261,10 +261,10 @@ def _log_result_summary(logger, result):
         execution["targets_succeeded_count"],
         execution["targets_failed_count"],
         reconciliation["objects_changed"],
-        reconciliation["record_ops_create_count"],
-        reconciliation["record_ops_delete_count"],
-        reconciliation["record_ops_update_count"],
-        reconciliation["record_ops_total_count"],
+        reconciliation["dns_record_create_count"],
+        reconciliation["dns_record_delete_count"],
+        reconciliation["dns_record_update_count"],
+        reconciliation["dns_record_total_count"],
         float(runtime_seconds) if runtime_seconds is not None else 0.0,
     )
 

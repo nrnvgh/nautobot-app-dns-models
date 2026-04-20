@@ -75,10 +75,10 @@ class RecordWriter:
         return {
             "changed": changed_record_count > 0,
             "changed_record_count": changed_record_count,
-            "record_ops_create_count": changed_record_count,
-            "record_ops_delete_count": 0,
-            "record_ops_update_count": 0,
-            "record_ops_unchanged_count": 0,
+            "dns_record_create_count": changed_record_count,
+            "dns_record_delete_count": 0,
+            "dns_record_update_count": 0,
+            "dns_record_unchanged_count": 0,
         }
 
     def update_dns_records_for_object(self, source_obj, applicable_rules):
@@ -110,10 +110,10 @@ class RecordWriter:
         return {
             "changed": changed_record_count > 0,
             "changed_record_count": changed_record_count,
-            "record_ops_create_count": create_count,
-            "record_ops_delete_count": delete_count,
-            "record_ops_update_count": update_count,
-            "record_ops_unchanged_count": unchanged_count,
+            "dns_record_create_count": create_count,
+            "dns_record_delete_count": delete_count,
+            "dns_record_update_count": update_count,
+            "dns_record_unchanged_count": unchanged_count,
         }
 
     def reconcile_records_for_rule(

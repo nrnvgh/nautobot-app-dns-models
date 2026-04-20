@@ -114,7 +114,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["objects_with_existing_rule_records"], 0)
         self.assertEqual(result["reconciliation"]["existing_rule_record_count"], 0)
         self.assertEqual(result["reconciliation"]["objects_changed"], 0)
-        self.assertEqual(result["reconciliation"]["record_ops_total_count"], 0)
+        self.assertEqual(result["reconciliation"]["dns_record_total_count"], 0)
         self.assertEqual(result["reconciliation"]["targets_noop_count"], 1)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
@@ -155,7 +155,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["objects_with_existing_rule_records"], 0)
         self.assertEqual(result["reconciliation"]["existing_rule_record_count"], 0)
         self.assertEqual(result["reconciliation"]["objects_changed"], 0)
-        self.assertEqual(result["reconciliation"]["record_ops_total_count"], 0)
+        self.assertEqual(result["reconciliation"]["dns_record_total_count"], 0)
         self.assertEqual(result["reconciliation"]["targets_noop_count"], 2)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
@@ -225,15 +225,15 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
                 had_existing_rule_records=True,
                 existing_rule_record_count=2,
                 changed_record_count=1,
-                record_ops_create_count=1,
-                record_ops_delete_count=0,
+                dns_record_create_count=1,
+                dns_record_delete_count=0,
             ),
             ObjectProcessingMetrics(
                 had_existing_rule_records=True,
                 existing_rule_record_count=3,
                 changed_record_count=2,
-                record_ops_create_count=1,
-                record_ops_delete_count=1,
+                dns_record_create_count=1,
+                dns_record_delete_count=1,
             ),
         ]
         job = ReconcileDNSObjectJob()
@@ -251,10 +251,10 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["existing_rule_record_count"], 5)
         self.assertEqual(result["reconciliation"]["objects_changed"], 2)
         self.assertEqual(result["reconciliation"]["changed_record_count"], 3)
-        self.assertEqual(result["reconciliation"]["record_ops_create_count"], 2)
-        self.assertEqual(result["reconciliation"]["record_ops_delete_count"], 1)
-        self.assertEqual(result["reconciliation"]["record_ops_update_count"], 0)
-        self.assertEqual(result["reconciliation"]["record_ops_total_count"], 3)
+        self.assertEqual(result["reconciliation"]["dns_record_create_count"], 2)
+        self.assertEqual(result["reconciliation"]["dns_record_delete_count"], 1)
+        self.assertEqual(result["reconciliation"]["dns_record_update_count"], 0)
+        self.assertEqual(result["reconciliation"]["dns_record_total_count"], 3)
         self.assertEqual(result["reconciliation"]["targets_noop_count"], 0)
 
     def test_result_matches_json_schema(self):
