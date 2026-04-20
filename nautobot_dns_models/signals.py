@@ -267,7 +267,7 @@ def handle_object_with_interfaces_save(sender, instance, created, **kwargs):
                 #
                 # NOTE This could be made configurable via constance; "use_bulk_update_for_cascading_saves" or
                 # NOTE some such. Nautobot does not currently support adding form fields to non-plugin models, such
-                # NOTE as Device from a plugin, so that's effectivelya nonstarter.
+                # NOTE as Device from a plugin, so that's effectively a nonstarter.
                 rule_engine.process_objects_pipeline(interfaces)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Log the error but don't let it break the original object save
