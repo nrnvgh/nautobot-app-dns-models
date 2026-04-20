@@ -29,7 +29,7 @@ from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine,
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord, DNSView, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name
-from nautobot_dns_models.rules.engine import DNSRuleEngine
+from nautobot_dns_models.rules.engine import DNSRuleEngine, ExecutionMode
 from nautobot_dns_models.rules.engine.constants import (
     REASON_VIEW_NOT_FOUND,
     REASON_VIEW_TEMPLATE_EMPTY,
@@ -3477,6 +3477,109 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 
         ipaddresstointerface.delete()
         self.assertEqual(ARecord.objects.count(), 0)
+
+    def test_reconciliation_preserves_untracked_manual_record_with_matching_name(self):
+        """Reconciliation should not delete manual records that are not tracked by DNSRuleRecord."""
+        dns_rule = self._create_dns_rule_for_interface_a_record(name="preserve-untracked-manual-record")
+        expected_name = f"{self.interface.name}.{self.device.name}"
+
+        manual_record = ARecord.objects.create(
+            name=expected_name,
+            zone=self.dns_zone,
+            address=self.ip_addresses[1],
+        )
+
+        # Trigger managed record creation for the interface/rule pair.
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        created_records = ARecord.objects.filter(name=expected_name, zone=self.dns_zone)
+        self.assertEqual(created_records.count(), 2)
+        self.assertEqual({record.address_id for record in created_records}, {self.ip_addresses[0].id, self.ip_addresses[1].id})
+
+        # Reconcile through update path and verify manual record remains untouched.
+        self.engine.process_object(self.interface, created=False)
+
+        records_after_reconcile = ARecord.objects.filter(name=expected_name, zone=self.dns_zone)
+        self.assertEqual(records_after_reconcile.count(), 2)
+        self.assertEqual(
+            {record.address_id for record in records_after_reconcile},
+            {self.ip_addresses[0].id, self.ip_addresses[1].id},
+        )
+        self.assertTrue(records_after_reconcile.filter(id=manual_record.id).exists())
+
+        # Only the managed record should be tracked by DNSRuleRecord.
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        self.assertEqual(rule_records.count(), 1)
+        self.assertEqual(rule_records.first().dns_record.address_id, self.ip_addresses[0].id)
+
+        # Remove managed IP and reconcile again; tracked record should be removed, manual record preserved.
+        self.interface.ip_addresses.remove(self.ip_addresses[0])
+        self.engine.process_object(self.interface, created=False)
+
+        final_records = ARecord.objects.filter(name=expected_name, zone=self.dns_zone)
+        self.assertEqual(final_records.count(), 1)
+        self.assertTrue(final_records.filter(id=manual_record.id).exists())
+        self.assertEqual(final_records.first().address_id, self.ip_addresses[1].id)
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(),
+            0,
+        )
+
+    def test_fast_pipeline_preserves_untracked_manual_record_with_matching_name(self):
+        """Fast pipeline rename should preserve untracked manual same-name records."""
+        dns_rule = self._create_dns_rule_for_interface_a_record(name="preserve-untracked-manual-record-fast")
+        old_name = f"{self.interface.name}.{self.device.name}"
+
+        # Ensure managed record exists first.
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        manual_record = ARecord.objects.create(
+            name=old_name,
+            zone=self.dns_zone,
+            address=self.ip_addresses[1],
+        )
+        self.assertEqual(ARecord.objects.filter(name=old_name, zone=self.dns_zone).count(), 2)
+
+        new_device_name = "test-device-fast-renamed"
+        Device.objects.filter(pk=self.device.pk).update(name=new_device_name)
+        self.interface.refresh_from_db()
+
+        fast_engine = DNSRuleEngine(execution_mode=ExecutionMode.FAST)
+        summaries = fast_engine.process_objects_pipeline([self.interface])
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0].dns_record_update_count, 1)
+
+        new_name = f"{self.interface.name}.{new_device_name}"
+        self.assertEqual(
+            ARecord.objects.filter(name=new_name, zone=self.dns_zone, address=self.ip_addresses[0]).count(),
+            1,
+        )
+        self.assertEqual(
+            ARecord.objects.filter(name=old_name, zone=self.dns_zone, address=self.ip_addresses[0]).count(),
+            0,
+        )
+        self.assertTrue(ARecord.objects.filter(id=manual_record.id, name=old_name, zone=self.dns_zone).exists())
+
+        rule_records = DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id)
+        self.assertEqual(rule_records.count(), 1)
+        self.assertEqual(rule_records.first().dns_record.address_id, self.ip_addresses[0].id)
+        self.assertEqual(rule_records.first().dns_record.name, new_name)
+
+        # Remove managed IP and reconcile again through fast pipeline.
+        self.interface.ip_addresses.remove(self.ip_addresses[0])
+        self.interface.refresh_from_db()
+        delete_summaries = fast_engine.process_objects_pipeline([self.interface])
+        self.assertEqual(len(delete_summaries), 1)
+
+        # Managed record should be cleaned up, manual same-name record should remain untouched.
+        final_records = ARecord.objects.filter(name=old_name, zone=self.dns_zone)
+        self.assertEqual(final_records.count(), 1)
+        self.assertTrue(final_records.filter(id=manual_record.id).exists())
+        self.assertEqual(final_records.first().address_id, self.ip_addresses[1].id)
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(),
+            0,
+        )
 
     def test_multiple_ips_preserve_existing_records(self):
         """Test reconciliation preserves existing records when adding a second matching IP."""
