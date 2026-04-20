@@ -3494,7 +3494,9 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
 
         created_records = ARecord.objects.filter(name=expected_name, zone=self.dns_zone)
         self.assertEqual(created_records.count(), 2)
-        self.assertEqual({record.address_id for record in created_records}, {self.ip_addresses[0].id, self.ip_addresses[1].id})
+        self.assertEqual(
+            {record.address_id for record in created_records}, {self.ip_addresses[0].id, self.ip_addresses[1].id}
+        )
 
         # Reconcile through update path and verify manual record remains untouched.
         self.engine.process_object(self.interface, created=False)

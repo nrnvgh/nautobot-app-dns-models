@@ -66,9 +66,7 @@ def has_model_field_changes(instance, debug_context="object"):
         old_instance = model_class.objects.get(pk=instance.pk)
     except model_class.DoesNotExist:
         # Shouldn't happen for existing objects, but handle gracefully
-        logger.warning(
-            "%s %s - could not find existing object for change detection", debug_context.title(), instance
-        )
+        logger.warning("%s %s - could not find existing object for change detection", debug_context.title(), instance)
         return False
 
     changed_fields = []
@@ -100,7 +98,6 @@ def has_model_field_changes(instance, debug_context="object"):
         logger.debug("%s %s all fields unchanged: %s", debug_context.title(), instance, unchanged_fields)
 
     return has_changes
-
 
 
 #
