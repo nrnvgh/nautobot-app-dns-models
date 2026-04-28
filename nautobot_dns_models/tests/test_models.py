@@ -890,7 +890,7 @@ class DNSZoneNameLengthValidationTest(TestCase):
 
 
 class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
-    """Test the DNSRule model."""
+    """Non-template tests for the DNSRule model."""
 
     model = DNSRule
 
@@ -1039,205 +1039,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
 
         self.assertIn("record_type", context.exception.message_dict)
         self.assertIn("not a valid choice", context.exception.message_dict["record_type"][0])
-
-    #
-    # Template validation tests
-    #
-    def test_dnsrule_optional_template_fields_can_be_blank(self):
-        """Test that optional template fields can be blank."""
-        rule = DNSRule.objects.create(
-            name="blank-templates",
-            content_type=self.content_type_device,
-            zone_template="test.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 }}",
-        )
-
-        self.assertEqual(rule.value_template, "{{ obj.primary_ip4 }}")
-
-    def test_dnsrule_template_syntax_validation_applies_to_all_template_fields(self):
-        """Template syntax validation should run for zone/name/value/view template fields."""
-        base_kwargs = {
-            "name": "syntax-all-fields",
-            "content_type": self.content_type_device,
-            "zone_template": "test.com",
-            "record_type": "A",
-            "name_template": "{{ obj.name }}",
-            "value_template": "{{ obj.primary_ip4 }}",
-            "view_template": "Default",
-            "enabled": False,
-        }
-        bad_syntax = "{{ obj.name "
-        template_fields = ["zone_template", "name_template", "value_template", "view_template"]
-
-        for field_name in template_fields:
-            with self.subTest(field=field_name):
-                kwargs = dict(base_kwargs)
-                kwargs[field_name] = bad_syntax
-                rule = DNSRule(**kwargs)
-
-                with self.assertRaises(ValidationError) as ctx:
-                    rule.full_clean()
-                self.assertIn(field_name, ctx.exception.message_dict)
-                self.assertTrue(
-                    any("Template syntax error" in message for message in ctx.exception.message_dict[field_name])
-                )
-
-    def test_dnsrule_syntax_error_skips_literal_validation_for_same_field(self):
-        """Syntax-invalid hostname template should not also report literal validation errors."""
-        rule = DNSRule(
-            name="syntax-skips-literal-validation",
-            content_type=self.content_type_device,
-            zone_template="{{ 'bad zone' ",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 }}",
-            enabled=False,
-        )
-
-        with self.assertRaises(ValidationError) as ctx:
-            rule.full_clean()
-
-        zone_errors = ctx.exception.message_dict.get("zone_template", [])
-        self.assertTrue(any("Template syntax error" in message for message in zone_errors))
-
-        literal_error_fragments = [
-            "Whitespace in literals is not allowed",
-            "Consecutive dots '..' are not allowed",
-            "Hyphen followed by dot '-.' is not allowed",
-            "Dot followed by hyphen '.-' is not allowed",
-        ]
-        for fragment in literal_error_fragments:
-            with self.subTest(fragment=fragment):
-                self.assertFalse(any(fragment in message for message in zone_errors))
-
-    def test_dnsrule_template_expression_required_for_statement_or_comment_tags(self):
-        """Templates with {%...%} or {#...#} and no {{...}} expression should be rejected."""
-        base_kwargs = {
-            "name": "expression-required-base",
-            "content_type": self.content_type_device,
-            "zone_template": "test.com",
-            "record_type": "A",
-            "name_template": "{{ obj.name }}",
-            "value_template": "{{ obj.primary_ip4 }}",
-            "view_template": "Default",
-            "enabled": False,
-        }
-        field_cases = [
-            ("zone_template", "{% if True %}test.com{% endif %}"),
-            ("name_template", "{% if True %}device{% endif %}"),
-            ("value_template", "{% if True %}1.2.3.4{% endif %}"),
-            ("view_template", "{# comment #}Default View"),
-        ]
-
-        for field_name, invalid_template in field_cases:
-            with self.subTest(field=field_name):
-                kwargs = dict(base_kwargs)
-                kwargs["name"] = f"expression-required-{field_name}"
-                kwargs[field_name] = invalid_template
-                rule = DNSRule(**kwargs)
-
-                with self.assertRaises(ValidationError) as context:
-                    rule.full_clean()
-
-                self.assertIn(field_name, context.exception.message_dict)
-                self.assertTrue(
-                    any("has no {{ expression" in message for message in context.exception.message_dict[field_name])
-                )
-
-    def test_dnsrule_whitespace_disallowed_all_record_types(self):
-        """Whitespace is disallowed in zone_template and name_template for all supported record types."""
-
-        record_types = [x[0] for x in DNSRuleRecordTypeChoices.CHOICES]
-
-        # Base valid (no-whitespace) templates
-        base_kwargs = {
-            "content_type": self.content_type_device,
-            "zone_template": "example.com",
-            "name_template": "{{ obj.name }}",
-            "value_template": "{{ obj.primary_ip4 }}",
-            "enabled": False,
-        }
-
-        # Whitespace-injected variants per field
-        whitespace_templates = {
-            "zone_template": "example com",
-            "name_template": "{{ 'device info' }}",
-        }
-
-        for record_type in record_types:
-            # Start from clean valid kwargs
-            kwargs = dict(base_kwargs)
-            kwargs["name"] = f"whitespace-disallow-{record_type}"
-            kwargs["record_type"] = record_type
-
-            for field, whitespace_template in whitespace_templates.items():
-                with self.subTest(record_type=record_type, field=field):
-                    # Instantiate with whitespace in the specific field
-                    test_kwargs = dict(kwargs)
-                    test_kwargs[field] = whitespace_template
-
-                    rule = DNSRule(**test_kwargs)
-
-                    with self.assertRaises(ValidationError) as ctx:
-                        rule.full_clean()
-
-                    self.assertIn(field, ctx.exception.message_dict)
-                    self.assertIn(
-                        "Whitespace in literals is not allowed; use '-' or '.'", ctx.exception.message_dict[field]
-                    )
-
-    def test_dnsrule_whitespace_allowed_in_view_template_literals(self):
-        """Whitespace in view_template literals should be allowed."""
-        rule = DNSRule(
-            name="view-template-whitespace-allowed",
-            description="Rule with spaced DNS view name literal",
-            content_type=self.content_type_device,
-            zone_template="test.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 }}",
-            view_template="Internal View",
-            enabled=False,
-        )
-
-        rule.full_clean()
-
-    def test_dnsrule_collect_literal_validation_errors_direct(self):
-        """collect_literal_validation_errors should report literal violations by field."""
-        template_fields = [
-            ("zone_template", "site..example"),
-            ("name_template", "{{ 'bad label' }}.-{{ obj.name }}"),
-            ("hyphen_dot_template", "site-.example"),
-            ("dedupe_template", "{{ 'a.-b.-c' }}"),
-            ("value_template", "{{ obj.primary_ip4 }}"),
-            ("empty_template", ""),
-        ]
-
-        literal_errors = collect_literal_validation_errors(template_fields)
-
-        self.assertEqual(
-            literal_errors["zone_template"],
-            ["Consecutive dots '..' are not allowed"],
-        )
-        self.assertEqual(
-            literal_errors["name_template"],
-            [
-                "Whitespace in literals is not allowed; use '-' or '.'",
-                "Dot followed by hyphen '.-' is not allowed",
-            ],
-        )
-        self.assertEqual(
-            literal_errors["hyphen_dot_template"],
-            ["Hyphen followed by dot '-.' is not allowed"],
-        )
-        self.assertEqual(
-            literal_errors["dedupe_template"],
-            ["Dot followed by hyphen '.-' is not allowed"],
-        )
-        self.assertNotIn("value_template", literal_errors)
-        self.assertNotIn("empty_template", literal_errors)
 
     #
     # Content type validation tests
@@ -1708,6 +1509,234 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
         disabled_location_rule.enabled = True
         with self.assertRaises(ValidationError):
             disabled_location_rule.full_clean()
+
+
+class DNSRuleTemplateValidationTestCase(TestCase):
+    """Template validation tests for DNSRule."""
+
+    @classmethod
+    def setUpTestData(cls):
+        """Create minimal test data for DNSRule template validation."""
+        cls.content_type_device = ContentType.objects.get_for_model(Device)
+
+        location_type = LocationType.objects.create(name="Template Test Location Type")
+        location_type.content_types.add(cls.content_type_device)
+        location = Location.objects.create(
+            name="Template Test Location",
+            location_type=location_type,
+            status=Status.objects.get_for_model(Location).first(),
+        )
+
+        manufacturer = Manufacturer.objects.create(name="Template Test Manufacturer")
+        device_type = DeviceType.objects.create(
+            manufacturer=manufacturer,
+            model="Template Test Device Type",
+        )
+        device_role = Role.objects.create(name="Template Test Device Role")
+        device_role.content_types.add(cls.content_type_device)
+        Device.objects.create(
+            name="template-test-device",
+            device_type=device_type,
+            location=location,
+            role=device_role,
+            status=Status.objects.get_for_model(Device).first(),
+        )
+
+    def test_dnsrule_optional_template_fields_can_be_blank(self):
+        """Test that optional template fields can be blank."""
+        rule = DNSRule.objects.create(
+            name="blank-templates",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+        )
+
+        self.assertEqual(rule.value_template, "{{ obj.primary_ip4 }}")
+
+    def test_dnsrule_template_syntax_validation_applies_to_all_template_fields(self):
+        """Template syntax validation should run for zone/name/value/view template fields."""
+        base_kwargs = {
+            "name": "syntax-all-fields",
+            "content_type": self.content_type_device,
+            "zone_template": "test.com",
+            "record_type": "A",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.primary_ip4 }}",
+            "view_template": "Default",
+            "enabled": False,
+        }
+        bad_syntax = "{{ obj.name "
+        template_fields = ["zone_template", "name_template", "value_template", "view_template"]
+
+        for field_name in template_fields:
+            with self.subTest(field=field_name):
+                kwargs = dict(base_kwargs)
+                kwargs[field_name] = bad_syntax
+                rule = DNSRule(**kwargs)
+
+                with self.assertRaises(ValidationError) as ctx:
+                    rule.full_clean()
+                self.assertIn(field_name, ctx.exception.message_dict)
+                self.assertTrue(
+                    any("Template syntax error" in message for message in ctx.exception.message_dict[field_name])
+                )
+
+    def test_dnsrule_syntax_error_skips_literal_validation_for_same_field(self):
+        """Syntax-invalid hostname template should not also report literal validation errors."""
+        rule = DNSRule(
+            name="syntax-skips-literal-validation",
+            content_type=self.content_type_device,
+            zone_template="{{ 'bad zone' ",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+            enabled=False,
+        )
+
+        with self.assertRaises(ValidationError) as ctx:
+            rule.full_clean()
+
+        zone_errors = ctx.exception.message_dict.get("zone_template", [])
+        self.assertTrue(any("Template syntax error" in message for message in zone_errors))
+
+        literal_error_fragments = [
+            "Whitespace in literals is not allowed",
+            "Consecutive dots '..' are not allowed",
+            "Hyphen followed by dot '-.' is not allowed",
+            "Dot followed by hyphen '.-' is not allowed",
+        ]
+        for fragment in literal_error_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertFalse(any(fragment in message for message in zone_errors))
+
+    def test_dnsrule_template_expression_required_for_statement_or_comment_tags(self):
+        """Templates with {%...%} or {#...#} and no {{...}} expression should be rejected."""
+        base_kwargs = {
+            "name": "expression-required-base",
+            "content_type": self.content_type_device,
+            "zone_template": "test.com",
+            "record_type": "A",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.primary_ip4 }}",
+            "view_template": "Default",
+            "enabled": False,
+        }
+        field_cases = [
+            ("zone_template", "{% if True %}test.com{% endif %}"),
+            ("name_template", "{% if True %}device{% endif %}"),
+            ("value_template", "{% if True %}1.2.3.4{% endif %}"),
+            ("view_template", "{# comment #}Default View"),
+        ]
+
+        for field_name, invalid_template in field_cases:
+            with self.subTest(field=field_name):
+                kwargs = dict(base_kwargs)
+                kwargs["name"] = f"expression-required-{field_name}"
+                kwargs[field_name] = invalid_template
+                rule = DNSRule(**kwargs)
+
+                with self.assertRaises(ValidationError) as context:
+                    rule.full_clean()
+
+                self.assertIn(field_name, context.exception.message_dict)
+                self.assertTrue(
+                    any("has no {{ expression" in message for message in context.exception.message_dict[field_name])
+                )
+
+    def test_dnsrule_whitespace_disallowed_all_record_types(self):
+        """Whitespace is disallowed in zone_template and name_template for all supported record types."""
+
+        record_types = [x[0] for x in DNSRuleRecordTypeChoices.CHOICES]
+
+        # Base valid (no-whitespace) templates
+        base_kwargs = {
+            "content_type": self.content_type_device,
+            "zone_template": "example.com",
+            "name_template": "{{ obj.name }}",
+            "value_template": "{{ obj.primary_ip4 }}",
+            "enabled": False,
+        }
+
+        # Whitespace-injected variants per field
+        whitespace_templates = {
+            "zone_template": "example com",
+            "name_template": "{{ 'device info' }}",
+        }
+
+        for record_type in record_types:
+            # Start from clean valid kwargs
+            kwargs = dict(base_kwargs)
+            kwargs["name"] = f"whitespace-disallow-{record_type}"
+            kwargs["record_type"] = record_type
+
+            for field, whitespace_template in whitespace_templates.items():
+                with self.subTest(record_type=record_type, field=field):
+                    # Instantiate with whitespace in the specific field
+                    test_kwargs = dict(kwargs)
+                    test_kwargs[field] = whitespace_template
+
+                    rule = DNSRule(**test_kwargs)
+
+                    with self.assertRaises(ValidationError) as ctx:
+                        rule.full_clean()
+
+                    self.assertIn(field, ctx.exception.message_dict)
+                    self.assertIn(
+                        "Whitespace in literals is not allowed; use '-' or '.'", ctx.exception.message_dict[field]
+                    )
+
+    def test_dnsrule_whitespace_allowed_in_view_template_literals(self):
+        """Whitespace in view_template literals should be allowed."""
+        rule = DNSRule(
+            name="view-template-whitespace-allowed",
+            description="Rule with spaced DNS view name literal",
+            content_type=self.content_type_device,
+            zone_template="test.com",
+            record_type="A",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.primary_ip4 }}",
+            view_template="Internal View",
+            enabled=False,
+        )
+
+        rule.full_clean()
+
+    def test_dnsrule_collect_literal_validation_errors_direct(self):
+        """collect_literal_validation_errors should report literal violations by field."""
+        template_fields = [
+            ("zone_template", "site..example"),
+            ("name_template", "{{ 'bad label' }}.-{{ obj.name }}"),
+            ("hyphen_dot_template", "site-.example"),
+            ("dedupe_template", "{{ 'a.-b.-c' }}"),
+            ("value_template", "{{ obj.primary_ip4 }}"),
+            ("empty_template", ""),
+        ]
+
+        literal_errors = collect_literal_validation_errors(template_fields)
+
+        self.assertEqual(
+            literal_errors["zone_template"],
+            ["Consecutive dots '..' are not allowed"],
+        )
+        self.assertEqual(
+            literal_errors["name_template"],
+            [
+                "Whitespace in literals is not allowed; use '-' or '.'",
+                "Dot followed by hyphen '.-' is not allowed",
+            ],
+        )
+        self.assertEqual(
+            literal_errors["hyphen_dot_template"],
+            ["Hyphen followed by dot '-.' is not allowed"],
+        )
+        self.assertEqual(
+            literal_errors["dedupe_template"],
+            ["Dot followed by hyphen '.-' is not allowed"],
+        )
+        self.assertNotIn("value_template", literal_errors)
+        self.assertNotIn("empty_template", literal_errors)
 
 
 class DNSRuleRecordTestCase(TestCase):
