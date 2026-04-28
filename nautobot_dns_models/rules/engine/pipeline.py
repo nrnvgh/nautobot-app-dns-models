@@ -65,6 +65,7 @@ class EnginePipeline:
 
     def process_objects_pipeline(self, source_objects):
         """Process one batch of source objects."""
+        logger.debug("[process_objects_pipeline] Processing batch of %d objects", len(source_objects))
         if not source_objects:
             return []
 
@@ -76,10 +77,12 @@ class EnginePipeline:
             fetch_result = self._fetch_tracking_data(source_objects)
 
         with batch_metrics.time_stage("planning"):
+            logger.debug("[process_objects_pipeline] Planning work for %d objects", len(source_objects))
             plan_result = self._plan_work(
                 source_objects=source_objects,
                 tracking_by_object_id=fetch_result.tracking_by_object_id,
             )
+            logger.debug("[process_objects_pipeline] Materializing desired data for %d objects", len(source_objects))
             self._materialize_desired_data(
                 rule_work_items=plan_result.rule_work_items,
                 prepared_entry_by_object_id=plan_result.prepared_entry_by_object_id,
@@ -87,10 +90,22 @@ class EnginePipeline:
             )
 
         with batch_metrics.time_stage("apply"):
+            logger.debug("[process_objects_pipeline] Applying changes for %d objects", len(source_objects))
             apply_result = self._apply_changes(plan_result.prepared_entries)
+            self._apply_successful_create_adjustments(
+                prepared_entries=plan_result.prepared_entries,
+                summaries=apply_result.summaries,
+                successful_creates_by_object_id=apply_result.create_flush_result.successful_creates_by_object_id,
+            )
 
         with batch_metrics.time_stage("bulk_flush"):
-            self._writer.flush_bulk_rename_updates(apply_result.pending_rename_updates)
+            logger.debug("[process_objects_pipeline] Flushing bulk rename updates for %d objects", len(source_objects))
+            flush_result = self._writer.flush_bulk_rename_updates(apply_result.pending_rename_updates)
+            self._apply_failed_update_adjustments(
+                prepared_entries=plan_result.prepared_entries,
+                summaries=apply_result.summaries,
+                failed_updates_by_object_id=flush_result.failed_updates_by_object_id,
+            )
 
         batch_metrics.stage_metrics.total = perf_counter() - total_started_at
         batch_metrics.tracking_rows = len(fetch_result.tracking_rows)
@@ -98,9 +113,48 @@ class EnginePipeline:
         batch_metrics.pending_bulk_updates = sum(
             len(entries) for entries in apply_result.pending_rename_updates.values()
         )
+        batch_metrics.fallback_chunk_attempt_count = flush_result.fallback_chunk_attempt_count
+        batch_metrics.fallback_singleton_attempt_count = flush_result.fallback_singleton_attempt_count
+        batch_metrics.fallback_singleton_failure_count = flush_result.fallback_singleton_failure_count
+        batch_metrics.update_failure_recorded_count = flush_result.update_failure_recorded_count
         self._pipeline_metrics.record_batch(batch_metrics)
 
         return apply_result.summaries
+
+    @staticmethod
+    def _apply_failed_update_adjustments(*, prepared_entries, summaries, failed_updates_by_object_id):
+        """Adjust per-object summary counters for fallback-captured update failures."""
+        if not failed_updates_by_object_id:
+            return
+
+        summary_by_object_id = {
+            prepared_entry.source_obj.pk: summary for prepared_entry, summary in zip(prepared_entries, summaries)
+        }
+        for object_id, failed_count in failed_updates_by_object_id.items():
+            summary = summary_by_object_id.get(object_id)
+            if summary is None:
+                continue
+
+            adjusted_failures = min(failed_count, summary.dns_record_update_count)
+            summary.dns_record_update_count -= adjusted_failures
+            summary.changed_record_count -= adjusted_failures
+
+    @staticmethod
+    def _apply_successful_create_adjustments(*, prepared_entries, summaries, successful_creates_by_object_id):
+        """Add per-object create counters from finalized batched-create flush outcomes."""
+        if not successful_creates_by_object_id:
+            return
+
+        summary_by_object_id = {
+            prepared_entry.source_obj.pk: summary for prepared_entry, summary in zip(prepared_entries, summaries)
+        }
+        for object_id, successful_count in successful_creates_by_object_id.items():
+            summary = summary_by_object_id.get(object_id)
+            if summary is None:
+                continue
+
+            summary.dns_record_create_count += successful_count
+            summary.changed_record_count += successful_count
 
     def _fetch_tracking_data(self, source_objects):
         """Stage 1: fetch and prefetch tracking rows for current object batch."""
@@ -285,6 +339,7 @@ class EnginePipeline:
         bulk_update_collector = pending_rename_updates if self._context.execution_mode == ExecutionMode.FAST else None
         pending_bulk_deletes = defaultdict(set)
         summaries = []
+        create_flush_result = None
         self._batched_create_state.pending_by_record_class.clear()
         self._batched_create_state.active = True
 
@@ -300,7 +355,7 @@ class EnginePipeline:
 
             self._writer.flush_bulk_delete_queue(pending_bulk_deletes)
             if self._batched_create_state.active:
-                self._writer.flush_batched_create_queue()
+                create_flush_result = self._writer.flush_batched_create_queue()
         finally:
             self._batched_create_state.active = False
             self._batched_create_state.pending_by_record_class.clear()
@@ -308,6 +363,7 @@ class EnginePipeline:
         return ApplyChangesResult(
             summaries=summaries,
             pending_rename_updates=pending_rename_updates,
+            create_flush_result=create_flush_result,
         )
 
     def _apply_prepared_reconcile_entry(

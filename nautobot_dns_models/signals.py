@@ -10,7 +10,7 @@ from nautobot.dcim.models import Device, Interface
 from nautobot.ipam.models import IPAddressToInterface, Service
 from nautobot.virtualization.models import VirtualMachine, VMInterface
 
-from nautobot_dns_models.models import DNSRecord
+from nautobot_dns_models.models import DNSRecord, DNSRuleFailureState
 from nautobot_dns_models.rules.engine import DNSRuleEngine
 
 logger = logging.getLogger(__name__)
@@ -332,12 +332,22 @@ def handle_object_delete(sender, instance, **kwargs):
         **kwargs: Additional signal arguments
     """
     logger.debug("[SIGNAL] [handle_object_delete] %s / %s", sender, instance)
+    source_content_type_id = ContentType.objects.get_for_model(sender).id
 
     try:
         DNSRuleEngine().delete_dns_records_for_object(instance)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Log the error but don't let it break the original object deletion
         logger.error("Failed to clean up DNS records for %s: %s", instance, exc)
+
+    try:
+        DNSRuleFailureState.objects.filter(
+            source_content_type_id=source_content_type_id,
+            source_object_id=instance.id,
+        ).delete()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Log the error but don't let it break the original object deletion
+        logger.error("Failed to clean up DNS failure states for %s: %s", instance, exc)
 
 
 @receiver(post_save, sender=IPAddressToInterface)

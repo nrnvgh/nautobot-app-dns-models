@@ -36,6 +36,11 @@ items = [
             ),
         ),
     ),
+    NavMenuItem(
+        link="plugins:nautobot_dns_models:dnsrulefailurestate_list",
+        name="DNS Reconciliation Issues",
+        permissions=["nautobot_dns_models.view_dnsrulefailurestate"],
+    ),
 ]
 
 menu_items = (

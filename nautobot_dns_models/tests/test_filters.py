@@ -25,6 +25,7 @@ from nautobot_dns_models.models import (
     ARecord,
     CNAMERecord,
     DNSRule,
+    DNSRuleRecord,
     DNSView,
     DNSViewPrefixAssignment,
     DNSZone,
@@ -267,9 +268,43 @@ class ARecordFilterTestCase(TestCase):
             IPAddress.objects.create(address="10.0.0.3/32", namespace=namespace, status=status),
         )
 
-        ARecord.objects.create(name="a-record-01", address=cls.ip_addresses[0], zone=cls.zone)
-        ARecord.objects.create(name="a-record-02", address=cls.ip_addresses[1], zone=cls.zone)
-        ARecord.objects.create(name="a-record-03", address=cls.ip_addresses[2], zone=cls.zone)
+        cls.records = (
+            ARecord.objects.create(name="a-record-01", address=cls.ip_addresses[0], zone=cls.zone),
+            ARecord.objects.create(name="a-record-02", address=cls.ip_addresses[1], zone=cls.zone),
+            ARecord.objects.create(name="a-record-03", address=cls.ip_addresses[2], zone=cls.zone),
+        )
+        interface_content_type = ContentType.objects.get_for_model(Interface)
+        cls.record_content_type = ContentType.objects.get_for_model(ARecord)
+        cls.rule_one = DNSRule.objects.create(
+            name="arecord-filter-rule-1",
+            content_type=interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all | ip_address }}",
+        )
+        cls.rule_two = DNSRule.objects.create(
+            name="arecord-filter-rule-2",
+            content_type=interface_content_type,
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all | ip_address }}",
+        )
+        DNSRuleRecord.objects.create(
+            rule=cls.rule_one,
+            content_type=interface_content_type,
+            object_id=cls.records[0].pk,
+            dns_record_content_type=cls.record_content_type,
+            dns_record_object_id=cls.records[0].pk,
+        )
+        DNSRuleRecord.objects.create(
+            rule=cls.rule_two,
+            content_type=interface_content_type,
+            object_id=cls.records[1].pk,
+            dns_record_content_type=cls.record_content_type,
+            dns_record_object_id=cls.records[1].pk,
+        )
 
     def test_single_name(self):
         """Test filter with name of ARecord."""
@@ -307,6 +342,36 @@ class ARecordFilterTestCase(TestCase):
         self.assertEqual(self.filterset({"q": self.ip_addresses[0].host}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"q": "example.com"}, self.queryset).qs.count(), 3)
 
+    def test_dns_rule(self):
+        """Test filtering ARecord by DNS rule."""
+        params = {"dns_rule": [self.rule_one.pk]}
+        result_ids = set(self.filterset(params, self.queryset).qs.values_list("pk", flat=True))
+        self.assertEqual(result_ids, {self.records[0].pk})
+
+    def test_dns_rule_unknown(self):
+        """Test filtering ARecord by unknown DNS rule."""
+        params = {"dns_rule": [DNSRule.objects.create(
+            name="arecord-filter-rule-unmatched",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all | ip_address }}",
+        ).pk]}
+        self.assertEqual(self.filterset(params, self.queryset).qs.count(), 0)
+
+    def test_has_dns_rule_true(self):
+        """Test filtering ARecord to only records with a DNS rule."""
+        params = {"has_dns_rule": True}
+        result_ids = set(self.filterset(params, self.queryset).qs.values_list("pk", flat=True))
+        self.assertEqual(result_ids, {self.records[0].pk, self.records[1].pk})
+
+    def test_has_dns_rule_false(self):
+        """Test filtering ARecord to only records without a DNS rule."""
+        params = {"has_dns_rule": False}
+        result_ids = set(self.filterset(params, self.queryset).qs.values_list("pk", flat=True))
+        self.assertEqual(result_ids, {self.records[2].pk})
+
 
 class AAAARecordFilterTestCase(TestCase):
     """AAAARecord Filter Test Case."""
@@ -327,9 +392,43 @@ class AAAARecordFilterTestCase(TestCase):
             IPAddress.objects.create(address="2001:db8:abcd:12::3/128", namespace=namespace, status=status),
         )
 
-        AAAARecord.objects.create(name="aaaa-record-01", address=cls.ip_addresses[0], zone=zone)
-        AAAARecord.objects.create(name="aaaa-record-02", address=cls.ip_addresses[1], zone=zone)
-        AAAARecord.objects.create(name="aaaa-record-03", address=cls.ip_addresses[2], zone=zone)
+        cls.records = (
+            AAAARecord.objects.create(name="aaaa-record-01", address=cls.ip_addresses[0], zone=zone),
+            AAAARecord.objects.create(name="aaaa-record-02", address=cls.ip_addresses[1], zone=zone),
+            AAAARecord.objects.create(name="aaaa-record-03", address=cls.ip_addresses[2], zone=zone),
+        )
+        interface_content_type = ContentType.objects.get_for_model(Interface)
+        cls.record_content_type = ContentType.objects.get_for_model(AAAARecord)
+        cls.rule_one = DNSRule.objects.create(
+            name="aaaarecord-filter-rule-1",
+            content_type=interface_content_type,
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all | ip_address }}",
+        )
+        cls.rule_two = DNSRule.objects.create(
+            name="aaaarecord-filter-rule-2",
+            content_type=interface_content_type,
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all | ip_address }}",
+        )
+        DNSRuleRecord.objects.create(
+            rule=cls.rule_one,
+            content_type=interface_content_type,
+            object_id=cls.records[0].pk,
+            dns_record_content_type=cls.record_content_type,
+            dns_record_object_id=cls.records[0].pk,
+        )
+        DNSRuleRecord.objects.create(
+            rule=cls.rule_two,
+            content_type=interface_content_type,
+            object_id=cls.records[1].pk,
+            dns_record_content_type=cls.record_content_type,
+            dns_record_object_id=cls.records[1].pk,
+        )
 
     def test_single_name(self):
         """Test filter with name of AAAARecord."""
@@ -362,6 +461,36 @@ class AAAARecordFilterTestCase(TestCase):
         self.assertEqual(self.filterset({"q": "aaaa-record"}, self.queryset).qs.count(), 3)
         self.assertEqual(self.filterset({"q": self.ip_addresses[0].host}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"q": "example.com"}, self.queryset).qs.count(), 3)
+
+    def test_dns_rule(self):
+        """Test filtering AAAARecord by DNS rule."""
+        params = {"dns_rule": [self.rule_one.pk]}
+        result_ids = set(self.filterset(params, self.queryset).qs.values_list("pk", flat=True))
+        self.assertEqual(result_ids, {self.records[0].pk})
+
+    def test_dns_rule_unknown(self):
+        """Test filtering AAAARecord by unknown DNS rule."""
+        params = {"dns_rule": [DNSRule.objects.create(
+            name="aaaarecord-filter-rule-unmatched",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="AAAA",
+            zone_template="example.com",
+            name_template="{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all | ip_address }}",
+        ).pk]}
+        self.assertEqual(self.filterset(params, self.queryset).qs.count(), 0)
+
+    def test_has_dns_rule_true(self):
+        """Test filtering AAAARecord to only records with a DNS rule."""
+        params = {"has_dns_rule": True}
+        result_ids = set(self.filterset(params, self.queryset).qs.values_list("pk", flat=True))
+        self.assertEqual(result_ids, {self.records[0].pk, self.records[1].pk})
+
+    def test_has_dns_rule_false(self):
+        """Test filtering AAAARecord to only records without a DNS rule."""
+        params = {"has_dns_rule": False}
+        result_ids = set(self.filterset(params, self.queryset).qs.values_list("pk", flat=True))
+        self.assertEqual(result_ids, {self.records[2].pk})
 
 
 class CNAMERecordFilterTestCase(TestCase):

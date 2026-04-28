@@ -2,14 +2,18 @@
 
 import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
+from functools import reduce
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Q
+from django.utils import timezone
 from jinja2 import TemplateError
 
 from nautobot_dns_models.exceptions import DNSRecordContentTypeResolutionError, DNSRuleTemplateRenderedEmptyError
-from nautobot_dns_models.models import DNSRule, DNSRuleRecord, DNSZone
+from nautobot_dns_models.models import DNSRule, DNSRuleFailureState, DNSRuleRecord, DNSZone
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
 from nautobot_dns_models.rules.engine.constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
@@ -17,6 +21,25 @@ from nautobot_dns_models.rules.engine.reconcile import ReconcilePlanner
 from nautobot_dns_models.rules.engine.update_strategies import UpdateResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BulkRenameFlushResult:
+    """Aggregate counters and failure impacts from fast bulk-rename flush."""
+
+    fallback_chunk_attempt_count: int = 0
+    fallback_singleton_attempt_count: int = 0
+    fallback_singleton_failure_count: int = 0
+    update_failure_recorded_count: int = 0
+    failed_updates_by_object_id: dict = field(default_factory=dict)
+
+
+@dataclass
+class BulkCreateFlushResult:
+    """Aggregate per-object create outcomes from batched-create flush."""
+
+    successful_creates_by_object_id: dict = field(default_factory=dict)
+    failed_creates_by_object_id: dict = field(default_factory=dict)
 
 
 class RecordWriter:
@@ -50,6 +73,7 @@ class RecordWriter:
         self._update_executor = update_executor
         self._engine_logger = DEFAULT_ENGINE_LOGGER
         self._reconcile_planner = ReconcilePlanner()
+        self._fast_fallback_singleton_threshold = 16
 
     def create_dns_records_for_object(self, source_obj, applicable_rules):
         """Create records for one source object."""
@@ -64,6 +88,7 @@ class RecordWriter:
                 )
                 if not desired_record_data_list:
                     continue
+
                 created_records = self._create_records_from_data(
                     source_obj, rule, desired_record_data_list, phase=PHASE_CREATE
                 )
@@ -243,7 +268,7 @@ class RecordWriter:
     def _create_records_from_data(self, source_obj, rule, record_data_list, phase=PHASE_CREATE):
         if self._batched_create_state.active:
             return self._queue_records_for_batched_create(
-                rule=rule, source_obj=source_obj, record_data_list=record_data_list
+                rule=rule, source_obj=source_obj, record_data_list=record_data_list, phase=phase
             )
 
         return self._create_records_for_object(
@@ -260,6 +285,13 @@ class RecordWriter:
 
         created_records = []
         for record_data in record_data_list:
+            create_entry = self._build_create_failure_state_entry(
+                rule=rule,
+                source_obj=source_obj,
+                source_content_type_id=source_content_type.id,
+                record_data=record_data,
+                phase=phase,
+            )
             try:
                 # This nested atomic creates a savepoint per record attempt. It lets us roll back only
                 # this record+tracking write on exceptions and continue processing without poisoning the
@@ -275,13 +307,32 @@ class RecordWriter:
                         dns_record_object_id=dns_record.id,
                     )
                     created_records.append(dns_record)
+                self._delete_failure_state_for_candidate(create_entry)
             except (ValidationError, IntegrityError) as exc:
+                self._capture_entry_error_details(create_entry, exc)
                 self._engine_logger.log_record_create_failure(rule, source_obj, record_data, exc, phase=phase)
+                self._upsert_failure_state_for_candidate(create_entry)
                 continue
 
         return created_records
 
-    def _queue_records_for_batched_create(self, rule, source_obj, record_data_list):
+    def _queue_records_for_batched_create(self, rule, source_obj, record_data_list, phase):
+        """Queue candidate creates for deferred batched flush.
+
+        This method stages create intents in `BatchedCreateState` for later
+        execution by `flush_batched_create_queue()`. It does not write DNS
+        records or tracking rows immediately, nor does it increment create
+        counters at queue time.
+
+        Per-object create metrics are finalized during flush, where each queued row
+        is classified as successful or failed after bulk/singleton fallback logic.
+
+        Args:
+            rule: DNS rule whose desired candidates are being queued.
+            source_obj: Source object associated with these create candidates.
+            record_data_list: Desired DNS record payloads to enqueue.
+            phase: Processing phase label used for logging and failure-state entries.
+        """
         if not record_data_list:
             return []
 
@@ -290,7 +341,14 @@ class RecordWriter:
         dns_record_content_type_id = ContentType.objects.get_for_model(record_class).pk
         queue_rows = self._batched_create_state.pending_by_record_class[record_class]
         for record_data in record_data_list:
-            queue_rows.append(
+            queue_row = self._build_create_failure_state_entry(
+                rule=rule,
+                source_obj=source_obj,
+                source_content_type_id=source_content_type_id,
+                record_data=record_data,
+                phase=phase,
+            )
+            queue_row.update(
                 {
                     "rule_id": rule.id,
                     "content_type_id": source_content_type_id,
@@ -299,35 +357,137 @@ class RecordWriter:
                     "record_data": record_data,
                 }
             )
+            queue_rows.append(queue_row)
 
-        return [None] * len(record_data_list)
+        return []
 
     def flush_batched_create_queue(self):
         """Flush queued create rows with chunked bulk inserts."""
+        result = BulkCreateFlushResult()
         if not self._batched_create_state.pending_by_record_class:
-            return
+            return result
 
         batch_size = self._context.bulk_create_batched_pipeline_size
-        with transaction.atomic():
-            for record_class, queued_rows in self._batched_create_state.pending_by_record_class.items():
-                if not queued_rows:
-                    continue
+        for record_class, queued_rows in self._batched_create_state.pending_by_record_class.items():
+            if not queued_rows:
+                continue
 
-                for offset in range(0, len(queued_rows), batch_size):
-                    chunk_rows = queued_rows[offset : offset + batch_size]
-                    dns_records = [record_class(**queued_row["record_data"]) for queued_row in chunk_rows]  # pylint: disable=not-callable
-                    created_records = record_class.objects.bulk_create(dns_records, batch_size=batch_size)
-                    tracking_rows = [
-                        DNSRuleRecord(
-                            rule_id=queued_row["rule_id"],
-                            content_type_id=queued_row["content_type_id"],
-                            object_id=queued_row["object_id"],
-                            dns_record_content_type_id=queued_row["dns_record_content_type_id"],
-                            dns_record_object_id=dns_record.id,
-                        )
-                        for queued_row, dns_record in zip(chunk_rows, created_records)
-                    ]
-                    DNSRuleRecord.objects.bulk_create(tracking_rows, batch_size=batch_size)
+            for offset in range(0, len(queued_rows), batch_size):
+                chunk_rows = queued_rows[offset : offset + batch_size]
+                try:
+                    self._bulk_create_entries(record_class, chunk_rows, batch_size=batch_size)
+                    self._record_bulk_create_successes(chunk_rows, result)
+                    if self._batched_create_state.create_failures_recorded:
+                        self._delete_failure_states_for_entries_batched(chunk_rows)
+                except IntegrityError:
+                    self._flush_batched_create_queue_with_fallback(record_class, chunk_rows, result)
+
+        return result
+
+    def _flush_batched_create_queue_with_fallback(self, record_class, queued_rows, result):
+        """Recursively isolate failed batched create rows."""
+        if not queued_rows:
+            return
+
+        try:
+            self._bulk_create_entries(
+                record_class,
+                queued_rows,
+                batch_size=min(len(queued_rows), self._context.bulk_create_batched_pipeline_size),
+            )
+            self._record_bulk_create_successes(queued_rows, result)
+            if self._batched_create_state.create_failures_recorded:
+                self._delete_failure_states_for_entries_batched(queued_rows)
+
+            return
+        except IntegrityError:
+            if len(queued_rows) <= self._fast_fallback_singleton_threshold:
+                self._flush_batched_create_queue_as_singletons(record_class, queued_rows, result)
+                return
+
+        split_index = len(queued_rows) // 2
+        first_half = queued_rows[:split_index]
+        second_half = queued_rows[split_index:]
+        self._flush_batched_create_queue_with_fallback(record_class, first_half, result)
+        self._flush_batched_create_queue_with_fallback(record_class, second_half, result)
+
+    def _flush_batched_create_queue_as_singletons(self, record_class, queued_rows, result):
+        """Retry failed batched creates one row at a time with savepoints."""
+        # TODO(phase-b): Batch successful singleton cleanup per fallback run instead of
+        # deleting one failure-state row per successful singleton candidate.
+        for queued_row in queued_rows:
+            if self._apply_singleton_create(record_class, queued_row):
+                self._record_singleton_create_success(queued_row, result)
+                self._delete_failure_state_for_candidate(queued_row)
+                continue
+
+            self._batched_create_state.create_failures_recorded = True
+            self._record_singleton_create_failure(queued_row, result)
+            self._upsert_failure_state_for_candidate(queued_row)
+
+    @staticmethod
+    def _record_bulk_create_successes(queued_rows, result):
+        """Record per-object success counters for one successful bulk-create chunk."""
+        for queued_row in queued_rows:
+            object_id = queued_row["source_object_id"]
+            result.successful_creates_by_object_id[object_id] = (
+                result.successful_creates_by_object_id.get(object_id, 0) + 1
+            )
+
+    @staticmethod
+    def _record_singleton_create_success(queued_row, result):
+        """Record per-object success counters for one successful singleton create."""
+        object_id = queued_row["source_object_id"]
+        result.successful_creates_by_object_id[object_id] = result.successful_creates_by_object_id.get(object_id, 0) + 1
+
+    @staticmethod
+    def _record_singleton_create_failure(queued_row, result):
+        """Record per-object failure counters for one failed singleton create."""
+        object_id = queued_row["source_object_id"]
+        result.failed_creates_by_object_id[object_id] = result.failed_creates_by_object_id.get(object_id, 0) + 1
+
+    @staticmethod
+    def _bulk_create_entries(record_class, queued_rows, *, batch_size):
+        """Create DNS records and tracking rows in one transactional chunk."""
+        with transaction.atomic():
+            dns_records = [record_class(**queued_row["record_data"]) for queued_row in queued_rows]  # pylint: disable=not-callable
+            created_records = record_class.objects.bulk_create(dns_records, batch_size=batch_size)
+            tracking_rows = [
+                DNSRuleRecord(
+                    rule_id=queued_row["rule_id"],
+                    content_type_id=queued_row["content_type_id"],
+                    object_id=queued_row["object_id"],
+                    dns_record_content_type_id=queued_row["dns_record_content_type_id"],
+                    dns_record_object_id=dns_record.id,
+                )
+                for queued_row, dns_record in zip(queued_rows, created_records)
+            ]
+            DNSRuleRecord.objects.bulk_create(tracking_rows, batch_size=batch_size)
+
+    def _apply_singleton_create(self, record_class, queued_row):
+        """Apply one queued create operation in a savepoint."""
+        try:
+            with transaction.atomic():
+                dns_record = record_class(**queued_row["record_data"])  # pylint: disable=not-callable
+                dns_record.validated_save()
+                DNSRuleRecord.objects.create(
+                    rule_id=queued_row["rule_id"],
+                    content_type_id=queued_row["content_type_id"],
+                    object_id=queued_row["object_id"],
+                    dns_record_content_type_id=queued_row["dns_record_content_type_id"],
+                    dns_record_object_id=dns_record.id,
+                )
+            return True
+        except (ValidationError, IntegrityError) as exc:
+            self._capture_entry_error_details(queued_row, exc)
+            self._engine_logger.log_record_create_failure(
+                queued_row["rule"],
+                queued_row["source_obj"],
+                queued_row["desired_record_data"],
+                exc,
+                phase=queued_row["phase"],
+            )
+            return False
 
     def _update_tracked_dns_record_name(self, rule, source_obj, tracking_record, desired_record_data, phase):
         dns_record = self._resolve_prefetched_dns_record(tracking_record)
@@ -356,13 +516,254 @@ class RecordWriter:
 
     def flush_bulk_rename_updates(self, bulk_update_collector):
         """Execute queued rename updates in bulk."""
+        result = BulkRenameFlushResult()
+        logger.info("Flushing bulk rename updates for %s", bulk_update_collector)
+
         for record_model, update_entries in bulk_update_collector.items():
             if not update_entries:
                 continue
 
-            record_model.objects.bulk_update(
-                update_entries, ["name"], batch_size=self._context.bulk_rename_update_batch_size
+            batch_size = self._context.bulk_rename_update_batch_size
+            for offset in range(0, len(update_entries), batch_size):
+                chunk_entries = update_entries[offset : offset + batch_size]
+                try:
+                    self._bulk_update_entries(record_model, chunk_entries, batch_size=batch_size)
+                    self._delete_failure_states_for_entries(chunk_entries)
+                except IntegrityError:
+                    logger.error("IntegrityError (%s); running binary search fallback", chunk_entries)
+                    self._flush_bulk_rename_updates_with_fallback(record_model, chunk_entries, result)
+
+        return result
+
+    def _flush_bulk_rename_updates_with_fallback(self, record_model, update_entries, result):
+        """Recursively split failed chunks and isolate failing updates."""
+        logger.error("Binary search fallback for %s beginning", update_entries)
+        if not update_entries:
+            return
+
+        result.fallback_chunk_attempt_count += 1
+        try:
+            logger.error("Binary search fallback for %s attempting bulk update", update_entries)
+            self._bulk_update_entries(
+                record_model,
+                update_entries,
+                batch_size=min(len(update_entries), self._context.bulk_rename_update_batch_size),
             )
+            self._delete_failure_states_for_entries(update_entries)
+            return
+        except IntegrityError:
+            logger.error("Binary search fallback for %s attempting singleton update", update_entries)
+            if len(update_entries) <= self._fast_fallback_singleton_threshold:
+                logger.error("Binary search fallback for %s attempting singleton update with threshold", update_entries)
+                self._flush_bulk_rename_updates_as_singletons(record_model, update_entries, result)
+                return
+
+        split_index = len(update_entries) // 2
+        first_half = update_entries[:split_index]
+        second_half = update_entries[split_index:]
+        self._flush_bulk_rename_updates_with_fallback(record_model, first_half, result)
+        self._flush_bulk_rename_updates_with_fallback(record_model, second_half, result)
+
+    def _flush_bulk_rename_updates_as_singletons(self, record_model, update_entries, result):
+        """Retry failed chunk updates one row at a time with savepoints."""
+        for update_entry in update_entries:
+            result.fallback_singleton_attempt_count += 1
+            if self._apply_singleton_rename_update(record_model, update_entry):
+                self._delete_failure_state_for_candidate(update_entry)
+                continue
+
+            source_object_id = update_entry["source_object_id"]
+            result.failed_updates_by_object_id[source_object_id] = (
+                result.failed_updates_by_object_id.get(source_object_id, 0) + 1
+            )
+            result.fallback_singleton_failure_count += 1
+            result.update_failure_recorded_count += self._upsert_failure_state_for_candidate(update_entry)
+
+    @staticmethod
+    def _bulk_update_entries(record_model, update_entries, *, batch_size):
+        """Execute one bulk update for queued rename entries."""
+        dns_records = [entry["dns_record"] for entry in update_entries]
+        if not dns_records:
+            return
+
+        with transaction.atomic():
+            record_model.objects.bulk_update(dns_records, ["name"], batch_size=batch_size)
+
+    def _apply_singleton_rename_update(self, record_model, update_entry):
+        """Apply one rename update in a savepoint and log any failure."""
+        dns_record = update_entry["dns_record"]
+        desired_name = update_entry["desired_name"]
+        try:
+            with transaction.atomic():
+                updated = record_model.objects.filter(pk=dns_record.pk).update(name=desired_name)
+
+            if updated != 1:
+                raise ValueError(f"Failed to update DNS record '{dns_record.pk}'")
+
+            return True
+        except (ValidationError, IntegrityError, ValueError) as exc:
+            pgcode = ""
+            constraint = ""
+            db_cause = getattr(exc, "__cause__", None)
+            if db_cause is not None:
+                pgcode = getattr(db_cause, "pgcode", "") or ""
+                constraint = getattr(getattr(db_cause, "diag", None), "constraint_name", "") or ""
+
+            update_entry["error_exception_type"] = type(exc).__name__
+            update_entry["error_message"] = str(exc)
+            update_entry["error_pgcode"] = pgcode
+            update_entry["error_constraint"] = constraint
+            self._engine_logger.log_record_update_failure(
+                update_entry["rule"],
+                update_entry["source_obj"],
+                update_entry["desired_record_data"],
+                exc,
+                phase=update_entry["phase"],
+            )
+
+            return False
+
+    def _delete_failure_states_for_entries(self, update_entries):
+        """Delete failure-state rows for successfully applied candidate updates.
+
+        This is called only after a chunk/singleton update operation succeeds.
+        For each entry, the lookup key is `(source, rule, candidate record key)`.
+        """
+        for update_entry in update_entries:
+            self._delete_failure_state_for_candidate(update_entry)
+
+    def _delete_failure_states_for_entries_batched(self, update_entries):
+        """Delete matching failure-state rows using grouped batched predicates.
+
+        This path is currently used for successful create-batch chunk flushes to avoid
+        one point query per candidate.
+        """
+        if not update_entries:
+            return
+
+        grouped_entries = defaultdict(list)
+        for update_entry in update_entries:
+            group_key = (
+                update_entry["source_content_type_id"],
+                update_entry["rule"].id if update_entry["rule"] else None,
+                update_entry["candidate_record_type"],
+                update_entry["candidate_zone_id"],
+            )
+            grouped_entries[group_key].append(update_entry)
+
+        for group_key, group_rows in grouped_entries.items():
+            source_content_type_id, rule_id, candidate_record_type, candidate_zone_id = group_key
+            match_conditions = []
+            for update_entry in group_rows:
+                match_conditions.append(
+                    Q(
+                        source_object_id=update_entry["source_object_id"],
+                        candidate_name=update_entry["desired_name"],
+                        candidate_address_id=update_entry["candidate_address_id"],
+                    )
+                )
+
+            if not match_conditions:
+                continue
+
+            combined_match = reduce(lambda left, right: left | right, match_conditions)
+            DNSRuleFailureState.objects.filter(
+                source_content_type_id=source_content_type_id,
+                rule_id=rule_id,
+                candidate_record_type=candidate_record_type,
+                candidate_zone_id=candidate_zone_id,
+            ).filter(combined_match).delete()
+
+        # TODO(phase-c): Optionally replace eager cleanup with deferred/background
+        # compaction for very large reconciliation runs.
+
+    def _delete_failure_state_for_candidate(self, update_entry):
+        """Delete failure-state rows for one successful candidate."""
+        DNSRuleFailureState.objects.filter(
+            source_content_type_id=update_entry["source_content_type_id"],
+            source_object_id=update_entry["source_object_id"],
+            rule_id=update_entry["rule"].id if update_entry["rule"] else None,
+            candidate_record_type=update_entry["candidate_record_type"],
+            candidate_name=update_entry["desired_name"],
+            candidate_zone_id=update_entry["candidate_zone_id"],
+            candidate_address_id=update_entry["candidate_address_id"],
+        ).delete()
+
+    def _upsert_failure_state_for_candidate(self, update_entry):
+        """Upsert failure state for one failed singleton update."""
+        now = timezone.now()
+        state, created = DNSRuleFailureState.objects.get_or_create(
+            source_content_type_id=update_entry["source_content_type_id"],
+            source_object_id=update_entry["source_object_id"],
+            rule_id=update_entry["rule"].id if update_entry["rule"] else None,
+            candidate_record_type=update_entry["candidate_record_type"],
+            candidate_name=update_entry["desired_name"],
+            candidate_zone_id=update_entry["candidate_zone_id"],
+            candidate_address_id=update_entry["candidate_address_id"],
+            defaults={
+                "first_seen": now,
+                "last_seen": now,
+                "attempt_count": 1,
+                "consecutive_failures": 1,
+                "latest_exception_type": update_entry.get("error_exception_type", ""),
+                "latest_error": update_entry.get("error_message", ""),
+                "latest_pgcode": update_entry.get("error_pgcode", ""),
+                "latest_constraint": update_entry.get("error_constraint", ""),
+            },
+        )
+        if created:
+            return 1
+
+        state.last_seen = now
+        state.attempt_count += 1
+        state.consecutive_failures += 1
+        state.latest_exception_type = update_entry.get("error_exception_type", "")
+        state.latest_error = update_entry.get("error_message", "")
+        state.latest_pgcode = update_entry.get("error_pgcode", "")
+        state.latest_constraint = update_entry.get("error_constraint", "")
+        state.save(
+            update_fields=[
+                "last_seen",
+                "attempt_count",
+                "consecutive_failures",
+                "latest_exception_type",
+                "latest_error",
+                "latest_pgcode",
+                "latest_constraint",
+            ]
+        )
+        return 1
+
+    @staticmethod
+    def _capture_entry_error_details(update_entry, exc):
+        """Attach database and exception details to a failure-state entry."""
+        pgcode = ""
+        constraint = ""
+        db_cause = getattr(exc, "__cause__", None)
+        if db_cause is not None:
+            pgcode = getattr(db_cause, "pgcode", "") or ""
+            constraint = getattr(getattr(db_cause, "diag", None), "constraint_name", "") or ""
+
+        update_entry["error_exception_type"] = type(exc).__name__
+        update_entry["error_message"] = str(exc)
+        update_entry["error_pgcode"] = pgcode
+        update_entry["error_constraint"] = constraint
+
+    @staticmethod
+    def _build_create_failure_state_entry(*, rule, source_obj, source_content_type_id, record_data, phase):
+        """Build a normalized failure-state entry for create-path operations."""
+        return {
+            "rule": rule,
+            "source_obj": source_obj,
+            "phase": phase,
+            "desired_name": record_data["name"],
+            "desired_record_data": record_data,
+            "source_content_type_id": source_content_type_id,
+            "source_object_id": source_obj.id,
+            "candidate_record_type": rule.record_type,
+            "candidate_zone_id": record_data["zone"].id,
+            "candidate_address_id": record_data.get("address_id"),
+        }
 
     def flush_bulk_delete_queue(self, bulk_delete_collector):
         """Execute queued DNS-record deletes in bulk by model/content type."""

@@ -35,7 +35,7 @@ class DNSRuleEngine:
     BULK_CREATE_BATCHED_PIPELINE_SIZE = 1000
     BULK_DELETE_BATCHED_PIPELINE_SIZE = 1000
 
-    def __init__(self, *, execution_mode=ExecutionMode.STANDARD):
+    def __init__(self, *, execution_mode=ExecutionMode.STANDARD, selected_rules=None):
         """Initialize DNS rule engine caches and pipeline state."""
         cache = EngineCache()
         batched_create_state = BatchedCreateState()
@@ -56,7 +56,7 @@ class DNSRuleEngine:
             execution_mode=selected_execution_mode,
         )
 
-        self._resolver = RuleResolver(cache, context)
+        self._resolver = RuleResolver(cache, context, selected_rules=selected_rules)
         self._materializer = RecordMaterializer(cache, context)
 
         if selected_execution_mode == ExecutionMode.FAST:

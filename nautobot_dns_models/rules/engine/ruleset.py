@@ -11,16 +11,19 @@ class RuleSetSelector:
     """Resolve applicable rules for a scoped content type."""
 
     @staticmethod
-    def resolve_for_scope(content_type, object_location, object_tenant):
+    def resolve_for_scope(content_type, object_location, object_tenant, selected_rule_ids=None):
         """Resolve rules for a specific content-type/location/tenant scope."""
         if object_location is None and object_tenant is None:
-            return list(
-                DNSRule.objects.filter(
-                    content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
-                )
+            queryset = DNSRule.objects.filter(
+                content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
             )
+            if selected_rule_ids:
+                queryset = queryset.filter(pk__in=selected_rule_ids)
+            return list(queryset)
 
         base_query = DNSRule.objects.filter(content_type=content_type, enabled=True)
+        if selected_rule_ids:
+            base_query = base_query.filter(pk__in=selected_rule_ids)
         location_conditions = django_models.Q(location=object_location) | django_models.Q(location__isnull=True)
         tenant_conditions = django_models.Q(tenant=object_tenant) | django_models.Q(tenant__isnull=True)
         all_rules = list(base_query.filter(location_conditions & tenant_conditions))

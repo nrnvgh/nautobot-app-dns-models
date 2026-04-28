@@ -1,10 +1,32 @@
 """Tables for nautobot_dns_models."""
 
+from urllib.parse import urlencode
+
 import django_tables2 as tables
-from nautobot.apps.tables import BaseTable, BooleanColumn, ButtonsColumn, ToggleColumn
+from django.conf import settings
+from django.urls import reverse
+from django.utils.html import format_html
+from nautobot.apps.tables import BaseTable, BooleanColumn, ButtonsColumn, LinkedCountColumn, ToggleColumn
 from nautobot.tenancy.tables import TenantColumn
 
 from nautobot_dns_models import models
+
+
+class LinkedCountBadgeColumn(LinkedCountColumn):
+    """LinkedCountColumn variant that always renders count badges."""
+
+    def render(self, *, bound_column, record, value):  # pylint: disable=arguments-differ  # tables2 varies its kwargs
+        """Render `1` as a linked badge instead of object hyperlink."""
+        if value != 1:
+            return super().render(bound_column=bound_column, record=record, value=value)
+
+        url = reverse(self.viewname, kwargs=self.view_kwargs)
+        if self.url_params:
+            url += "?" + urlencode(
+                {k: (getattr(record, v) or settings.FILTERS_NULL_CHOICE_VALUE) for k, v in self.url_params.items()}
+            )
+        # Bootstrap 3.4 badges don't support colors natively, so we use labels with a danger color.
+        return format_html('<a href="{}" class="label label-danger">{}</a>', url, value)
 
 
 class DNSRecordTable(BaseTable):  # pylint: disable=nb-no-model-found
@@ -140,7 +162,6 @@ class ARecordTable(DNSRecordTable):
             "description",
             "actions",
             "source_object",
-            # "dns_rule",   # TODO: Determine whether to include this
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -164,6 +185,7 @@ class AAAARecordTable(DNSRecordTable):
         models.AAAARecord,
         buttons=("changelog", "edit", "delete"),
     )
+    dns_rule = tables.LinkColumn(verbose_name="DNS Rule")
 
     class Meta(BaseTable.Meta):
         """Meta attributes."""
@@ -179,7 +201,6 @@ class AAAARecordTable(DNSRecordTable):
             "description",
             "actions",
             "source_object",
-            # "dns_rule",  # TODO: Determine whether to include this
         )
 
         # Option for modifying the columns that show up in the list view by default:
@@ -387,6 +408,11 @@ class DNSRuleTable(BaseTable):
     location = tables.LinkColumn()
     tenant = TenantColumn()
     record_type = tables.Column()
+    failure_state_count = LinkedCountBadgeColumn(
+        viewname="plugins:nautobot_dns_models:dnsrulefailurestate_list",
+        url_params={"rule": "pk"},
+        verbose_name="Failures",
+    )
     actions = ButtonsColumn(models.DNSRule)
 
     class Meta(BaseTable.Meta):
@@ -402,5 +428,59 @@ class DNSRuleTable(BaseTable):
             "location",
             "tenant",
             "record_type",
+            "failure_state_count",
             "actions",
+        )
+
+
+class DNSRuleFailureStateTable(BaseTable):
+    """Table for DNS rule failure-state list view."""
+
+    pk = ToggleColumn()
+    source_content_type = tables.Column(verbose_name="Source Type")
+    source_object = tables.Column(verbose_name="Source Object", orderable=False)
+    rule = tables.Column(linkify=True)
+    candidate_record_type = tables.Column(verbose_name="Record Type")
+    candidate_name = tables.Column(verbose_name="Candidate Name")
+    last_seen = tables.DateTimeColumn()
+    consecutive_failures = tables.Column(verbose_name="Consecutive")
+
+    def render_source_object(self, value, record):
+        """Render source object as a link when available."""
+        if value is None:
+            return str(record.source_object_id)
+
+        source_url = getattr(value, "get_absolute_url", None)
+        if callable(source_url):
+            return format_html('<a href="{}">{}</a>', source_url(), value)
+
+        return str(value)
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.DNSRuleFailureState
+        fields = (
+            "pk",
+            "source_content_type",
+            "source_object_id",
+            "source_object",
+            "rule",
+            "candidate_record_type",
+            "candidate_name",
+            "candidate_zone_id",
+            "candidate_address_id",
+            "attempt_count",
+            "consecutive_failures",
+            "last_seen",
+        )
+        default_columns = (
+            "pk",
+            "source_content_type",
+            "source_object",
+            "rule",
+            "candidate_record_type",
+            "candidate_name",
+            "consecutive_failures",
+            "last_seen",
         )

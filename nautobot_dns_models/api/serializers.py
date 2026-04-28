@@ -213,3 +213,13 @@ class DNSRuleRecordSerializer(ValidatedModelSerializer):
 
         model = models.DNSRuleRecord
         fields = "__all__"
+
+
+class DNSRuleFailureStateSerializer(ValidatedModelSerializer):
+    """DNSRuleFailureState serializer."""
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRuleFailureState
+        fields = "__all__"

@@ -17,7 +17,7 @@ from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import Cluster, VirtualMachine, VMInterface
 
 from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileRunSummary
-from nautobot_dns_models.models import ARecord, DNSRule
+from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord
 from nautobot_dns_models.rules.engine import DNSRuleEngine
 from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
 from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics
@@ -43,6 +43,8 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
     def setUp(self):
         """Rebuild fixtures per test under TransactionTestCase semantics."""
+        # Keep ContentType cache aligned with recreated test DB state.
+        ContentType.objects.clear_cache()
         TransactionTestCase.setUp(self)
         type(self).setUpTestData()
         BaseRuleEngineMixin.setUp(self)
@@ -454,19 +456,30 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             "tracking_rows_total": 0,
             "pending_rule_calculations_total": 0,
             "pending_bulk_updates_total": 0,
+            "fallback_chunk_attempt_count_total": 0,
+            "fallback_singleton_attempt_count_total": 0,
+            "fallback_singleton_failure_count_total": 0,
+            "update_failure_recorded_count_total": 0,
             "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             "avg_per_batch": {
                 "objects": 0,
                 "tracking_rows": 0,
                 "pending_rule_calculations": 0,
                 "pending_bulk_updates": 0,
+                "fallback_chunk_attempt_count": 0,
+                "fallback_singleton_attempt_count": 0,
+                "fallback_singleton_failure_count": 0,
+                "update_failure_recorded_count": 0,
                 "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             },
         }
 
         result = ReconcileDNSBulkJob().run(dryrun=False, rules=[self.interface_rule], limit=1, batch_size=1)
 
-        mock_dns_rule_engine_class.assert_called_once_with(execution_mode=ExecutionMode.STANDARD)
+        mock_dns_rule_engine_class.assert_called_once_with(
+            execution_mode=ExecutionMode.STANDARD,
+            selected_rules=[self.interface_rule],
+        )
         self.assertFalse(result["mode"]["fast_mode"])
         self.assertEqual(result["mode"]["execution_mode"], ExecutionMode.STANDARD.value)
 
@@ -481,12 +494,20 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             "tracking_rows_total": 0,
             "pending_rule_calculations_total": 0,
             "pending_bulk_updates_total": 0,
+            "fallback_chunk_attempt_count_total": 0,
+            "fallback_singleton_attempt_count_total": 0,
+            "fallback_singleton_failure_count_total": 0,
+            "update_failure_recorded_count_total": 0,
             "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             "avg_per_batch": {
                 "objects": 0,
                 "tracking_rows": 0,
                 "pending_rule_calculations": 0,
                 "pending_bulk_updates": 0,
+                "fallback_chunk_attempt_count": 0,
+                "fallback_singleton_attempt_count": 0,
+                "fallback_singleton_failure_count": 0,
+                "update_failure_recorded_count": 0,
                 "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             },
         }
@@ -499,9 +520,55 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             fast_mode=True,
         )
 
-        mock_dns_rule_engine_class.assert_called_once_with(execution_mode=ExecutionMode.FAST)
+        mock_dns_rule_engine_class.assert_called_once_with(
+            execution_mode=ExecutionMode.FAST,
+            selected_rules=[self.interface_rule],
+        )
         self.assertTrue(result["mode"]["fast_mode"])
         self.assertEqual(result["mode"]["execution_mode"], ExecutionMode.FAST.value)
+
+    @patch("nautobot_dns_models.jobs.DNSRuleEngine")
+    def test_bulk_mode_surfaces_fast_fallback_counters(self, mock_dns_rule_engine_class):
+        """Bulk result should expose fast fallback counters from pipeline metrics."""
+        rule_engine = mock_dns_rule_engine_class.return_value
+        rule_engine.process_objects_pipeline.return_value = [ObjectProcessingMetrics()]
+        rule_engine.get_pipeline_metrics.return_value = {
+            "batches": 1,
+            "objects_total": 1,
+            "tracking_rows_total": 1,
+            "pending_rule_calculations_total": 1,
+            "pending_bulk_updates_total": 1,
+            "fallback_chunk_attempt_count_total": 3,
+            "fallback_singleton_attempt_count_total": 7,
+            "fallback_singleton_failure_count_total": 2,
+            "update_failure_recorded_count_total": 2,
+            "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
+            "avg_per_batch": {
+                "objects": 1,
+                "tracking_rows": 1,
+                "pending_rule_calculations": 1,
+                "pending_bulk_updates": 1,
+                "fallback_chunk_attempt_count": 3,
+                "fallback_singleton_attempt_count": 7,
+                "fallback_singleton_failure_count": 2,
+                "update_failure_recorded_count": 2,
+                "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
+            },
+        }
+
+        result = ReconcileDNSBulkJob().run(
+            dryrun=False,
+            source_models=[ContentType.objects.get_for_model(Interface)],
+            rules=[self.interface_rule],
+            limit=1,
+            batch_size=100,
+            fast_mode=True,
+        )
+
+        self.assertEqual(result["reconciliation"]["fallback_chunk_attempt_count"], 3)
+        self.assertEqual(result["reconciliation"]["fallback_singleton_attempt_count"], 7)
+        self.assertEqual(result["reconciliation"]["fallback_singleton_failure_count"], 2)
+        self.assertEqual(result["reconciliation"]["update_failure_recorded_count"], 2)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_bulk_mode_include_children_includes_child_devices_and_interfaces(self, mock_dns_rule_engine_class):
@@ -680,6 +747,171 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["execution"]["targets_processed_count"], 8)
         self.assertEqual(result["reconciliation"]["objects_changed"], 8)
 
+    def test_bulk_location_same_device_name_diff_tenant_only_fails_on_true_arecord_key_collision(self):
+        """Bulk create should only fail when A-record key collides on name+zone+address."""
+        scoped_location = Location.objects.create(
+            name="Bulk Conflict Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        tenant_b = Tenant.objects.create(name="Bulk Conflict Tenant B", tenant_group=self.tenant_group)
+
+        shared_device_name = "bulk-conflict-device"
+        interface_name = "eth-collision"
+        shared_ip = self.ip_addresses[0]
+        candidate_record_name = f"{shared_device_name}-{interface_name}"
+
+        collision_rule = DNSRule.objects.create(
+            name="bulk-location-collision-create-test",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.device.name }}-{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=False,
+        )
+
+        device_a = Device.objects.create(
+            name=shared_device_name,
+            device_type=self.device_type,
+            location=scoped_location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        device_b = Device.objects.create(
+            name=shared_device_name,
+            device_type=self.device_type,
+            location=scoped_location,
+            tenant=tenant_b,
+            role=self.device_role,
+            status=self.device_status,
+        )
+
+        interface_a = Interface.objects.create(
+            name=interface_name,
+            device=device_a,
+            type=self.interface.type,
+            status=self.interface_status,
+        )
+        interface_b = Interface.objects.create(
+            name=interface_name,
+            device=device_b,
+            type=self.interface.type,
+            status=self.interface_status,
+        )
+        interface_a.ip_addresses.add(shared_ip)
+        interface_b.ip_addresses.add(shared_ip)
+
+        ARecord.objects.filter(name=candidate_record_name, zone=self.dns_zone, address=shared_ip).delete()
+        collision_rule.enabled = True
+        collision_rule.save(update_fields=["enabled"])
+
+        result = ReconcileDNSBulkJob().run(
+            dryrun=False,
+            source_models=[ContentType.objects.get_for_model(Interface)],
+            rules=[collision_rule],
+            locations=[scoped_location],
+            limit=None,
+            batch_size=100,
+            fast_mode=False,
+        )
+
+        self.assertEqual(result["execution"]["targets_selected_count"], 2)
+        self.assertEqual(result["execution"]["targets_processed_count"], 2)
+        # One create succeeds, second collides on (name, address, zone) and is skipped.
+        self.assertEqual(result["reconciliation"]["dns_record_create_count"], 1)
+        self.assertEqual(
+            ARecord.objects.filter(name=candidate_record_name, zone=self.dns_zone, address=shared_ip).count(),
+            1,
+        )
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(
+                rule=collision_rule,
+                object_id__in=[interface_a.id, interface_b.id],
+            ).count(),
+            1,
+        )
+        # Ensure unselected enabled rules are not executed for this bulk run.
+        self.assertEqual(
+            DNSRuleRecord.objects.filter(
+                rule=self.interface_rule,
+                object_id__in=[interface_a.id, interface_b.id],
+            ).count(),
+            0,
+        )
+
+    def test_bulk_rule_filter_excludes_unselected_enabled_rules_end_to_end(self):
+        """Bulk run should execute only explicitly selected rules."""
+        scoped_location = Location.objects.create(
+            name="Rule Filter Location",
+            location_type=self.location_type,
+            status=self.location.status,
+        )
+        target_device_name = "rule-filter-device"
+        target_interface_name = "eth-filter"
+        target_ip = self.ip_addresses[0]
+
+        target_device = Device.objects.create(
+            name=target_device_name,
+            device_type=self.device_type,
+            location=scoped_location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        target_interface = Interface.objects.create(
+            name=target_interface_name,
+            device=target_device,
+            type=self.interface.type,
+            status=self.interface_status,
+        )
+        target_interface.ip_addresses.add(target_ip)
+
+        selected_rule = DNSRule.objects.create(
+            name="bulk-selected-only-rule",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.device.name }}-{{ obj.name }}-selected",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=True,
+        )
+        unselected_rule = DNSRule.objects.create(
+            name="bulk-unselected-enabled-rule",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.device.name }}-{{ obj.name }}-unselected",
+            value_template="{{ obj.ip_addresses.first() }}",
+            enabled=True,
+        )
+
+        selected_name = f"{target_device_name}-{target_interface_name}-selected"
+        unselected_name = f"{target_device_name}-{target_interface_name}-unselected"
+        ARecord.objects.filter(
+            name__in=[selected_name, unselected_name], zone=self.dns_zone, address=target_ip
+        ).delete()
+        DNSRuleRecord.objects.filter(rule__in=[selected_rule, unselected_rule], object_id=target_interface.id).delete()
+
+        result = ReconcileDNSBulkJob().run(
+            dryrun=False,
+            source_models=[ContentType.objects.get_for_model(Interface)],
+            rules=[selected_rule],
+            locations=[scoped_location],
+            limit=None,
+            batch_size=100,
+            fast_mode=False,
+        )
+
+        self.assertEqual(result["execution"]["targets_selected_count"], 1)
+        self.assertEqual(result["execution"]["targets_processed_count"], 1)
+        self.assertEqual(result["reconciliation"]["dns_record_create_count"], 1)
+        self.assertTrue(ARecord.objects.filter(name=selected_name, zone=self.dns_zone, address=target_ip).exists())
+        self.assertFalse(ARecord.objects.filter(name=unselected_name, zone=self.dns_zone, address=target_ip).exists())
+        self.assertEqual(DNSRuleRecord.objects.filter(rule=selected_rule, object_id=target_interface.id).count(), 1)
+        self.assertEqual(DNSRuleRecord.objects.filter(rule=unselected_rule, object_id=target_interface.id).count(), 0)
+
 
 class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
     """Validate SQL scope selection parity with engine semantics."""
@@ -692,6 +924,8 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
 
     def setUp(self):
         """Rebuild fixtures per test under TransactionTestCase semantics."""
+        # Keep ContentType cache aligned with recreated test DB state.
+        ContentType.objects.clear_cache()
         TransactionTestCase.setUp(self)
         type(self).setUpTestData()
         BaseRuleEngineMixin.setUp(self)

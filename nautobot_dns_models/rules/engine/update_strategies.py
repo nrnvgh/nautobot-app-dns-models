@@ -92,6 +92,20 @@ class FastUpdateExecutor(UpdateExecutor):
             return UpdateResult.UNCHANGED
 
         dns_record.name = desired_name
-        bulk_update_collector[type(dns_record)].append(dns_record)
+        bulk_update_collector[type(dns_record)].append(
+            {
+                "dns_record": dns_record,
+                "rule": rule,
+                "source_obj": source_obj,
+                "phase": phase,
+                "desired_name": desired_name,
+                "desired_record_data": desired_record_data,
+                "source_content_type_id": tracking_record.content_type_id,
+                "source_object_id": tracking_record.object_id,
+                "candidate_record_type": rule.record_type,
+                "candidate_zone_id": getattr(dns_record, "zone_id", None),
+                "candidate_address_id": getattr(dns_record, "address_id", None),
+            }
+        )
 
         return UpdateResult.UPDATED

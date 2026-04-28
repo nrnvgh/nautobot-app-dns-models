@@ -18,6 +18,7 @@ from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
     CNAMERecordSerializer,
+    DNSRuleFailureStateSerializer,
     DNSRuleSerializer,
     DNSViewSerializer,
     DNSZoneSerializer,
@@ -31,6 +32,7 @@ from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
     CNAMERecordFilterSet,
+    DNSRuleFailureStateFilterSet,
     DNSRuleFilterSet,
     DNSViewFilterSet,
     DNSZoneFilterSet,
@@ -51,6 +53,8 @@ from nautobot_dns_models.forms import (
     CNAMERecordFilterForm,
     CNAMERecordForm,
     DNSRuleBulkEditForm,
+    DNSRuleFailureStateFilterForm,
+    DNSRuleFailureStateForm,
     DNSRuleFilterForm,
     DNSRuleForm,
     DNSViewBulkEditForm,
@@ -80,6 +84,7 @@ from nautobot_dns_models.models import (
     ARecord,
     CNAMERecord,
     DNSRule,
+    DNSRuleFailureState,
     DNSView,
     DNSZone,
     MXRecord,
@@ -92,6 +97,7 @@ from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
     CNAMERecordTable,
+    DNSRuleFailureStateTable,
     DNSRuleTable,
     DNSViewTable,
     DNSZoneTable,
@@ -525,3 +531,42 @@ class DNSRuleUIViewSet(views.NautobotUIViewSet):
                 ),
             ]
         )
+
+
+class DNSRuleFailureStateUIViewSet(views.NautobotUIViewSet):
+    """DNSRuleFailureState UI ViewSet."""
+
+    form_class = DNSRuleFailureStateForm
+    filterset_class = DNSRuleFailureStateFilterSet
+    filterset_form_class = DNSRuleFailureStateFilterForm
+    serializer_class = DNSRuleFailureStateSerializer
+    lookup_field = "pk"
+    queryset = DNSRuleFailureState.objects.select_related("rule", "source_content_type").prefetch_related(
+        "source_object"
+    )
+    table_class = DNSRuleFailureStateTable
+    object_detail_content = ObjectDetailContent(
+        panels=[
+            ObjectFieldsPanel(
+                weight=100,
+                section=SectionChoices.LEFT_HALF,
+                fields=[
+                    "source_content_type",
+                    "source_object_id",
+                    "rule",
+                    "candidate_record_type",
+                    "candidate_name",
+                    "candidate_zone_id",
+                    "candidate_address_id",
+                    "attempt_count",
+                    "consecutive_failures",
+                    "first_seen",
+                    "last_seen",
+                    "latest_exception_type",
+                    "latest_pgcode",
+                    "latest_constraint",
+                    "latest_error",
+                ],
+            ),
+        ]
+    )

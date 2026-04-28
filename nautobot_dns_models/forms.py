@@ -537,6 +537,11 @@ class DNSRuleFilterForm(NautobotFilterForm, LocatableModelFilterFormMixin, Tenan
         label="Record Type",
         widget=StaticSelect2(),
     )
+    has_failures = forms.NullBooleanField(
+        required=False,
+        label="Has Failures",
+        widget=StaticSelect2(choices=BOOLEAN_WITH_BLANK_CHOICES),
+    )
 
     model = models.DNSRule
 
@@ -547,4 +552,50 @@ class DNSRuleFilterForm(NautobotFilterForm, LocatableModelFilterFormMixin, Tenan
         "enabled",
         "content_type",
         "record_type",
+        "has_failures",
     ]
+
+
+class DNSRuleFailureStateFilterForm(NautobotFilterForm):
+    """Filter form for DNSRuleFailureState searches."""
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        help_text="Search within candidate name and latest error fields.",
+    )
+    source_content_type = forms.ModelMultipleChoiceField(
+        queryset=DNSRuleContentTypeQuery.as_queryset(),
+        required=False,
+        label="Source Content Type",
+        widget=StaticSelect2Multiple(),
+    )
+    device_scope_id = forms.UUIDField(required=False, label="Device Scope ID")
+    virtual_machine_scope_id = forms.UUIDField(required=False, label="Virtual Machine Scope ID")
+    source_object_id = forms.UUIDField(required=False, label="Source Object ID")
+    candidate_record_type = forms.ChoiceField(
+        choices=add_blank_choice(DNSRuleRecordTypeChoices),
+        required=False,
+        label="Record Type",
+        widget=StaticSelect2(),
+    )
+
+    model = models.DNSRuleFailureState
+    field_order = [
+        "q",
+        "source_content_type",
+        "device_scope_id",
+        "virtual_machine_scope_id",
+        "source_object_id",
+        "candidate_record_type",
+    ]
+
+
+class DNSRuleFailureStateForm(NautobotModelForm):
+    """DNSRuleFailureState creation/edit form."""
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.DNSRuleFailureState
+        fields = "__all__"

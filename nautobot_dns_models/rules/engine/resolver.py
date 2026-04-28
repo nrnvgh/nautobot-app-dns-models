@@ -17,18 +17,21 @@ logger = logging.getLogger(__name__)
 class RuleResolver:
     """Resolve applicable DNS rules for source objects."""
 
-    def __init__(self, cache, context):
+    def __init__(self, cache, context, *, selected_rules=None):
         """Store collaborator references and shared runtime context.
 
         Args:
             cache: Shared engine cache for applicable-rule memoization.
             context: Engine runtime context consumed by resolver collaborators.
+            selected_rules: Optional explicit DNSRule objects to constrain
+                applicability resolution during this engine run.
         """
         self._cache = cache
         self._context = context
         self._engine_logger = DEFAULT_ENGINE_LOGGER
         self._scope_resolver = ScopeResolver()
         self._ruleset_selector = RuleSetSelector()
+        self._selected_rule_ids = {rule.pk for rule in selected_rules} if selected_rules else None
 
     def get_applicable_rules(self, source_obj):
         """Scope-key cache for applicable-rule resolution."""
@@ -86,4 +89,9 @@ class RuleResolver:
 
     def _resolve_applicable_rules_for_scope(self, content_type, object_location, object_tenant):
         """Resolve rules for a specific content-type/location/tenant scope."""
-        return self._ruleset_selector.resolve_for_scope(content_type, object_location, object_tenant)
+        return self._ruleset_selector.resolve_for_scope(
+            content_type,
+            object_location,
+            object_tenant,
+            selected_rule_ids=self._selected_rule_ids,
+        )

@@ -1,7 +1,8 @@
 """Filtering for nautobot_dns_models."""
 
 import django_filters
-from django.db.models import F
+from django.contrib.contenttypes.models import ContentType
+from django.db.models import Exists, F, OuterRef, Q
 from django.db.models.functions import Coalesce
 from nautobot.apps.filters import (
     BaseFilterSet,
@@ -11,10 +12,14 @@ from nautobot.apps.filters import (
 )
 from nautobot.core.forms import DynamicModelMultipleChoiceField
 from nautobot.dcim.filters import LocatableModelFilterSetMixin
+from nautobot.dcim.models import Device, Interface
+from nautobot.ipam.models import Service
 from nautobot.tenancy.filters import TenancyModelFilterSetMixin
+from nautobot.virtualization.models import VirtualMachine, VMInterface
 from netaddr import IPAddress as NetIPAddress
 
 from nautobot_dns_models import models
+from nautobot_dns_models.choices import DNSRuleRecordTypeChoices
 from nautobot_dns_models.queries import DNSRuleContentTypeQuery
 from nautobot_dns_models.source_model_support import get_supported_source_content_type_query_params
 
@@ -123,6 +128,13 @@ def ip_address_preprocessor(value):
 class ARecordFilterSet(NautobotFilterSet):
     """Filter for ARecord."""
 
+    dns_rule = django_filters.ModelMultipleChoiceFilter(
+        field_name="rule_record__rule",
+        queryset=models.DNSRule.objects.all(),
+        label="DNS Rule",
+    )
+    has_dns_rule = django_filters.BooleanFilter(method="filter_has_dns_rule", label="Has DNS Rule")
+
     q = SearchFilter(
         filter_predicates={
             "name": "icontains",
@@ -130,6 +142,15 @@ class ARecordFilterSet(NautobotFilterSet):
             "address__host": {"lookup_expr": "net_host", "preprocessor": ip_address_preprocessor},
         }
     )
+
+    @staticmethod
+    def filter_has_dns_rule(queryset, name, value):  # pylint: disable=unused-argument
+        """Filter records by whether they are linked to a DNS rule."""
+        if value is None:
+            return queryset
+        if value:
+            return queryset.filter(rule_record__isnull=False)
+        return queryset.filter(rule_record__isnull=True)
 
     class Meta:
         """Meta attributes for filter."""
@@ -141,6 +162,13 @@ class ARecordFilterSet(NautobotFilterSet):
 class AAAARecordFilterSet(DNSRecordFilterSet):
     """Filter for AAAARecord."""
 
+    dns_rule = django_filters.ModelMultipleChoiceFilter(
+        field_name="rule_record__rule",
+        queryset=models.DNSRule.objects.all(),
+        label="DNS Rule",
+    )
+    has_dns_rule = django_filters.BooleanFilter(method="filter_has_dns_rule", label="Has DNS Rule")
+
     q = SearchFilter(
         filter_predicates={
             "name": "icontains",
@@ -148,6 +176,15 @@ class AAAARecordFilterSet(DNSRecordFilterSet):
             "address__host": {"lookup_expr": "net_host", "preprocessor": ip_address_preprocessor},
         }
     )
+
+    @staticmethod
+    def filter_has_dns_rule(queryset, name, value):  # pylint: disable=unused-argument
+        """Filter records by whether they are linked to a DNS rule."""
+        if value is None:
+            return queryset
+        if value:
+            return queryset.filter(rule_record__isnull=False)
+        return queryset.filter(rule_record__isnull=True)
 
     class Meta:
         """Meta attributes for filter."""
@@ -269,12 +306,29 @@ class DNSRuleFilterSet(NautobotFilterSet, LocatableModelFilterSetMixin, TenancyM
     )
 
     content_type = DNSRuleContentTypeModelMultipleChoiceFilter()
+    has_failures = django_filters.BooleanFilter(method="filter_has_failures", label="Has Failures")
+
+    def filter_has_failures(self, queryset, name, value):  # pylint: disable=unused-argument
+        """Filter rules by whether they have any failure states."""
+        if value is None:
+            return queryset
+
+        failure_exists = models.DNSRuleFailureState.objects.filter(rule_id=OuterRef("pk"))
+        exists_expr = Exists(failure_exists)
+        queryset = queryset.filter(exists_expr) if value else queryset.exclude(exists_expr)
+
+        return queryset
 
     class Meta:
         """Meta attributes for filter."""
 
         model = models.DNSRule
-        fields = "__all__"
+        exclude = (
+            "view_template",
+            "zone_template",
+            "name_template",
+            "value_template",
+        )
 
 
 class DNSRuleRecordFilterSet(BaseFilterSet):
@@ -289,4 +343,122 @@ class DNSRuleRecordFilterSet(BaseFilterSet):
         """Meta attributes for filter."""
 
         model = models.DNSRuleRecord
+        fields = "__all__"
+
+
+class DNSRuleFailureStateFilterSet(BaseFilterSet):
+    """Filter for DNSRuleFailureState."""
+
+    q = SearchFilter(
+        filter_predicates={
+            "candidate_name": "icontains",
+            "latest_error": "icontains",
+            "latest_constraint": "icontains",
+        }
+    )
+    source_content_type = ContentTypeFilter()
+    candidate_record_type = django_filters.ChoiceFilter(
+        field_name="candidate_record_type",
+        choices=DNSRuleRecordTypeChoices.CHOICES,
+    )
+    source_object_id = django_filters.UUIDFilter(field_name="source_object_id")
+    device_scope_id = django_filters.UUIDFilter(method="filter_device_scope_id", label="Device Scope ID")
+    device_object_id = django_filters.UUIDFilter(method="filter_device_object_id", label="Device Object ID")
+    interface_id = django_filters.UUIDFilter(method="filter_interface_id", label="Interface ID")
+    virtual_machine_scope_id = django_filters.UUIDFilter(
+        method="filter_virtual_machine_scope_id",
+        label="Virtual Machine Scope ID",
+    )
+    virtual_machine_object_id = django_filters.UUIDFilter(
+        method="filter_virtual_machine_object_id",
+        label="Virtual Machine Object ID",
+    )
+    vminterface_id = django_filters.UUIDFilter(method="filter_vminterface_id", label="VM Interface ID")
+    service_id = django_filters.UUIDFilter(method="filter_service_id", label="Service ID")
+
+    #
+    # TODO Should this get replaced by custom logic on source_object_id + source_content_type?
+    @staticmethod
+    def filter_device_scope_id(queryset, name, value):  # pylint: disable=unused-argument
+        """Filter failure states to a device and interfaces belonging to that device."""
+        device_content_type = ContentType.objects.get_for_model(Device)
+        interface_content_type = ContentType.objects.get_for_model(Interface)
+        interface_ids = Interface.objects.filter(device_id=value).values("pk")
+        return queryset.filter(
+            Q(
+                source_content_type_id=device_content_type.pk,
+                source_object_id=value,
+            )
+            | Q(
+                source_content_type_id=interface_content_type.pk,
+                source_object_id__in=interface_ids,
+            )
+        )
+
+    @staticmethod
+    def filter_virtual_machine_scope_id(queryset, name, value):  # pylint: disable=unused-argument
+        """Filter failure states to a virtual machine and its interfaces."""
+        virtual_machine_content_type = ContentType.objects.get_for_model(VirtualMachine)
+        vm_interface_content_type = ContentType.objects.get_for_model(VMInterface)
+        vm_interface_ids = VMInterface.objects.filter(virtual_machine_id=value).values("pk")
+        return queryset.filter(
+            Q(
+                source_content_type_id=virtual_machine_content_type.pk,
+                source_object_id=value,
+            )
+            | Q(
+                source_content_type_id=vm_interface_content_type.pk,
+                source_object_id__in=vm_interface_ids,
+            )
+        )
+
+    @staticmethod
+    def filter_device_object_id(queryset, name, value):  # pylint: disable=unused-argument
+        """Filter failure states directly attached to a specific device."""
+        device_content_type = ContentType.objects.get_for_model(Device)
+        return queryset.filter(
+            source_content_type_id=device_content_type.pk,
+            source_object_id=value,
+        )
+
+    @staticmethod
+    def filter_virtual_machine_object_id(queryset, name, value):  # pylint: disable=unused-argument
+        """Filter failure states directly attached to a specific virtual machine."""
+        virtual_machine_content_type = ContentType.objects.get_for_model(VirtualMachine)
+        return queryset.filter(
+            source_content_type_id=virtual_machine_content_type.pk,
+            source_object_id=value,
+        )
+
+    @staticmethod
+    def filter_interface_id(queryset, name, value):  # pylint: disable=unused-argument
+        """Filter failure states to a specific interface."""
+        interface_content_type = ContentType.objects.get_for_model(Interface)
+        return queryset.filter(
+            source_content_type_id=interface_content_type.pk,
+            source_object_id=value,
+        )
+
+    @staticmethod
+    def filter_vminterface_id(queryset, name, value):  # pylint: disable=unused-argument
+        """Filter failure states to a specific VM interface."""
+        vm_interface_content_type = ContentType.objects.get_for_model(VMInterface)
+        return queryset.filter(
+            source_content_type_id=vm_interface_content_type.pk,
+            source_object_id=value,
+        )
+
+    @staticmethod
+    def filter_service_id(queryset, name, value):  # pylint: disable=unused-argument
+        """Filter failure states to a specific service."""
+        service_content_type = ContentType.objects.get_for_model(Service)
+        return queryset.filter(
+            source_content_type_id=service_content_type.pk,
+            source_object_id=value,
+        )
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.DNSRuleFailureState
         fields = "__all__"

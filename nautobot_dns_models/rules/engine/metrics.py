@@ -90,6 +90,14 @@ class PipelineBatchMetrics:
             during planning for this batch.
         pending_bulk_updates: Number of queued rename updates prepared for bulk
             flush in this batch.
+        fallback_chunk_attempt_count: Number of fallback chunk-level retry
+            attempts executed after fast bulk-update failures in this batch.
+        fallback_singleton_attempt_count: Number of singleton savepoint retries
+            executed while isolating failed fast updates in this batch.
+        fallback_singleton_failure_count: Number of singleton retries that still
+            failed in this batch.
+        update_failure_recorded_count: Number of singleton failures recorded to
+            failure-state storage in this batch.
         stage_metrics: Per-stage elapsed time accumulator for this batch.
     """
 
@@ -97,6 +105,10 @@ class PipelineBatchMetrics:
     tracking_rows: int = 0
     pending_rule_calculations: int = 0
     pending_bulk_updates: int = 0
+    fallback_chunk_attempt_count: int = 0
+    fallback_singleton_attempt_count: int = 0
+    fallback_singleton_failure_count: int = 0
+    update_failure_recorded_count: int = 0
     stage_metrics: PipelineStageMetrics = field(default_factory=PipelineStageMetrics)
 
     @contextmanager
@@ -124,6 +136,14 @@ class PipelineMetrics:
             items generated across all recorded batches.
         pending_bulk_updates_total: Total number of queued bulk rename updates
             accumulated across all recorded batches.
+        fallback_chunk_attempt_count_total: Total number of fallback chunk
+            attempts across all recorded batches.
+        fallback_singleton_attempt_count_total: Total number of fallback
+            singleton retry attempts across all recorded batches.
+        fallback_singleton_failure_count_total: Total number of fallback
+            singleton failures across all recorded batches.
+        update_failure_recorded_count_total: Total number of update failures
+            persisted to failure-state storage across all recorded batches.
         stage_metrics: Cumulative per-stage elapsed-time totals across all
             recorded batches.
     """
@@ -133,6 +153,10 @@ class PipelineMetrics:
     tracking_rows_total: int = 0
     pending_rule_calculations_total: int = 0
     pending_bulk_updates_total: int = 0
+    fallback_chunk_attempt_count_total: int = 0
+    fallback_singleton_attempt_count_total: int = 0
+    fallback_singleton_failure_count_total: int = 0
+    update_failure_recorded_count_total: int = 0
     stage_metrics: PipelineStageMetrics = field(default_factory=PipelineStageMetrics)
 
     def record_batch(self, batch_metrics):
@@ -142,6 +166,10 @@ class PipelineMetrics:
         self.tracking_rows_total += batch_metrics.tracking_rows
         self.pending_rule_calculations_total += batch_metrics.pending_rule_calculations
         self.pending_bulk_updates_total += batch_metrics.pending_bulk_updates
+        self.fallback_chunk_attempt_count_total += batch_metrics.fallback_chunk_attempt_count
+        self.fallback_singleton_attempt_count_total += batch_metrics.fallback_singleton_attempt_count
+        self.fallback_singleton_failure_count_total += batch_metrics.fallback_singleton_failure_count
+        self.update_failure_recorded_count_total += batch_metrics.update_failure_recorded_count
         for stage_name, value in batch_metrics.stage_metrics.as_dict().items():
             self.stage_metrics.add(stage_name, value)
 
@@ -154,6 +182,10 @@ class PipelineMetrics:
             "tracking_rows_total": self.tracking_rows_total,
             "pending_rule_calculations_total": self.pending_rule_calculations_total,
             "pending_bulk_updates_total": self.pending_bulk_updates_total,
+            "fallback_chunk_attempt_count_total": self.fallback_chunk_attempt_count_total,
+            "fallback_singleton_attempt_count_total": self.fallback_singleton_attempt_count_total,
+            "fallback_singleton_failure_count_total": self.fallback_singleton_failure_count_total,
+            "update_failure_recorded_count_total": self.update_failure_recorded_count_total,
             "stage_metrics": stage_metrics,
         }
         batches = metrics["batches"] or 1
@@ -162,6 +194,10 @@ class PipelineMetrics:
             "tracking_rows": round(metrics["tracking_rows_total"] / batches, 3),
             "pending_rule_calculations": round(metrics["pending_rule_calculations_total"] / batches, 3),
             "pending_bulk_updates": round(metrics["pending_bulk_updates_total"] / batches, 3),
+            "fallback_chunk_attempt_count": round(metrics["fallback_chunk_attempt_count_total"] / batches, 3),
+            "fallback_singleton_attempt_count": round(metrics["fallback_singleton_attempt_count_total"] / batches, 3),
+            "fallback_singleton_failure_count": round(metrics["fallback_singleton_failure_count_total"] / batches, 3),
+            "update_failure_recorded_count": round(metrics["update_failure_recorded_count_total"] / batches, 3),
             "stage_metrics": {k: round(v / batches, 3) for k, v in stage_metrics.items()},
         }
 

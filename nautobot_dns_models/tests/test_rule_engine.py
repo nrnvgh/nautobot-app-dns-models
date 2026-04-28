@@ -27,7 +27,15 @@ from nautobot.tenancy.models import Tenant
 from nautobot.virtualization.models import Cluster, ClusterType, VirtualMachine, VMInterface
 
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
-from nautobot_dns_models.models import AAAARecord, ARecord, DNSRule, DNSRuleRecord, DNSView, DNSZone
+from nautobot_dns_models.models import (
+    AAAARecord,
+    ARecord,
+    DNSRule,
+    DNSRuleFailureState,
+    DNSRuleRecord,
+    DNSView,
+    DNSZone,
+)
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.engine import DNSRuleEngine, ExecutionMode
 from nautobot_dns_models.rules.engine.constants import (
@@ -3582,6 +3590,286 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
             DNSRuleRecord.objects.filter(rule=dns_rule, object_id=self.interface.id).count(),
             0,
         )
+
+    def test_fast_pipeline_update_fallback_partial_failure_records_state_and_keeps_success(self):
+        """Fast fallback should isolate one failing rename and apply other updates."""
+        dns_rule = self._create_dns_rule_for_interface_a_record(name="fast-fallback-partial-failure")
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+
+        success_device = Device.objects.create(
+            name="fast-fallback-success-old",
+            device_type=self.device_type,
+            location=self.location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        success_interface = Interface.objects.create(
+            name="fast-fallback-success-intf",
+            device=success_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        success_interface.ip_addresses.add(self.ip_addresses[1])
+        self.engine.process_object(success_interface, created=True)
+
+        old_failing_name = f"{self.interface.name}.{self.device.name}"
+        old_success_name = f"{success_interface.name}.{success_device.name}"
+        Device.objects.filter(pk=self.device.pk).update(name="fast-fallback-failing-new")
+        Device.objects.filter(pk=success_device.pk).update(name="fast-fallback-success-new")
+        self.interface.refresh_from_db()
+        success_interface.refresh_from_db()
+
+        failing_new_name = f"{self.interface.name}.fast-fallback-failing-new"
+        success_new_name = f"{success_interface.name}.fast-fallback-success-new"
+        ARecord.objects.create(name=failing_new_name, zone=self.dns_zone, address=self.ip_addresses[0])
+
+        fast_engine = DNSRuleEngine(execution_mode=ExecutionMode.FAST)
+        summaries = fast_engine.process_objects_pipeline([self.interface, success_interface])
+        self.assertEqual(len(summaries), 2)
+        self.assertEqual(summaries[0].dns_record_update_count, 0)
+        self.assertEqual(summaries[0].changed_record_count, 0)
+        self.assertEqual(summaries[1].dns_record_update_count, 1)
+
+        self.assertTrue(
+            ARecord.objects.filter(name=old_failing_name, zone=self.dns_zone, address=self.ip_addresses[0]).exists()
+        )
+        self.assertTrue(
+            ARecord.objects.filter(name=success_new_name, zone=self.dns_zone, address=self.ip_addresses[1]).exists()
+        )
+        self.assertFalse(
+            ARecord.objects.filter(name=old_success_name, zone=self.dns_zone, address=self.ip_addresses[1]).exists()
+        )
+
+        failure_state = DNSRuleFailureState.objects.get(
+            source_object_id=self.interface.id,
+            rule=dns_rule,
+            candidate_record_type="A",
+            candidate_name=failing_new_name,
+            candidate_zone_id=self.dns_zone.id,
+            candidate_address_id=self.ip_addresses[0].id,
+        )
+        self.assertEqual(failure_state.attempt_count, 1)
+        self.assertEqual(failure_state.consecutive_failures, 1)
+
+    def test_fast_pipeline_update_fallback_all_failure_records_all_states(self):
+        """Fast fallback should persist one failure-state row per failed singleton update."""
+        dns_rule = self._create_dns_rule_for_interface_a_record(name="fast-fallback-all-failure")
+        interfaces = []
+        for index, address in enumerate(self.ip_addresses[:3], start=1):
+            device = Device.objects.create(
+                name=f"fast-fallback-all-failure-{index}-old",
+                device_type=self.device_type,
+                location=self.location,
+                tenant=self.tenant,
+                role=self.device_role,
+                status=self.device_status,
+            )
+            interface = Interface.objects.create(
+                name=f"fast-fallback-all-failure-intf-{index}",
+                device=device,
+                type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+                status=self.interface_status,
+            )
+            interface.ip_addresses.add(address)
+
+            Device.objects.filter(pk=device.pk).update(name=f"fast-fallback-all-failure-{index}-new")
+            interface.refresh_from_db()
+            conflicting_name = f"{interface.name}.fast-fallback-all-failure-{index}-new"
+            ARecord.objects.create(name=conflicting_name, zone=self.dns_zone, address=address)
+            interfaces.append(interface)
+
+        fast_engine = DNSRuleEngine(execution_mode=ExecutionMode.FAST)
+        summaries = fast_engine.process_objects_pipeline(interfaces)
+
+        self.assertEqual(len(summaries), 3)
+        self.assertTrue(all(summary.changed_record_count == 0 for summary in summaries))
+        self.assertEqual(DNSRuleFailureState.objects.filter(rule=dns_rule).count(), 3)
+        self.assertTrue(all(state.attempt_count >= 1 for state in DNSRuleFailureState.objects.filter(rule=dns_rule)))
+
+    def test_fast_pipeline_update_without_failure_keeps_fallback_counters_zero(self):
+        """Fast pipeline metrics should show zero fallback counters when no rename fails."""
+        self._create_dns_rule_for_interface_a_record(name="fast-fallback-no-failure")
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+        Device.objects.filter(pk=self.device.pk).update(name="fast-fallback-no-failure-new")
+        self.interface.refresh_from_db()
+
+        fast_engine = DNSRuleEngine(execution_mode=ExecutionMode.FAST)
+        summaries = fast_engine.process_objects_pipeline([self.interface])
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0].dns_record_update_count, 1)
+        metrics = fast_engine.get_pipeline_metrics()
+        self.assertEqual(metrics["fallback_chunk_attempt_count_total"], 0)
+        self.assertEqual(metrics["fallback_singleton_attempt_count_total"], 0)
+        self.assertEqual(metrics["fallback_singleton_failure_count_total"], 0)
+        self.assertEqual(metrics["update_failure_recorded_count_total"], 0)
+
+    def test_fast_pipeline_update_failure_state_resolves_after_successful_retry(self):
+        """Open failure state should move to resolved when later update succeeds."""
+        dns_rule = self._create_dns_rule_for_interface_a_record(name="fast-fallback-recovery")
+        self.interface.ip_addresses.add(self.ip_addresses[0])
+        Device.objects.filter(pk=self.device.pk).update(name="fast-fallback-recovery-new")
+        self.interface.refresh_from_db()
+        failing_name = f"{self.interface.name}.fast-fallback-recovery-new"
+        blocker = ARecord.objects.create(name=failing_name, zone=self.dns_zone, address=self.ip_addresses[0])
+
+        fast_engine = DNSRuleEngine(execution_mode=ExecutionMode.FAST)
+        first_run = fast_engine.process_objects_pipeline([self.interface])
+        self.assertEqual(first_run[0].dns_record_update_count, 0)
+
+        failure_state = DNSRuleFailureState.objects.get(
+            source_object_id=self.interface.id,
+            rule=dns_rule,
+            candidate_record_type="A",
+            candidate_name=failing_name,
+            candidate_zone_id=self.dns_zone.id,
+            candidate_address_id=self.ip_addresses[0].id,
+        )
+        self.assertEqual(failure_state.attempt_count, 1)
+
+        blocker.delete()
+        second_run = fast_engine.process_objects_pipeline([self.interface])
+        self.assertEqual(second_run[0].dns_record_update_count, 1)
+        self.assertFalse(DNSRuleFailureState.objects.filter(pk=failure_state.pk).exists())
+
+    def test_create_failure_state_resolves_after_successful_retry(self):
+        """Create-path failure state resolves when same candidate later succeeds."""
+        tenant_b = Tenant.objects.create(name="create-failure-tenant-b")
+        device_name = "create-failure-device"
+        interface_name = "create-failure-intf"
+        shared_ip = self.ip_addresses[0]
+
+        source_a_device = Device.objects.create(
+            name=device_name,
+            device_type=self.device_type,
+            location=self.location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        source_b_device = Device.objects.create(
+            name=device_name,
+            device_type=self.device_type,
+            location=self.location,
+            tenant=tenant_b,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        source_a_interface = Interface.objects.create(
+            name=interface_name,
+            device=source_a_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        source_b_interface = Interface.objects.create(
+            name=interface_name,
+            device=source_b_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        source_a_interface.ip_addresses.add(shared_ip)
+        source_b_interface.ip_addresses.add(shared_ip)
+
+        dns_rule = self._create_dns_rule_for_interface_a_record(name="create-failure-recovery")
+        candidate_name = f"{interface_name}.{device_name}"
+        standard_engine = DNSRuleEngine()
+        first_run = standard_engine.process_objects_pipeline([source_a_interface, source_b_interface])
+        self.assertEqual(len(first_run), 2)
+        self.assertEqual(DNSRuleFailureState.objects.filter(rule=dns_rule).count(), 1)
+        self.assertEqual(DNSRuleRecord.objects.filter(rule=dns_rule).count(), 1)
+
+        failure_state = DNSRuleFailureState.objects.get(
+            rule=dns_rule,
+            candidate_record_type="A",
+            candidate_name=candidate_name,
+            candidate_zone_id=self.dns_zone.id,
+            candidate_address_id=shared_ip.id,
+        )
+        self.assertEqual(failure_state.attempt_count, 1)
+
+        failed_source_id = failure_state.source_object_id
+        if failed_source_id == source_a_interface.id:
+            winner_interface = source_b_interface
+            failed_interface = source_a_interface
+        else:
+            winner_interface = source_a_interface
+            failed_interface = source_b_interface
+
+        winner_interface.delete()
+        failed_interface.refresh_from_db()
+        second_run = standard_engine.process_object(failed_interface, created=False)
+        self.assertEqual(second_run.dns_record_create_count, 1)
+        self.assertFalse(DNSRuleFailureState.objects.filter(pk=failure_state.pk).exists())
+
+    def test_fast_pipeline_create_fallback_partial_failure_records_and_resolves_state(self):
+        """Fast batched-create fallback isolates conflict and resolves on retry."""
+        tenant_b = Tenant.objects.create(name="fast-create-failure-tenant-b")
+        device_name = "fast-create-failure-device"
+        interface_name = "fast-create-failure-intf"
+        shared_ip = self.ip_addresses[0]
+
+        source_a_device = Device.objects.create(
+            name=device_name,
+            device_type=self.device_type,
+            location=self.location,
+            tenant=self.tenant,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        source_b_device = Device.objects.create(
+            name=device_name,
+            device_type=self.device_type,
+            location=self.location,
+            tenant=tenant_b,
+            role=self.device_role,
+            status=self.device_status,
+        )
+        source_a_interface = Interface.objects.create(
+            name=interface_name,
+            device=source_a_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        source_b_interface = Interface.objects.create(
+            name=interface_name,
+            device=source_b_device,
+            type=InterfaceTypeChoices.TYPE_1GE_FIXED,
+            status=self.interface_status,
+        )
+        source_a_interface.ip_addresses.add(shared_ip)
+        source_b_interface.ip_addresses.add(shared_ip)
+
+        dns_rule = self._create_dns_rule_for_interface_a_record(name="fast-create-fallback-partial")
+        candidate_name = f"{interface_name}.{device_name}"
+        fast_engine = DNSRuleEngine(execution_mode=ExecutionMode.FAST)
+        first_run = fast_engine.process_objects_pipeline([source_a_interface, source_b_interface])
+        self.assertEqual(len(first_run), 2)
+        self.assertEqual(DNSRuleFailureState.objects.filter(rule=dns_rule).count(), 1)
+        self.assertEqual(DNSRuleRecord.objects.filter(rule=dns_rule).count(), 1)
+
+        failure_state = DNSRuleFailureState.objects.get(
+            rule=dns_rule,
+            candidate_record_type="A",
+            candidate_name=candidate_name,
+            candidate_zone_id=self.dns_zone.id,
+            candidate_address_id=shared_ip.id,
+        )
+        self.assertEqual(failure_state.attempt_count, 1)
+
+        failed_source_id = failure_state.source_object_id
+        if failed_source_id == source_a_interface.id:
+            winner_interface = source_b_interface
+            failed_interface = source_a_interface
+        else:
+            winner_interface = source_a_interface
+            failed_interface = source_b_interface
+
+        winner_interface.delete()
+        failed_interface.refresh_from_db()
+        second_run = fast_engine.process_objects_pipeline([failed_interface])
+        self.assertEqual(len(second_run), 1)
+        self.assertEqual(DNSRuleRecord.objects.filter(rule=dns_rule, object_id=failed_interface.id).count(), 1)
+        self.assertFalse(DNSRuleFailureState.objects.filter(pk=failure_state.pk).exists())
 
     def test_multiple_ips_preserve_existing_records(self):
         """Test reconciliation preserves existing records when adding a second matching IP."""

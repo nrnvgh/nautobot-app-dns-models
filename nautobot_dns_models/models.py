@@ -308,6 +308,14 @@ class DNSRecord(DNSModel):
         if wire_length > 255:
             raise ValidationError({"name": "Total length of DNS name cannot exceed 255 bytes (octets) in wire format."})
 
+    @property
+    def dns_rule(self):
+        """Get the DNS rule that created this DNS record."""
+        try:
+            return self.rule_record.get().rule
+        except DNSRuleRecord.DoesNotExist:
+            return None
+
     #
     # NOTE to myself: we may want to call self.full_clean() here to ensure all
     # NOTE normalization and validation is run.
@@ -939,3 +947,80 @@ class DNSRuleRecord(BaseModel):
                         ]
                     }
                 )
+
+
+class DNSRuleFailureState(BaseModel):
+    """Current state for rule-driven candidate updates that failed."""
+
+    source_content_type = models.ForeignKey(
+        ContentType, on_delete=models.CASCADE, help_text="Content type of the source object"
+    )
+    source_object_id = models.UUIDField(db_index=True, help_text="ID of the source object")
+    source_object = GenericForeignKey("source_content_type", "source_object_id")
+
+    rule = models.ForeignKey(
+        DNSRule,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="failure_states",
+        help_text="DNS rule associated with this failure state",
+    )
+    candidate_record_type = models.CharField(max_length=16, help_text="Candidate record type for this failure")
+    candidate_name = models.CharField(max_length=255, help_text="Candidate DNS name for this failure")
+    candidate_zone_id = models.UUIDField(
+        db_index=True,
+        null=True,
+        blank=True,
+        help_text="Candidate DNS zone UUID for this failure",
+    )
+    candidate_address_id = models.UUIDField(
+        db_index=True,
+        null=True,
+        blank=True,
+        help_text="Candidate address UUID for this failure",
+    )
+
+    latest_exception_type = models.CharField(max_length=128, blank=True, default="")
+    latest_error = models.TextField(blank=True, default="")
+    latest_pgcode = models.CharField(max_length=32, blank=True, default="")
+    latest_constraint = models.CharField(max_length=255, blank=True, default="")
+
+    first_seen = models.DateTimeField(help_text="First time this failure state was observed")
+    last_seen = models.DateTimeField(help_text="Most recent time this failure state was observed")
+    attempt_count = models.PositiveIntegerField(default=1)
+    consecutive_failures = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        """Meta attributes for DNSRuleFailureState."""
+
+        verbose_name = "DNS Rule Failure State"
+        verbose_name_plural = "DNS Rule Failure States"
+        indexes = [
+            models.Index(fields=["source_content_type", "source_object_id"], name="dnsrulefail_src_idx"),
+            models.Index(
+                fields=["candidate_record_type", "candidate_zone_id", "candidate_name"],
+                name="dnsrulefail_candidate_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "source_content_type",
+                    "source_object_id",
+                    "rule",
+                    "candidate_record_type",
+                    "candidate_name",
+                    "candidate_zone_id",
+                    "candidate_address_id",
+                ],
+                name="dnsrulefail_unique_state_key",
+            )
+        ]
+
+    def __str__(self):
+        """String representation of DNSRuleFailureState."""
+        return (
+            f"{self.source_content_type.app_label}.{self.source_content_type.model}:{self.source_object_id} "
+            f"{self.candidate_record_type} {self.candidate_name}"
+        )

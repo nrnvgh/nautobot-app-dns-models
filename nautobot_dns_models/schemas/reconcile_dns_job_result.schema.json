@@ -46,6 +46,10 @@
             "tracking_rows_total",
             "pending_rule_calculations_total",
             "pending_bulk_updates_total",
+            "fallback_chunk_attempt_count_total",
+            "fallback_singleton_attempt_count_total",
+            "fallback_singleton_failure_count_total",
+            "update_failure_recorded_count_total",
             "stage_metrics",
             "avg_per_batch"
           ],
@@ -55,6 +59,10 @@
             "tracking_rows_total": { "type": "number", "minimum": 0 },
             "pending_rule_calculations_total": { "type": "number", "minimum": 0 },
             "pending_bulk_updates_total": { "type": "number", "minimum": 0 },
+            "fallback_chunk_attempt_count_total": { "type": "number", "minimum": 0 },
+            "fallback_singleton_attempt_count_total": { "type": "number", "minimum": 0 },
+            "fallback_singleton_failure_count_total": { "type": "number", "minimum": 0 },
+            "update_failure_recorded_count_total": { "type": "number", "minimum": 0 },
             "stage_metrics": {
               "type": "object",
               "additionalProperties": false,
@@ -75,6 +83,10 @@
                 "tracking_rows",
                 "pending_rule_calculations",
                 "pending_bulk_updates",
+                "fallback_chunk_attempt_count",
+                "fallback_singleton_attempt_count",
+                "fallback_singleton_failure_count",
+                "update_failure_recorded_count",
                 "stage_metrics"
               ],
               "properties": {
@@ -82,6 +94,10 @@
                 "tracking_rows": { "type": "number", "minimum": 0 },
                 "pending_rule_calculations": { "type": "number", "minimum": 0 },
                 "pending_bulk_updates": { "type": "number", "minimum": 0 },
+                "fallback_chunk_attempt_count": { "type": "number", "minimum": 0 },
+                "fallback_singleton_attempt_count": { "type": "number", "minimum": 0 },
+                "fallback_singleton_failure_count": { "type": "number", "minimum": 0 },
+                "update_failure_recorded_count": { "type": "number", "minimum": 0 },
                 "stage_metrics": {
                   "type": "object",
                   "additionalProperties": false,
@@ -165,7 +181,11 @@
         "dns_record_unchanged_count",
         "dns_record_total_count",
         "changed_record_count",
-        "targets_noop_count"
+        "targets_noop_count",
+        "fallback_chunk_attempt_count",
+        "fallback_singleton_attempt_count",
+        "fallback_singleton_failure_count",
+        "update_failure_recorded_count"
       ],
       "properties": {
         "objects_with_existing_rule_records": { "type": "integer", "minimum": 0 },
@@ -177,7 +197,11 @@
         "dns_record_unchanged_count": { "type": "integer", "minimum": 0 },
         "dns_record_total_count": { "type": "integer", "minimum": 0 },
         "changed_record_count": { "type": "integer", "minimum": 0 },
-        "targets_noop_count": { "type": "integer", "minimum": 0 }
+        "targets_noop_count": { "type": "integer", "minimum": 0 },
+        "fallback_chunk_attempt_count": { "type": "integer", "minimum": 0 },
+        "fallback_singleton_attempt_count": { "type": "integer", "minimum": 0 },
+        "fallback_singleton_failure_count": { "type": "integer", "minimum": 0 },
+        "update_failure_recorded_count": { "type": "integer", "minimum": 0 }
       }
     }
   }

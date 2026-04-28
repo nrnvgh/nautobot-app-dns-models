@@ -51,6 +51,10 @@ class ReconcileRunSummary:
     dns_record_update_count: int = 0
     dns_record_unchanged_count: int = 0
     targets_noop_count: int = 0
+    fallback_chunk_attempt_count: int = 0
+    fallback_singleton_attempt_count: int = 0
+    fallback_singleton_failure_count: int = 0
+    update_failure_recorded_count: int = 0
 
     def mark_target_selected(self):
         """Increment count for selected targets encountered."""
@@ -111,6 +115,10 @@ class ReconcileRunSummary:
             ),
             "changed_record_count": self.changed_record_count,
             "targets_noop_count": self.targets_noop_count,
+            "fallback_chunk_attempt_count": self.fallback_chunk_attempt_count,
+            "fallback_singleton_attempt_count": self.fallback_singleton_attempt_count,
+            "fallback_singleton_failure_count": self.fallback_singleton_failure_count,
+            "update_failure_recorded_count": self.update_failure_recorded_count,
         }
 
 
@@ -356,7 +364,7 @@ class ReconcileDNSBulkJob(Job):
         started_at = perf_counter()
 
         selected_execution_mode = ExecutionMode.FAST if fast_mode else ExecutionMode.STANDARD
-        rule_engine = DNSRuleEngine(execution_mode=selected_execution_mode)
+        rule_engine = DNSRuleEngine(execution_mode=selected_execution_mode, selected_rules=rules)
 
         location_ids = {location.id for location in (locations or [])}
         tenant_ids = {tenant.id for tenant in (tenants or [])}
@@ -437,7 +445,20 @@ class ReconcileDNSBulkJob(Job):
             batch_size=batch_size,
         )
         result["execution"]["runtime_seconds"] = round(perf_counter() - started_at, 3)
-        result["mode"]["pipeline_stage_metrics"] = rule_engine.get_pipeline_metrics()
+        pipeline_metrics = rule_engine.get_pipeline_metrics()
+        result["mode"]["pipeline_stage_metrics"] = pipeline_metrics
+        summary.fallback_chunk_attempt_count = pipeline_metrics.get("fallback_chunk_attempt_count_total", 0)
+        summary.fallback_singleton_attempt_count = pipeline_metrics.get("fallback_singleton_attempt_count_total", 0)
+        summary.fallback_singleton_failure_count = pipeline_metrics.get("fallback_singleton_failure_count_total", 0)
+        summary.update_failure_recorded_count = pipeline_metrics.get("update_failure_recorded_count_total", 0)
+        result["reconciliation"].update(
+            {
+                "fallback_chunk_attempt_count": summary.fallback_chunk_attempt_count,
+                "fallback_singleton_attempt_count": summary.fallback_singleton_attempt_count,
+                "fallback_singleton_failure_count": summary.fallback_singleton_failure_count,
+                "update_failure_recorded_count": summary.update_failure_recorded_count,
+            }
+        )
 
         _log_result_summary(self.logger, result)
 
