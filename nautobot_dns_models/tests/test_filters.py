@@ -350,14 +350,18 @@ class ARecordFilterTestCase(TestCase):
 
     def test_dns_rule_unknown(self):
         """Test filtering ARecord by unknown DNS rule."""
-        params = {"dns_rule": [DNSRule.objects.create(
-            name="arecord-filter-rule-unmatched",
-            content_type=ContentType.objects.get_for_model(Interface),
-            record_type="A",
-            zone_template="example.com",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all | ip_address }}",
-        ).pk]}
+        params = {
+            "dns_rule": [
+                DNSRule.objects.create(
+                    name="arecord-filter-rule-unmatched",
+                    content_type=ContentType.objects.get_for_model(Interface),
+                    record_type="A",
+                    zone_template="example.com",
+                    name_template="{{ obj.name }}",
+                    value_template="{{ obj.ip_addresses.all | ip_address }}",
+                ).pk
+            ]
+        }
         self.assertEqual(self.filterset(params, self.queryset).qs.count(), 0)
 
     def test_has_dns_rule_true(self):
@@ -470,14 +474,18 @@ class AAAARecordFilterTestCase(TestCase):
 
     def test_dns_rule_unknown(self):
         """Test filtering AAAARecord by unknown DNS rule."""
-        params = {"dns_rule": [DNSRule.objects.create(
-            name="aaaarecord-filter-rule-unmatched",
-            content_type=ContentType.objects.get_for_model(Interface),
-            record_type="AAAA",
-            zone_template="example.com",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all | ip_address }}",
-        ).pk]}
+        params = {
+            "dns_rule": [
+                DNSRule.objects.create(
+                    name="aaaarecord-filter-rule-unmatched",
+                    content_type=ContentType.objects.get_for_model(Interface),
+                    record_type="AAAA",
+                    zone_template="example.com",
+                    name_template="{{ obj.name }}",
+                    value_template="{{ obj.ip_addresses.all | ip_address }}",
+                ).pk
+            ]
+        }
         self.assertEqual(self.filterset(params, self.queryset).qs.count(), 0)
 
     def test_has_dns_rule_true(self):
