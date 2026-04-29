@@ -18,7 +18,7 @@ from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
 from nautobot_dns_models.rules.engine.constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.reconcile import ReconcilePlanner
-from nautobot_dns_models.rules.engine.update_strategies import UpdateResult
+from nautobot_dns_models.rules.engine.strategies import UpdateResult
 
 logger = logging.getLogger(__name__)
 

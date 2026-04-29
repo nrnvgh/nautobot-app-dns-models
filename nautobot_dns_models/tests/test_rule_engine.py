@@ -44,8 +44,8 @@ from nautobot_dns_models.rules.engine.constants import (
     REASON_ZONE_NOT_FOUND,
 )
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
+from nautobot_dns_models.rules.engine.strategies import UpdateResult
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
-from nautobot_dns_models.rules.engine.update_strategies import UpdateResult
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
 TEST_LOGGING_CONFIG = {

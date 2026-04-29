@@ -10,14 +10,18 @@ from django.template import engines as django_template_engines
 from nautobot_dns_models.models import DNSRuleRecord
 from nautobot_dns_models.rules.engine.cache import EngineCache
 from nautobot_dns_models.rules.engine.context import EngineContext
-from nautobot_dns_models.rules.engine.delete_strategies import FastDeleteExecutor, StandardDeleteExecutor
 from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
 from nautobot_dns_models.rules.engine.materializer import RecordMaterializer
 from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics, PipelineMetrics
 from nautobot_dns_models.rules.engine.pipeline import EnginePipeline
 from nautobot_dns_models.rules.engine.resolver import RuleResolver
+from nautobot_dns_models.rules.engine.strategies import (
+    FastDeleteExecutor,
+    FastUpdateExecutor,
+    StandardDeleteExecutor,
+    StandardUpdateExecutor,
+)
 from nautobot_dns_models.rules.engine.types import BatchedCreateState
-from nautobot_dns_models.rules.engine.update_strategies import FastUpdateExecutor, StandardUpdateExecutor
 from nautobot_dns_models.rules.engine.writer import RecordWriter
 
 logger = logging.getLogger(__name__)
