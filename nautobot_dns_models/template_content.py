@@ -113,31 +113,31 @@ class _BaseReconcileDNSAction(TemplateExtension):  # pylint: disable=abstract-me
     )
 
 
-class DeviceReconcileDNSAction(_BaseReconcileDNSAction):
+class DeviceReconcileDNSAction(_BaseReconcileDNSAction):  # pylint: disable=abstract-method
     """Device detail-page reconcile DNS action."""
 
     model = "dcim.device"
 
 
-class InterfaceReconcileDNSAction(_BaseReconcileDNSAction):
+class InterfaceReconcileDNSAction(_BaseReconcileDNSAction):  # pylint: disable=abstract-method
     """Interface detail-page reconcile DNS action."""
 
     model = "dcim.interface"
 
 
-class ServiceReconcileDNSAction(_BaseReconcileDNSAction):
+class ServiceReconcileDNSAction(_BaseReconcileDNSAction):  # pylint: disable=abstract-method
     """Service detail-page reconcile DNS action."""
 
     model = "ipam.service"
 
 
-class VirtualMachineReconcileDNSAction(_BaseReconcileDNSAction):
+class VirtualMachineReconcileDNSAction(_BaseReconcileDNSAction):  # pylint: disable=abstract-method
     """VirtualMachine detail-page reconcile DNS action."""
 
     model = "virtualization.virtualmachine"
 
 
-class VMInterfaceReconcileDNSAction(_BaseReconcileDNSAction):
+class VMInterfaceReconcileDNSAction(_BaseReconcileDNSAction):  # pylint: disable=abstract-method
     """VMInterface detail-page reconcile DNS action."""
 
     model = "virtualization.vminterface"

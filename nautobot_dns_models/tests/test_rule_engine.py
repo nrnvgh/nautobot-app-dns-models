@@ -10,7 +10,7 @@ Categories:
 import itertools
 import uuid
 from unittest import skip
-from unittest.mock import PropertyMock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
@@ -39,13 +39,16 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.engine import DNSRuleEngine, ExecutionMode
 from nautobot_dns_models.rules.engine.constants import (
+    PHASE_UPDATE_RECONCILE,
     REASON_VIEW_NOT_FOUND,
     REASON_VIEW_TEMPLATE_EMPTY,
     REASON_ZONE_NOT_FOUND,
 )
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
+from nautobot_dns_models.rules.engine.resolver import RuleResolver
 from nautobot_dns_models.rules.engine.strategies import UpdateResult
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
+from nautobot_dns_models.rules.engine.writer import RecordWriter
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 
 TEST_LOGGING_CONFIG = {
@@ -680,12 +683,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        class ModuleWithoutTenant:
-            tenant = None
-
         with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
             with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = ModuleWithoutTenant()
+                module_property.return_value = Mock(tenant=None)
                 parent_property.return_value = self.device
                 location = self._get_object_location(module_interface)
 
@@ -703,12 +703,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        class ModuleWithoutTenant:
-            tenant = None
-
         with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
             with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = ModuleWithoutTenant()
+                module_property.return_value = Mock(tenant=None)
                 parent_property.return_value = self.device
                 tenant = self._get_object_tenant(module_interface)
 
@@ -723,17 +720,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        class ParentModule:
-            tenant = None
-            parent_module = None
-
-        class NestedModule:
-            tenant = None
-            parent_module = ParentModule()
-
         with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
             with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = NestedModule()
+                module_property.return_value = Mock(tenant=None, parent_module=Mock(tenant=None, parent_module=None))
                 parent_property.return_value = self.device
                 location = self._get_object_location(nested_module_interface)
 
@@ -751,17 +740,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        class ParentModule:
-            tenant = None
-            parent_module = None
-
-        class NestedModule:
-            tenant = None
-            parent_module = ParentModule()
-
         with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
             with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = NestedModule()
+                module_property.return_value = Mock(tenant=None, parent_module=Mock(tenant=None, parent_module=None))
                 parent_property.return_value = self.device
                 tenant = self._get_object_tenant(nested_module_interface)
 
@@ -781,13 +762,9 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        class ModuleWithTenant:
-            def __init__(self, tenant):
-                self.tenant = tenant
-
         with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
             with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = ModuleWithTenant(module_tenant)
+                module_property.return_value = Mock(tenant=module_tenant)
                 parent_property.return_value = self.device
                 tenant = self._get_object_tenant(child_interface)
 
@@ -802,17 +779,11 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        class ModuleWithoutTenant:
-            tenant = None
-
-        class ParentNotDevice:
-            pass
-
         with patch("nautobot_dns_models.rules.engine.logging.logger.warning") as mock_warning:
             with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
                 with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                    module_property.return_value = ModuleWithoutTenant()
-                    parent_property.return_value = ParentNotDevice()
+                    module_property.return_value = Mock(tenant=None)
+                    parent_property.return_value = Mock()
                     location = self._get_object_location(child_interface)
                     tenant = self._get_object_tenant(child_interface)
 
@@ -4059,22 +4030,31 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
             enabled=True,
         )
 
-        with patch.object(self.engine._writer, "cleanup_orphaned_records", return_value=0) as cleanup_orphaned_mock:
-            with patch.object(self.engine._resolver, "object_needs_dns_records_for_rule", return_value=True):
-                with patch.object(self.engine._writer, "reconcile_records_for_rule", side_effect=TemplateError("boom")):
-                    with patch.object(self._engine_logger, "log_rule_processing_error") as log_error_mock:
-                        with patch.object(
-                            self.engine._writer, "_cleanup_records_for_rule", return_value=0
-                        ) as cleanup_rule_mock:
-                            self.engine._writer.update_dns_records_for_object(
-                                self.interface, DNSRule.objects.filter(pk=rule.pk)
-                            )
+        source_content_type = ContentType.objects.get_for_model(self.interface)
+        dns_record_content_type = ContentType.objects.get_for_model(ARecord)
+        DNSRuleRecord.objects.create(
+            rule=rule,
+            content_type=source_content_type,
+            object_id=self.interface.id,
+            dns_record_content_type=dns_record_content_type,
+            dns_record_object_id=uuid.uuid4(),
+        )
+
+        with (
+            patch.object(self.engine, "get_applicable_rules", return_value=[rule]),
+            patch.object(RecordWriter, "cleanup_orphaned_records", return_value=0) as cleanup_orphaned_mock,
+            patch.object(RuleResolver, "object_needs_dns_records_for_rule", return_value=True),
+            patch.object(RecordWriter, "reconcile_records_for_rule", side_effect=TemplateError("boom")),
+            patch.object(self._engine_logger, "log_rule_processing_error") as log_error_mock,
+            patch.object(RecordWriter, "_cleanup_records_for_rule", return_value=0) as cleanup_rule_mock,
+        ):
+            self.engine.process_object(self.interface, created=False)
 
         cleanup_orphaned_mock.assert_called_once()
         log_error_mock.assert_called_once()
         cleanup_rule_mock.assert_called_once_with(rule, self.interface)
         _, kwargs = log_error_mock.call_args
-        self.assertEqual(kwargs["phase"], "update_reconcile")
+        self.assertEqual(kwargs["phase"], PHASE_UPDATE_RECONCILE)
         self.assertTrue(kwargs["cleanup"])
 
     def test_get_dns_views_for_rule_empty_rendered_names_raises_validation_error(self):

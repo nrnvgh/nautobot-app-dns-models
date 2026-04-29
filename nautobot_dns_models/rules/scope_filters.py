@@ -14,7 +14,7 @@ class BulkScopeFilterBuilder:
         if handler is None:
             return queryset
 
-        return handler(queryset, location_ids=location_ids, tenant_ids=tenant_ids)
+        return handler(queryset, location_ids=location_ids, tenant_ids=tenant_ids)  # pylint: disable=not-callable
 
     @staticmethod
     def _apply_dcim_device(queryset, *, location_ids, tenant_ids):

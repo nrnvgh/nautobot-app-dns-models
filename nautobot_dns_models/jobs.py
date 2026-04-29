@@ -695,7 +695,18 @@ class ReconcileDNSBulkJob(Job):
         dryrun,
         limit,
     ):
-        """Process one target batch using pipeline batch execution."""
+        """Process one target batch using pipeline batch execution.
+
+        Args:
+            object_batch: Buffered `(model_class, object)` tuples selected for processing.
+            summary: Mutable reconciliation summary tracker.
+            rule_engine: DNS rule engine instance handling pipeline execution.
+            dryrun: Whether execution should log only without mutating records.
+            limit: Optional ceiling on number of selected targets.
+
+        Raises:
+            DNSRuleEngineIntegrityError: Propagated when a DB integrity failure occurs.
+        """
         targets_in_scope = self._build_limited_target_list(
             object_batch,
             summary=summary,
@@ -714,8 +725,6 @@ class ReconcileDNSBulkJob(Job):
             model_label = _model_label(model_class)
             try:
                 batch_summaries = rule_engine.process_objects_pipeline(model_objects)
-            except DNSRuleEngineIntegrityError:
-                raise
             except (
                 DNSRuleTemplateRenderedEmptyError,
                 ValidationError,
@@ -808,14 +817,13 @@ class ReconcileDNSObjectJob(Job):
         dryrun,
         object_model=None,
         object_id=None,
-        object_name="",
-        object_has_populated_device_bays=False,  # noqa: ARG002 - display-only hidden form value
+        object_name="",  # pylint: disable=unused-argument
+        object_has_populated_device_bays=False,  # pylint: disable=unused-argument
         include_child_devices=False,
         include_interfaces=False,
     ):
         """Execute single-object DNS reconciliation."""
         started_at = perf_counter()
-        del object_name  # Display-only field; not used in reconciliation logic.
 
         object_model_label = f"{object_model.app_label}.{object_model.model}"
         model_class = object_model.model_class()
@@ -825,7 +833,7 @@ class ReconcileDNSObjectJob(Job):
 
         try:
             obj = model_class.objects.get(pk=object_id)
-        except model_class.DoesNotExist:  # pylint: disable=protected-access
+        except model_class.DoesNotExist:
             self.fail(f"Object '{object_model_label}:{object_id}' was not found.")
             return {}
 
@@ -928,7 +936,18 @@ class ReconcileDNSObjectJob(Job):
         dryrun,
         limit,
     ):
-        """Process one buffered target batch."""
+        """Process one buffered target batch.
+
+        Args:
+            object_batch: Buffered `(model_class, object)` tuples selected for processing.
+            summary: Mutable reconciliation summary tracker.
+            rule_engine: DNS rule engine instance handling per-object execution.
+            dryrun: Whether execution should log only without mutating records.
+            limit: Optional ceiling on number of selected targets.
+
+        Raises:
+            DNSRuleEngineIntegrityError: Propagated when a DB integrity failure occurs.
+        """
         targets_in_scope = []
         for model_class, obj in object_batch:
             if _limit_reached(summary, limit):
@@ -949,8 +968,6 @@ class ReconcileDNSObjectJob(Job):
             try:
                 processing_summary = rule_engine.process_object(obj, created=False)
                 summary.mark_processed_success(processing_summary)
-            except DNSRuleEngineIntegrityError:
-                raise
             except (DNSRuleTemplateRenderedEmptyError, ValidationError, ValueError) as exc:
                 summary.mark_processed_failure()
                 self.logger.error(
