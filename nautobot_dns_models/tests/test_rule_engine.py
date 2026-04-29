@@ -683,11 +683,13 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
-            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = Mock(tenant=None)
-                parent_property.return_value = self.device
-                location = self._get_object_location(module_interface)
+        with (
+            patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
+            patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
+        ):
+            module_property.return_value = Mock(tenant=None)
+            parent_property.return_value = self.device
+            location = self._get_object_location(module_interface)
 
         self.assertEqual(location, self.location)
 
@@ -703,11 +705,13 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
-            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = Mock(tenant=None)
-                parent_property.return_value = self.device
-                tenant = self._get_object_tenant(module_interface)
+        with (
+            patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
+            patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
+        ):
+            module_property.return_value = Mock(tenant=None)
+            parent_property.return_value = self.device
+            tenant = self._get_object_tenant(module_interface)
 
         self.assertEqual(tenant, self.tenant)
 
@@ -720,11 +724,13 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
-            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = Mock(tenant=None, parent_module=Mock(tenant=None, parent_module=None))
-                parent_property.return_value = self.device
-                location = self._get_object_location(nested_module_interface)
+        with (
+            patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
+            patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
+        ):
+            module_property.return_value = Mock(tenant=None, parent_module=Mock(tenant=None, parent_module=None))
+            parent_property.return_value = self.device
+            location = self._get_object_location(nested_module_interface)
 
         self.assertEqual(location, self.location)
 
@@ -740,11 +746,13 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
-            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = Mock(tenant=None, parent_module=Mock(tenant=None, parent_module=None))
-                parent_property.return_value = self.device
-                tenant = self._get_object_tenant(nested_module_interface)
+        with (
+            patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
+            patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
+        ):
+            module_property.return_value = Mock(tenant=None, parent_module=Mock(tenant=None, parent_module=None))
+            parent_property.return_value = self.device
+            tenant = self._get_object_tenant(nested_module_interface)
 
         self.assertEqual(tenant, self.tenant)
 
@@ -762,11 +770,13 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
-            with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                module_property.return_value = Mock(tenant=module_tenant)
-                parent_property.return_value = self.device
-                tenant = self._get_object_tenant(child_interface)
+        with (
+            patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
+            patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
+        ):
+            module_property.return_value = Mock(tenant=module_tenant)
+            parent_property.return_value = self.device
+            tenant = self._get_object_tenant(child_interface)
 
         self.assertEqual(tenant, module_tenant)
 
@@ -779,13 +789,15 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             status=self.interface_status,
         )
 
-        with patch("nautobot_dns_models.rules.engine.logging.logger.warning") as mock_warning:
-            with patch.object(Interface, "module", new_callable=PropertyMock) as module_property:
-                with patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property:
-                    module_property.return_value = Mock(tenant=None)
-                    parent_property.return_value = Mock()
-                    location = self._get_object_location(child_interface)
-                    tenant = self._get_object_tenant(child_interface)
+        with (
+            patch("nautobot_dns_models.rules.engine.logging.logger.warning") as mock_warning,
+            patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
+            patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
+        ):
+            module_property.return_value = Mock(tenant=None)
+            parent_property.return_value = Mock()
+            location = self._get_object_location(child_interface)
+            tenant = self._get_object_tenant(child_interface)
 
         self.assertIsNone(location)
         self.assertIsNone(tenant)
