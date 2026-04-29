@@ -52,9 +52,9 @@ class RecordMaterializer:
         rendered_name = self.render_template(rule.name_template, base_context, "name_template")
         shared_record_data = {"name": normalize_dns_name_if_enabled(rendered_name)}
         requires_ip_context = self.requires_ip_context(rule)
-        all_record_data = []
         record_variations = self.get_record_data_variations_for_rule(rule, base_context, shared_record_data)
 
+        all_record_data = []
         for record_data in record_variations:
             try:
                 if requires_ip_context:

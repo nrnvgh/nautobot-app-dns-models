@@ -1,7 +1,5 @@
 """Template rendering helpers for DNS rule materialization."""
 
-from __future__ import annotations
-
 import re
 
 from nautobot_dns_models.exceptions import DNSRuleTemplateRenderedEmptyError

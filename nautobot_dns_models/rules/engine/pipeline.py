@@ -1,7 +1,5 @@
 """Pipeline orchestration for batched DNS reconciliation."""
 
-from __future__ import annotations
-
 import logging
 from collections import defaultdict
 from time import perf_counter

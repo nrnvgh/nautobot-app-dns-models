@@ -1,7 +1,5 @@
 """DNS Rule Processing Engine for Nautobot DNS Models."""
 
-from __future__ import annotations
-
 import logging
 
 from django.contrib.contenttypes.models import ContentType
