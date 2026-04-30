@@ -64,19 +64,19 @@ class PipelineStageMetrics:
 
         setattr(self, stage_name, getattr(self, stage_name) + seconds)
 
-    def as_dict(self, rounded=False):
-        """Return stage seconds as a plain dictionary."""
-        data = {
+    def as_dict(self):
+        """Return unrounded stage seconds as a plain dictionary."""
+        return {
             "fetch": self.fetch,
             "planning": self.planning,
             "apply": self.apply,
             "bulk_flush": self.bulk_flush,
             "total": self.total,
         }
-        if not rounded:
-            return data
 
-        return {stage_name: round(value, 3) for stage_name, value in data.items()}
+    def as_rounded_dict(self):
+        """Return stage seconds rounded for reporting output."""
+        return {stage_name: round(value, 3) for stage_name, value in self.as_dict().items()}
 
 
 @dataclass
@@ -202,7 +202,7 @@ class PipelineMetrics:
 
     def as_report(self):
         """Serialize cumulative totals and per-batch averages."""
-        stage_metrics = self.stage_metrics.as_dict(rounded=True)
+        stage_totals = self.stage_metrics.as_dict()
         metrics = {
             "batches": self.batches,
             "source_object_count_total": self.source_object_count_total,
@@ -213,7 +213,7 @@ class PipelineMetrics:
             "fallback_singleton_attempt_count_total": self.fallback_singleton_attempt_count_total,
             "fallback_singleton_failure_count_total": self.fallback_singleton_failure_count_total,
             "update_failure_recorded_count_total": self.update_failure_recorded_count_total,
-            "stage_metrics": stage_metrics,
+            "stage_metrics": self.stage_metrics.as_rounded_dict(),
         }
         batches = metrics["batches"] or 1
         metrics["avg_per_batch"] = {
@@ -225,7 +225,7 @@ class PipelineMetrics:
             "fallback_singleton_attempt_count": self._avg(metrics["fallback_singleton_attempt_count_total"], batches),
             "fallback_singleton_failure_count": self._avg(metrics["fallback_singleton_failure_count_total"], batches),
             "update_failure_recorded_count": self._avg(metrics["update_failure_recorded_count_total"], batches),
-            "stage_metrics": {k: self._avg(v, batches) for k, v in stage_metrics.items()},
+            "stage_metrics": {k: self._avg(v, batches) for k, v in stage_totals.items()},
         }
 
         return metrics
