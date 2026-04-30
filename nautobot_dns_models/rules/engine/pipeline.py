@@ -64,6 +64,7 @@ class EnginePipeline:
         self._pipeline_metrics = pipeline_metrics
         self._batched_create_state = batched_create_state
 
+    # Orchestration entrypoint.
     def process_objects_pipeline(self, source_objects):
         """Process one batch of source objects."""
         logger.debug("[process_objects_pipeline] Processing batch of %d objects", len(source_objects))
@@ -119,41 +120,7 @@ class EnginePipeline:
 
         return apply_result.summaries
 
-    @staticmethod
-    def _apply_failed_update_adjustments(*, prepared_entries, summaries, failed_updates_by_object_id):
-        """Adjust per-object summary counters for fallback-captured update failures."""
-        if not failed_updates_by_object_id:
-            return
-
-        summary_by_object_id = {
-            prepared_entry.source_obj.pk: summary for prepared_entry, summary in zip(prepared_entries, summaries)
-        }
-        for object_id, failed_count in failed_updates_by_object_id.items():
-            summary = summary_by_object_id.get(object_id)
-            if summary is None:
-                continue
-
-            adjusted_failures = min(failed_count, summary.dns_record_update_count)
-            summary.dns_record_update_count -= adjusted_failures
-            summary.changed_record_count -= adjusted_failures
-
-    @staticmethod
-    def _apply_successful_create_adjustments(*, prepared_entries, summaries, successful_creates_by_object_id):
-        """Add per-object create counters from finalized batched-create flush outcomes."""
-        if not successful_creates_by_object_id:
-            return
-
-        summary_by_object_id = {
-            prepared_entry.source_obj.pk: summary for prepared_entry, summary in zip(prepared_entries, summaries)
-        }
-        for object_id, successful_count in successful_creates_by_object_id.items():
-            summary = summary_by_object_id.get(object_id)
-            if summary is None:
-                continue
-
-            summary.dns_record_create_count += successful_count
-            summary.changed_record_count += successful_count
-
+    # Stage 1: Fetch tracking rows.
     def _fetch_tracking_data(self, source_objects):
         """Stage 1: fetch and prefetch tracking rows for current object batch."""
         content_type = ContentType.objects.get_for_model(source_objects[0])
@@ -170,6 +137,7 @@ class EnginePipeline:
             tracking_by_object_id=tracking_by_object_id,
         )
 
+    # Stage 2: Planning and work-item preparation.
     def _plan_work(
         self,
         source_objects,
@@ -294,6 +262,7 @@ class EnginePipeline:
             if address_id:
                 batch_address_ids.add(address_id)
 
+    # Stage 3: Materialization.
     def _materialize_desired_data(
         self,
         rule_work_items,
@@ -367,6 +336,7 @@ class EnginePipeline:
             "record": record_data.copy(),
         }
 
+    # Stage 4: Apply and persistence flushes.
     def _apply_changes(self, prepared_entries):
         """Stage 4: apply prepared reconcile entries and queue rename updates."""
         pending_rename_updates = defaultdict(list)
@@ -460,3 +430,39 @@ class EnginePipeline:
         summary.dns_record_unchanged_count = unchanged_count
 
         return summary
+
+    # Post-apply summary adjustments.
+    @staticmethod
+    def _apply_successful_create_adjustments(*, prepared_entries, summaries, successful_creates_by_object_id):
+        """Add per-object create counters from finalized batched-create flush outcomes."""
+        if not successful_creates_by_object_id:
+            return
+
+        summary_by_object_id = {
+            prepared_entry.source_obj.pk: summary for prepared_entry, summary in zip(prepared_entries, summaries)
+        }
+        for object_id, successful_count in successful_creates_by_object_id.items():
+            summary = summary_by_object_id.get(object_id)
+            if summary is None:
+                continue
+
+            summary.dns_record_create_count += successful_count
+            summary.changed_record_count += successful_count
+
+    @staticmethod
+    def _apply_failed_update_adjustments(*, prepared_entries, summaries, failed_updates_by_object_id):
+        """Adjust per-object summary counters for fallback-captured update failures."""
+        if not failed_updates_by_object_id:
+            return
+
+        summary_by_object_id = {
+            prepared_entry.source_obj.pk: summary for prepared_entry, summary in zip(prepared_entries, summaries)
+        }
+        for object_id, failed_count in failed_updates_by_object_id.items():
+            summary = summary_by_object_id.get(object_id)
+            if summary is None:
+                continue
+
+            adjusted_failures = min(failed_count, summary.dns_record_update_count)
+            summary.dns_record_update_count -= adjusted_failures
+            summary.changed_record_count -= adjusted_failures
