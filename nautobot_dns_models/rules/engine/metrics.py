@@ -124,6 +124,24 @@ class PipelineBatchMetrics:
         """Finalize batch total time from a start timestamp."""
         self.stage_metrics.total = perf_counter() - started_at
 
+    def apply_pipeline_outputs(
+        self,
+        *,
+        tracking_rows,
+        pending_rule_calculations,
+        pending_rename_updates,
+        flush_result,
+    ):
+        """Apply post-stage pipeline counters computed from stage outputs."""
+        self.tracking_rows = tracking_rows
+        self.pending_rule_calculations = pending_rule_calculations
+        self.pending_bulk_updates = sum(len(entries) for entries in pending_rename_updates.values())
+
+        self.fallback_chunk_attempt_count = flush_result.fallback_chunk_attempt_count
+        self.fallback_singleton_attempt_count = flush_result.fallback_singleton_attempt_count
+        self.fallback_singleton_failure_count = flush_result.fallback_singleton_failure_count
+        self.update_failure_recorded_count = flush_result.update_failure_recorded_count
+
 
 @dataclass
 class PipelineMetrics:
@@ -163,6 +181,11 @@ class PipelineMetrics:
     update_failure_recorded_count_total: int = 0
     stage_metrics: PipelineStageMetrics = field(default_factory=PipelineStageMetrics)
 
+    @staticmethod
+    def _avg(value, batches):
+        """Return rounded per-batch average for one total counter."""
+        return round(value / batches, 3)
+
     def record_batch(self, batch_metrics):
         """Accumulate one batch into running totals."""
         self.batches += 1
@@ -194,15 +217,15 @@ class PipelineMetrics:
         }
         batches = metrics["batches"] or 1
         metrics["avg_per_batch"] = {
-            "source_object_count": round(metrics["source_object_count_total"] / batches, 3),
-            "tracking_rows": round(metrics["tracking_rows_total"] / batches, 3),
-            "pending_rule_calculations": round(metrics["pending_rule_calculations_total"] / batches, 3),
-            "pending_bulk_updates": round(metrics["pending_bulk_updates_total"] / batches, 3),
-            "fallback_chunk_attempt_count": round(metrics["fallback_chunk_attempt_count_total"] / batches, 3),
-            "fallback_singleton_attempt_count": round(metrics["fallback_singleton_attempt_count_total"] / batches, 3),
-            "fallback_singleton_failure_count": round(metrics["fallback_singleton_failure_count_total"] / batches, 3),
-            "update_failure_recorded_count": round(metrics["update_failure_recorded_count_total"] / batches, 3),
-            "stage_metrics": {k: round(v / batches, 3) for k, v in stage_metrics.items()},
+            "source_object_count": self._avg(metrics["source_object_count_total"], batches),
+            "tracking_rows": self._avg(metrics["tracking_rows_total"], batches),
+            "pending_rule_calculations": self._avg(metrics["pending_rule_calculations_total"], batches),
+            "pending_bulk_updates": self._avg(metrics["pending_bulk_updates_total"], batches),
+            "fallback_chunk_attempt_count": self._avg(metrics["fallback_chunk_attempt_count_total"], batches),
+            "fallback_singleton_attempt_count": self._avg(metrics["fallback_singleton_attempt_count_total"], batches),
+            "fallback_singleton_failure_count": self._avg(metrics["fallback_singleton_failure_count_total"], batches),
+            "update_failure_recorded_count": self._avg(metrics["update_failure_recorded_count_total"], batches),
+            "stage_metrics": {k: self._avg(v, batches) for k, v in stage_metrics.items()},
         }
 
         return metrics

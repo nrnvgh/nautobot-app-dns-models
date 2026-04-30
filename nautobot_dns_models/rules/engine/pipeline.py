@@ -109,16 +109,12 @@ class EnginePipeline:
             )
 
         batch_metrics.finalize_total(total_started_at)
-
-        batch_metrics.tracking_rows = len(fetch_result.tracking_rows)
-        batch_metrics.pending_rule_calculations = plan_result.pending_rule_calculations
-        batch_metrics.pending_bulk_updates = sum(
-            len(entries) for entries in apply_result.pending_rename_updates.values()
+        batch_metrics.apply_pipeline_outputs(
+            tracking_rows=len(fetch_result.tracking_rows),
+            pending_rule_calculations=plan_result.pending_rule_calculations,
+            pending_rename_updates=apply_result.pending_rename_updates,
+            flush_result=flush_result,
         )
-        batch_metrics.fallback_chunk_attempt_count = flush_result.fallback_chunk_attempt_count
-        batch_metrics.fallback_singleton_attempt_count = flush_result.fallback_singleton_attempt_count
-        batch_metrics.fallback_singleton_failure_count = flush_result.fallback_singleton_failure_count
-        batch_metrics.update_failure_recorded_count = flush_result.update_failure_recorded_count
         self._pipeline_metrics.record_batch(batch_metrics)
 
         return apply_result.summaries
