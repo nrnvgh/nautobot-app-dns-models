@@ -39,10 +39,8 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.engine import DNSRuleEngine, ExecutionMode
 from nautobot_dns_models.rules.engine.constants import (
-    REASON_VIEW_NOT_FOUND,
-    REASON_VIEW_TEMPLATE_EMPTY,
-    REASON_ZONE_NOT_FOUND,
     EnginePhase,
+    EngineReason,
 )
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.resolver import RuleResolver
@@ -3999,9 +3997,9 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
             ValidationError({"zone_template": "Zone 'x' does not exist in selected DNS view(s): Default"}), "DEFAULT"
         )
 
-        self.assertEqual(view_empty_reason, REASON_VIEW_TEMPLATE_EMPTY)
-        self.assertEqual(view_missing_reason, REASON_VIEW_NOT_FOUND)
-        self.assertEqual(zone_missing_reason, REASON_ZONE_NOT_FOUND)
+        self.assertEqual(view_empty_reason, EngineReason.VIEW_TEMPLATE_EMPTY)
+        self.assertEqual(view_missing_reason, EngineReason.VIEW_NOT_FOUND)
+        self.assertEqual(zone_missing_reason, EngineReason.ZONE_NOT_FOUND)
 
     # TODO Is this test overkill?
     def test_update_path_top_level_template_error_logs_and_cleans_up(self):
@@ -4089,7 +4087,7 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
             self.engine._materializer.get_dns_views_for_rule(rule, context)
 
         self.assertEqual(exc.exception.field_name, "view_template")
-        self.assertEqual(exc.exception.reason_code, REASON_VIEW_TEMPLATE_EMPTY)
+        self.assertEqual(exc.exception.reason_code, EngineReason.VIEW_TEMPLATE_EMPTY)
         self.assertIn("rendered no DNS view names", str(exc.exception))
 
     def test_get_record_data_variations_for_rule_missing_value_template_raises(self):

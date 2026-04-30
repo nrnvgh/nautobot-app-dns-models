@@ -9,10 +9,8 @@ from nautobot_dns_models import models as dns_models
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSZone
 from nautobot_dns_models.rules.engine.constants import (
-    REASON_VIEW_NOT_FOUND,
-    REASON_VIEW_TEMPLATE_EMPTY,
-    REASON_ZONE_NOT_FOUND,
     EnginePhase,
+    EngineReason,
 )
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
@@ -108,7 +106,7 @@ class RecordCandidateBuilder:
             raise DNSRuleRenderedValueLookupError(
                 field_name="view_template",
                 message="view_template rendered no DNS view names.",
-                reason_code=REASON_VIEW_TEMPLATE_EMPTY,
+                reason_code=EngineReason.VIEW_TEMPLATE_EMPTY,
             )
 
         requested_names = list(dict.fromkeys(raw_names))
@@ -124,7 +122,7 @@ class RecordCandidateBuilder:
             raise DNSRuleRenderedValueLookupError(
                 field_name="view_template",
                 message=f"DNS view(s) not found from view_template: {', '.join(sorted(set(missing_names)))}",
-                reason_code=REASON_VIEW_NOT_FOUND,
+                reason_code=EngineReason.VIEW_NOT_FOUND,
             )
 
         ordered_views = []
@@ -158,7 +156,7 @@ class RecordCandidateBuilder:
             raise DNSRuleRenderedValueLookupError(
                 field_name="zone_template",
                 message=f"Zone '{zone_name}' does not exist in selected DNS view(s): {', '.join(sorted(missing_view_names))}",
-                reason_code=REASON_ZONE_NOT_FOUND,
+                reason_code=EngineReason.ZONE_NOT_FOUND,
             )
 
         return zones

@@ -7,18 +7,7 @@ from django.db import IntegrityError
 from jinja2 import TemplateError
 
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
-from nautobot_dns_models.rules.engine.constants import (
-    REASON_CANDIDATE_ERROR,
-    REASON_CANDIDATE_TEMPLATE_ERROR,
-    REASON_INTERFACE_PARENT_FALLBACK_FAILED,
-    REASON_INVALID_ADDRESS_UUID,
-    REASON_RECORD_INTEGRITY_ERROR,
-    REASON_RECORD_VALIDATION_ERROR,
-    REASON_RULE_PROCESSING_ERROR,
-    REASON_VIEW_NOT_FOUND,
-    REASON_VIEW_TEMPLATE_EMPTY,
-    REASON_ZONE_NOT_FOUND,
-)
+from nautobot_dns_models.rules.engine.constants import EngineReason
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +19,12 @@ class EngineLogger:
         """Emit warning for invalid UUID tokens produced by candidate expansion."""
         logger.warning(
             "dnsrule_candidate_skipped reason=%s rule=%s invalid_address_id=%s",
-            REASON_INVALID_ADDRESS_UUID,
+            EngineReason.INVALID_ADDRESS_UUID,
             rule.name,
             invalid_address_id,
             extra={
                 "event": "dnsrule_engine",
-                "reason_code": REASON_INVALID_ADDRESS_UUID,
+                "reason_code": str(EngineReason.INVALID_ADDRESS_UUID),
                 "phase": phase,
                 "rule_id": str(rule.pk),
                 "rule_name": rule.name,
@@ -54,7 +43,7 @@ class EngineLogger:
             parent_type,
             extra={
                 "event": "dnsrule_engine",
-                "reason_code": REASON_INTERFACE_PARENT_FALLBACK_FAILED,
+                "reason_code": str(EngineReason.INTERFACE_PARENT_FALLBACK_FAILED),
                 "phase": phase,
                 "source_ct": self._safe_model_label(source_obj),
                 "source_id": str(source_obj.pk),
@@ -66,7 +55,7 @@ class EngineLogger:
 
     def log_rule_processing_error(self, rule, source_obj, exc, phase, cleanup=False):
         """Emit hybrid warning for top-level rule processing failures."""
-        reason_code = self._infer_reason_code(exc, REASON_RULE_PROCESSING_ERROR)
+        reason_code = self._infer_reason_code(exc, EngineReason.RULE_PROCESSING_ERROR)
         logger.warning(
             "dnsrule_rule_failed reason=%s rule=%s source=%s:%s cleanup=%s error=%s",
             reason_code,
@@ -87,7 +76,7 @@ class EngineLogger:
 
     def log_candidate_skip(self, rule, source_obj, record_data, exc, phase):
         """Emit hybrid warning for per-candidate skip decisions."""
-        reason_code = self._infer_reason_code(exc, REASON_CANDIDATE_ERROR)
+        reason_code = self._infer_reason_code(exc, EngineReason.CANDIDATE_ERROR)
         logger.warning(
             "dnsrule_candidate_skipped reason=%s rule=%s source=%s:%s addr=%s error=%s",
             reason_code,
@@ -109,7 +98,9 @@ class EngineLogger:
     def log_record_create_failure(self, rule, source_obj, record_data, exc, phase):
         """Emit hybrid warning for record creation failures."""
         reason_code = (
-            REASON_RECORD_INTEGRITY_ERROR if isinstance(exc, IntegrityError) else REASON_RECORD_VALIDATION_ERROR
+            EngineReason.RECORD_INTEGRITY_ERROR
+            if isinstance(exc, IntegrityError)
+            else EngineReason.RECORD_VALIDATION_ERROR
         )
         logger.warning(
             "dnsrule_record_create_failed reason=%s rule=%s source=%s:%s addr=%s error=%s",
@@ -132,7 +123,9 @@ class EngineLogger:
     def log_record_update_failure(self, rule, source_obj, record_data, exc, phase):
         """Emit hybrid warning for record update failures."""
         reason_code = (
-            REASON_RECORD_INTEGRITY_ERROR if isinstance(exc, IntegrityError) else REASON_RECORD_VALIDATION_ERROR
+            EngineReason.RECORD_INTEGRITY_ERROR
+            if isinstance(exc, IntegrityError)
+            else EngineReason.RECORD_VALIDATION_ERROR
         )
         logger.warning(
             "dnsrule_record_update_failed reason=%s rule=%s source=%s:%s addr=%s error=%s",
@@ -170,25 +163,25 @@ class EngineLogger:
         if isinstance(exc, DNSRuleTemplateRenderedEmptyError):
             message = str(exc)
             if "view_template" in message:
-                return REASON_VIEW_TEMPLATE_EMPTY
+                return EngineReason.VIEW_TEMPLATE_EMPTY
 
-            return REASON_CANDIDATE_TEMPLATE_ERROR
+            return EngineReason.CANDIDATE_TEMPLATE_ERROR
 
         if isinstance(exc, TemplateError):
-            return REASON_CANDIDATE_TEMPLATE_ERROR
+            return EngineReason.CANDIDATE_TEMPLATE_ERROR
 
         if isinstance(exc, ValidationError):
             message_dict = getattr(exc, "message_dict", {})
             view_errors = " ".join(message_dict.get("view_template", []))
             if "rendered no DNS view names" in view_errors:
-                return REASON_VIEW_TEMPLATE_EMPTY
+                return EngineReason.VIEW_TEMPLATE_EMPTY
 
             if "not found from view_template" in view_errors:
-                return REASON_VIEW_NOT_FOUND
+                return EngineReason.VIEW_NOT_FOUND
 
             zone_errors = " ".join(message_dict.get("zone_template", []))
             if "does not exist in selected DNS view" in zone_errors:
-                return REASON_ZONE_NOT_FOUND
+                return EngineReason.ZONE_NOT_FOUND
 
         return default_reason
 
@@ -205,7 +198,7 @@ class EngineLogger:
         """Build structured logging context for hybrid log output."""
         extra = {
             "event": "dnsrule_engine",
-            "reason_code": reason_code,
+            "reason_code": str(reason_code),
             "phase": phase,
             "rule_id": str(rule.pk),
             "rule_name": rule.name,
