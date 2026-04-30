@@ -277,58 +277,6 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["execution"]["targets_processed_count"], 1)
         self.assertEqual(result["execution"]["targets_failed_count"], 0)
 
-
-class ReconcileDNSJobJSONSchemaValidationTestCase(BaseRuleEngineMixin, TransactionTestCase):
-    """Validate DNS reconciliation job outputs against the published JSON schema."""
-
-    @classmethod
-    def setUpTestData(cls):
-        """Set up schema-validation fixtures and one enabled Interface rule."""
-        super().setUpTestData()
-        cls.interface.ip_addresses.set([cls.ip_addresses[0]])
-        cls.interface_rule = DNSRule.objects.create(
-            name="job-interface-schema",
-            content_type=ContentType.objects.get_for_model(Interface),
-            record_type="A",
-            zone_template="example.com",
-            name_template="{{ obj.device.name }}-{{ obj.name }}",
-            value_template="{{ obj.ip_addresses.all() }}",
-        )
-
-    def setUp(self):
-        """Rebuild fixtures per test under TransactionTestCase semantics."""
-        ContentType.objects.clear_cache()
-        TransactionTestCase.setUp(self)
-        type(self).setUpTestData()
-        BaseRuleEngineMixin.setUp(self)
-
-    @staticmethod
-    def _load_result_schema():
-        """Load and parse the canonical reconcile job result JSON schema."""
-        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "reconcile_dns_job_result.schema.json"
-        return json.loads(schema_path.read_text(encoding="utf-8"))
-
-    def test_object_result_matches_json_schema(self):
-        """Successful object job output should validate against the published JSON schema."""
-        result = ReconcileDNSObjectJob().run(
-            dryrun=True,
-            object_model=ContentType.objects.get_for_model(Interface),
-            object_id=str(self.interface.id),
-        )
-        jsonschema.validate(instance=result, schema=self._load_result_schema())
-
-    def test_bulk_result_matches_json_schema(self):
-        """Successful bulk job output should validate against the published JSON schema."""
-        result = ReconcileDNSBulkJob().run(
-            dryrun=True,
-            source_models=[ContentType.objects.get_for_model(Interface)],
-            rules=[self.interface_rule],
-            limit=1,
-            batch_size=1,
-            fast_mode=True,
-        )
-        jsonschema.validate(instance=result, schema=self._load_result_schema())
-
     def test_single_object_parent_include_child_devices_creates_parent_and_child_device_records(self):
         """Single-object Device run with child-device expansion should create DNS records for parent and child devices."""
         DNSRule.objects.create(
@@ -2131,3 +2079,55 @@ class ScopeSelectionTestCase(BaseRuleEngineMixin, TransactionTestCase):
         }
         self.assertSetEqual(actual_ids, expected_ids)
         self.assertSetEqual(actual_ids, expected_ids_from_engine)
+
+
+class ReconcileDNSJobJSONSchemaValidationTestCase(BaseRuleEngineMixin, TransactionTestCase):
+    """Validate DNS reconciliation job outputs against the published JSON schema."""
+
+    @classmethod
+    def setUpTestData(cls):
+        """Set up schema-validation fixtures and one enabled Interface rule."""
+        super().setUpTestData()
+        cls.interface.ip_addresses.set([cls.ip_addresses[0]])
+        cls.interface_rule = DNSRule.objects.create(
+            name="job-interface-schema",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.device.name }}-{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+        )
+
+    def setUp(self):
+        """Rebuild fixtures per test under TransactionTestCase semantics."""
+        ContentType.objects.clear_cache()
+        TransactionTestCase.setUp(self)
+        type(self).setUpTestData()
+        BaseRuleEngineMixin.setUp(self)
+
+    @staticmethod
+    def _load_result_schema():
+        """Load and parse the canonical reconcile job result JSON schema."""
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "reconcile_dns_job_result.schema.json"
+        return json.loads(schema_path.read_text(encoding="utf-8"))
+
+    def test_object_result_matches_json_schema(self):
+        """Successful object job output should validate against the published JSON schema."""
+        result = ReconcileDNSObjectJob().run(
+            dryrun=True,
+            object_model=ContentType.objects.get_for_model(Interface),
+            object_id=str(self.interface.id),
+        )
+        jsonschema.validate(instance=result, schema=self._load_result_schema())
+
+    def test_bulk_result_matches_json_schema(self):
+        """Successful bulk job output should validate against the published JSON schema."""
+        result = ReconcileDNSBulkJob().run(
+            dryrun=True,
+            source_models=[ContentType.objects.get_for_model(Interface)],
+            rules=[self.interface_rule],
+            limit=1,
+            batch_size=1,
+            fast_mode=True,
+        )
+        jsonschema.validate(instance=result, schema=self._load_result_schema())
