@@ -15,7 +15,7 @@ from jinja2 import TemplateError
 from nautobot_dns_models.exceptions import DNSRecordContentTypeResolutionError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule, DNSRuleFailureState, DNSRuleRecord, DNSZone
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
-from nautobot_dns_models.rules.engine.constants import PHASE_CREATE, PHASE_UPDATE_RECONCILE
+from nautobot_dns_models.rules.engine.constants import EnginePhase
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.reconcile import ReconcilePlanner
 from nautobot_dns_models.rules.engine.strategies import UpdateResult
@@ -84,17 +84,19 @@ class RecordWriter:
 
             try:
                 desired_record_data_list = self._materializer.calculate_desired_record_data(
-                    rule, source_obj, phase=PHASE_CREATE
+                    rule, source_obj, phase=EnginePhase.CREATE
                 )
                 if not desired_record_data_list:
                     continue
 
                 created_records = self._create_records_from_data(
-                    source_obj, rule, desired_record_data_list, phase=PHASE_CREATE
+                    source_obj, rule, desired_record_data_list, phase=EnginePhase.CREATE
                 )
                 changed_record_count += len(created_records)
             except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
-                self._engine_logger.log_rule_processing_error(rule, source_obj, exc, phase=PHASE_CREATE, cleanup=False)
+                self._engine_logger.log_rule_processing_error(
+                    rule, source_obj, exc, phase=EnginePhase.CREATE, cleanup=False
+                )
                 continue
 
         return {
@@ -126,7 +128,7 @@ class RecordWriter:
                 unchanged_count += reconcile_summary["unchanged"]
             except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
                 self._engine_logger.log_rule_processing_error(
-                    rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
+                    rule, source_obj, exc, phase=EnginePhase.UPDATE_RECONCILE, cleanup=True
                 )
                 delete_count += self._cleanup_records_for_rule(rule, source_obj)
 
@@ -171,7 +173,7 @@ class RecordWriter:
 
         if desired_record_data is None:
             desired_record_data = self._materializer.calculate_desired_record_data(
-                rule, source_obj, phase=PHASE_UPDATE_RECONCILE
+                rule, source_obj, phase=EnginePhase.UPDATE_RECONCILE
             )
 
         existing_records_by_identity = {}
@@ -212,7 +214,7 @@ class RecordWriter:
                 source_obj=source_obj,
                 tracking_record=tracking_record,
                 desired_record_data=desired_record,
-                phase=PHASE_UPDATE_RECONCILE,
+                phase=EnginePhase.UPDATE_RECONCILE,
                 bulk_update_collector=bulk_update_collector,
             )
             if update_result == UpdateResult.UPDATED:
@@ -226,7 +228,7 @@ class RecordWriter:
         if plan.records_to_create:
             records_to_create_data = [plan.desired_records_by_identity[key] for key in plan.records_to_create]
             created_records = self._create_records_from_data(
-                source_obj, rule, records_to_create_data, phase=PHASE_UPDATE_RECONCILE
+                source_obj, rule, records_to_create_data, phase=EnginePhase.UPDATE_RECONCILE
             )
 
         skipped_create = len(plan.records_to_create) - len(created_records)
@@ -265,7 +267,7 @@ class RecordWriter:
             for tracking_row in rows:
                 tracking_row._prefetched_dns_record = records_by_id.get(tracking_row.dns_record_object_id)  # pylint: disable=protected-access
 
-    def _create_records_from_data(self, source_obj, rule, record_data_list, phase=PHASE_CREATE):
+    def _create_records_from_data(self, source_obj, rule, record_data_list, phase=EnginePhase.CREATE):
         if self._batched_create_state.active:
             return self._queue_records_for_batched_create(
                 rule=rule, source_obj=source_obj, record_data_list=record_data_list, phase=phase
@@ -275,7 +277,7 @@ class RecordWriter:
             rule=rule, source_obj=source_obj, record_data_list=record_data_list, phase=phase
         )
 
-    def _create_records_for_object(self, source_obj, rule, record_data_list, phase=PHASE_CREATE):
+    def _create_records_for_object(self, source_obj, rule, record_data_list, phase=EnginePhase.CREATE):
         if not record_data_list:
             return []
 

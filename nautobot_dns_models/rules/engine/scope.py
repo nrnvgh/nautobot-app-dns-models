@@ -4,7 +4,7 @@ from nautobot.dcim import models as dcim_models
 from nautobot.ipam import models as ipam_models
 from nautobot.virtualization import models as virtualization_models
 
-from nautobot_dns_models.rules.engine.constants import PHASE_UNKNOWN
+from nautobot_dns_models.rules.engine.constants import EnginePhase
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 
 
@@ -37,7 +37,7 @@ class ScopeResolver:
                 source_obj=source_obj,
                 resolution_field="location",
                 parent_type=type(parent).__name__,
-                phase=PHASE_UNKNOWN,
+                phase=EnginePhase.UNKNOWN,
             )
             return None
 
@@ -90,7 +90,7 @@ class ScopeResolver:
                 source_obj=source_obj,
                 resolution_field="tenant",
                 parent_type=type(parent).__name__,
-                phase=PHASE_UNKNOWN,
+                phase=EnginePhase.UNKNOWN,
             )
             return None
 

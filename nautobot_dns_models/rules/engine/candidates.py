@@ -9,10 +9,10 @@ from nautobot_dns_models import models as dns_models
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSZone
 from nautobot_dns_models.rules.engine.constants import (
-    PHASE_CANDIDATE_EXPANSION,
     REASON_VIEW_NOT_FOUND,
     REASON_VIEW_TEMPLATE_EMPTY,
     REASON_ZONE_NOT_FOUND,
+    EnginePhase,
 )
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.template_proxies import wrap_for_template
@@ -65,7 +65,7 @@ class RecordCandidateBuilder:
                 self._engine_logger.log_candidate_invalid_address_uuid(
                     rule=rule,
                     invalid_address_id=address_id,
-                    phase=PHASE_CANDIDATE_EXPANSION,
+                    phase=EnginePhase.CANDIDATE_EXPANSION,
                 )
                 continue
 

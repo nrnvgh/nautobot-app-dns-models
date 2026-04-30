@@ -39,10 +39,10 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.engine import DNSRuleEngine, ExecutionMode
 from nautobot_dns_models.rules.engine.constants import (
-    PHASE_UPDATE_RECONCILE,
     REASON_VIEW_NOT_FOUND,
     REASON_VIEW_TEMPLATE_EMPTY,
     REASON_ZONE_NOT_FOUND,
+    EnginePhase,
 )
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.resolver import RuleResolver
@@ -4066,7 +4066,7 @@ class LoggingObservabilityTestCase(BaseRuleEngineMixin, TestCase):
         log_error_mock.assert_called_once()
         cleanup_rule_mock.assert_called_once_with(rule, self.interface)
         _, kwargs = log_error_mock.call_args
-        self.assertEqual(kwargs["phase"], PHASE_UPDATE_RECONCILE)
+        self.assertEqual(kwargs["phase"], EnginePhase.UPDATE_RECONCILE)
         self.assertTrue(kwargs["cleanup"])
 
     def test_get_dns_views_for_rule_empty_rendered_names_raises_validation_error(self):

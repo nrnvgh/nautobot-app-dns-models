@@ -14,7 +14,7 @@ from nautobot_dns_models.exceptions import (
 )
 from nautobot_dns_models.models import DNSRuleRecord, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name_if_enabled
-from nautobot_dns_models.rules.engine.constants import PHASE_UPDATE_RECONCILE
+from nautobot_dns_models.rules.engine.constants import EnginePhase
 from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics, PipelineBatchMetrics
@@ -263,7 +263,7 @@ class EnginePipeline:
             )
         except (TemplateError, DNSRuleTemplateRenderedEmptyError, DNSZone.DoesNotExist, ValueError) as exc:
             self._engine_logger.log_rule_processing_error(
-                rule, source_obj, exc, phase=PHASE_UPDATE_RECONCILE, cleanup=True
+                rule, source_obj, exc, phase=EnginePhase.UPDATE_RECONCILE, cleanup=True
             )
             return True, True, None
 
@@ -325,7 +325,7 @@ class EnginePipeline:
                         ValueError,
                     ) as exc:
                         self._engine_logger.log_candidate_skip(
-                            rule, source_obj, record_data, exc, phase=PHASE_UPDATE_RECONCILE
+                            rule, source_obj, record_data, exc, phase=EnginePhase.UPDATE_RECONCILE
                         )
                         continue
 
