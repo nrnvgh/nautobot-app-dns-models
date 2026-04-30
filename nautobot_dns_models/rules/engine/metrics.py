@@ -84,7 +84,7 @@ class PipelineBatchMetrics:
     """Per-batch counters and stage timing prior to accumulation.
 
     Attributes:
-        objects: Number of source objects included in this pipeline batch.
+        source_object_count: Number of source objects included in this pipeline batch.
         tracking_rows: Number of `DNSRuleRecord` rows fetched for this batch.
         pending_rule_calculations: Number of deferred rule work items generated
             during planning for this batch.
@@ -101,7 +101,7 @@ class PipelineBatchMetrics:
         stage_metrics: Per-stage elapsed time accumulator for this batch.
     """
 
-    objects: int = 0
+    source_object_count: int = 0
     tracking_rows: int = 0
     pending_rule_calculations: int = 0
     pending_bulk_updates: int = 0
@@ -128,7 +128,7 @@ class PipelineMetrics:
     Attributes:
         batches: Number of processed pipeline batches accumulated in this
             metrics instance.
-        objects_total: Total number of source objects processed across all
+        source_object_count_total: Total number of source objects processed across all
             recorded batches.
         tracking_rows_total: Total number of fetched tracking rows across all
             recorded batches.
@@ -149,7 +149,7 @@ class PipelineMetrics:
     """
 
     batches: int = 0
-    objects_total: int = 0
+    source_object_count_total: int = 0
     tracking_rows_total: int = 0
     pending_rule_calculations_total: int = 0
     pending_bulk_updates_total: int = 0
@@ -162,7 +162,7 @@ class PipelineMetrics:
     def record_batch(self, batch_metrics):
         """Accumulate one batch into running totals."""
         self.batches += 1
-        self.objects_total += batch_metrics.objects
+        self.source_object_count_total += batch_metrics.source_object_count
         self.tracking_rows_total += batch_metrics.tracking_rows
         self.pending_rule_calculations_total += batch_metrics.pending_rule_calculations
         self.pending_bulk_updates_total += batch_metrics.pending_bulk_updates
@@ -178,7 +178,7 @@ class PipelineMetrics:
         stage_metrics = self.stage_metrics.as_dict(rounded=True)
         metrics = {
             "batches": self.batches,
-            "objects_total": self.objects_total,
+            "source_object_count_total": self.source_object_count_total,
             "tracking_rows_total": self.tracking_rows_total,
             "pending_rule_calculations_total": self.pending_rule_calculations_total,
             "pending_bulk_updates_total": self.pending_bulk_updates_total,
@@ -190,7 +190,7 @@ class PipelineMetrics:
         }
         batches = metrics["batches"] or 1
         metrics["avg_per_batch"] = {
-            "objects": round(metrics["objects_total"] / batches, 3),
+            "source_object_count": round(metrics["source_object_count_total"] / batches, 3),
             "tracking_rows": round(metrics["tracking_rows_total"] / batches, 3),
             "pending_rule_calculations": round(metrics["pending_rule_calculations_total"] / batches, 3),
             "pending_bulk_updates": round(metrics["pending_bulk_updates_total"] / batches, 3),

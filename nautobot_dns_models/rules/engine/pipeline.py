@@ -67,7 +67,7 @@ class EnginePipeline:
         if not source_objects:
             return []
 
-        batch_metrics = PipelineBatchMetrics(objects=len(source_objects))
+        batch_metrics = PipelineBatchMetrics(source_object_count=len(source_objects))
         total_started_at = perf_counter()
         logger.info("[process_objects_pipeline] Starting batch of %d objects", len(source_objects))
 

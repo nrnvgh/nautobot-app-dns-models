@@ -42,7 +42,7 @@
           "additionalProperties": false,
           "required": [
             "batches",
-            "objects_total",
+            "source_object_count_total",
             "tracking_rows_total",
             "pending_rule_calculations_total",
             "pending_bulk_updates_total",
@@ -55,7 +55,7 @@
           ],
           "properties": {
             "batches": { "type": "integer", "minimum": 0 },
-            "objects_total": { "type": "number", "minimum": 0 },
+            "source_object_count_total": { "type": "number", "minimum": 0 },
             "tracking_rows_total": { "type": "number", "minimum": 0 },
             "pending_rule_calculations_total": { "type": "number", "minimum": 0 },
             "pending_bulk_updates_total": { "type": "number", "minimum": 0 },
@@ -79,7 +79,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "objects",
+                "source_object_count",
                 "tracking_rows",
                 "pending_rule_calculations",
                 "pending_bulk_updates",
@@ -90,7 +90,7 @@
                 "stage_metrics"
               ],
               "properties": {
-                "objects": { "type": "number", "minimum": 0 },
+                "source_object_count": { "type": "number", "minimum": 0 },
                 "tracking_rows": { "type": "number", "minimum": 0 },
                 "pending_rule_calculations": { "type": "number", "minimum": 0 },
                 "pending_bulk_updates": { "type": "number", "minimum": 0 },
