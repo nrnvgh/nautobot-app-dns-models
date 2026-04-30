@@ -38,7 +38,7 @@ from nautobot_dns_models.models import (
 )
 from nautobot_dns_models.normalization import normalize_dns_name
 from nautobot_dns_models.rules.engine import DNSRuleEngine, ExecutionMode
-from nautobot_dns_models.rules.engine.constants import (
+from nautobot_dns_models.rules.engine.enums import (
     EnginePhase,
     EngineReason,
 )

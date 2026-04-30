@@ -7,7 +7,7 @@ from django.db import IntegrityError
 from jinja2 import TemplateError
 
 from nautobot_dns_models.exceptions import DNSRuleRenderedValueLookupError, DNSRuleTemplateRenderedEmptyError
-from nautobot_dns_models.rules.engine.constants import EngineReason
+from nautobot_dns_models.rules.engine.enums import EngineReason
 
 logger = logging.getLogger(__name__)
 

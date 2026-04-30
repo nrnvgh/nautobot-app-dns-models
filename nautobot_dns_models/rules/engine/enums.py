@@ -1,4 +1,4 @@
-"""Shared constants for DNS rule engine collaborators."""
+"""Shared enums for DNS rule engine collaborators."""
 
 from enum import Enum
 

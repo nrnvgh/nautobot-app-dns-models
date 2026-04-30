@@ -15,7 +15,7 @@ from jinja2 import TemplateError
 from nautobot_dns_models.exceptions import DNSRecordContentTypeResolutionError, DNSRuleTemplateRenderedEmptyError
 from nautobot_dns_models.models import DNSRule, DNSRuleFailureState, DNSRuleRecord, DNSZone
 from nautobot_dns_models.record_type_mapping import get_dns_record_model_class
-from nautobot_dns_models.rules.engine.constants import EnginePhase
+from nautobot_dns_models.rules.engine.enums import EnginePhase
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.reconcile import ReconcilePlanner
 from nautobot_dns_models.rules.engine.strategies import UpdateResult

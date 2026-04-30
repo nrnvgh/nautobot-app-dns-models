@@ -4,7 +4,7 @@ from nautobot.dcim import models as dcim_models
 from nautobot.ipam import models as ipam_models
 from nautobot.virtualization import models as virtualization_models
 
-from nautobot_dns_models.rules.engine.constants import EnginePhase
+from nautobot_dns_models.rules.engine.enums import EnginePhase
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 
 
