@@ -27,18 +27,7 @@ class RuleSetSelector:
         location_conditions = django_models.Q(location=object_location) | django_models.Q(location__isnull=True)
         tenant_conditions = django_models.Q(tenant=object_tenant) | django_models.Q(tenant__isnull=True)
         all_rules = list(base_query.filter(location_conditions & tenant_conditions))
-        # rules_by_type = self._get_rules_by_type(all_rules, object_location, object_tenant)
-        rules_by_type = defaultdict(lambda: {"location_tenant": [], "location": [], "tenant": [], "global": []})
-        for rule in all_rules:
-            record_type = rule.record_type
-            if rule.location == object_location and rule.tenant == object_tenant:
-                rules_by_type[record_type]["location_tenant"].append(rule)
-            elif rule.location == object_location and rule.tenant is None:
-                rules_by_type[record_type]["location"].append(rule)
-            elif rule.location is None and rule.tenant == object_tenant:
-                rules_by_type[record_type]["tenant"].append(rule)
-            else:
-                rules_by_type[record_type]["global"].append(rule)
+        rules_by_type = self._get_rules_by_type(all_rules, object_location, object_tenant)
 
         final_rule_pks = []
         for rules in rules_by_type.values():
