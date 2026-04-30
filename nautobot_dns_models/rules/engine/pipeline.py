@@ -14,7 +14,7 @@ from nautobot_dns_models.exceptions import (
 )
 from nautobot_dns_models.models import DNSRuleRecord, DNSZone
 from nautobot_dns_models.normalization import normalize_dns_name_if_enabled
-from nautobot_dns_models.rules.engine.constants import EnginePhase
+from nautobot_dns_models.rules.engine.enums import EnginePhase, EngineReason
 from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
 from nautobot_dns_models.rules.engine.logging import DEFAULT_ENGINE_LOGGER
 from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics, PipelineBatchMetrics
@@ -24,6 +24,9 @@ from nautobot_dns_models.rules.engine.types import (
     FetchTrackingDataResult,
     PlanWorkResult,
     PreparedReconcileEntry,
+    RuleFailureInfo,
+    RulePlanningOutcome,
+    RulePlanningStatus,
     RuleWorkItem,
 )
 
@@ -105,7 +108,8 @@ class EnginePipeline:
                 failed_updates_by_object_id=flush_result.failed_updates_by_object_id,
             )
 
-        batch_metrics.stage_metrics.total = perf_counter() - total_started_at
+        batch_metrics.finalize_total(total_started_at)
+
         batch_metrics.tracking_rows = len(fetch_result.tracking_rows)
         batch_metrics.pending_rule_calculations = plan_result.pending_rule_calculations
         batch_metrics.pending_bulk_updates = sum(
@@ -216,28 +220,28 @@ class EnginePipeline:
         )
 
         for rule in rules:
-            needs_records, failed, work_item = self._build_rule_work_item(
+            outcome = self._build_rule_work_item(
                 source_obj=source_obj,
                 rule=rule,
                 batch_address_ids=batch_address_ids,
             )
-            if not needs_records:
+            if outcome.status == RulePlanningStatus.NOT_NEEDED:
                 continue
 
-            prepared_entry.needed_rule_ids.add(rule.pk)
-            if failed:
-                prepared_entry.failed_rule_ids.add(rule.pk)
+            if outcome.status == RulePlanningStatus.FAILED:
+                prepared_entry.mark_rule_failed(rule.pk, failure=outcome.failure)
                 continue
 
-            if work_item is not None:
-                rule_work_items[rule.pk].append(work_item)
+            prepared_entry.mark_rule_needed(rule.pk)
+            if outcome.work_item is not None:
+                rule_work_items[rule.pk].append(outcome.work_item)
 
         return prepared_entry
 
     def _build_rule_work_item(self, *, source_obj, rule, batch_address_ids):
         """Build deferred work for one object/rule pair."""
         if not self._resolver.object_needs_dns_records_for_rule(source_obj, rule):
-            return False, False, None
+            return RulePlanningOutcome(status=RulePlanningStatus.NOT_NEEDED)
 
         try:
             base_context = {"obj": wrap_for_template(source_obj)}
@@ -250,10 +254,9 @@ class EnginePipeline:
             if requires_ip_context:
                 self._collect_batch_address_ids(record_variations, batch_address_ids)
 
-            return (
-                True,
-                False,
-                RuleWorkItem(
+            return RulePlanningOutcome(
+                status=RulePlanningStatus.READY,
+                work_item=RuleWorkItem(
                     object_id=source_obj.pk,
                     rule=rule,
                     base_context=base_context,
@@ -265,7 +268,27 @@ class EnginePipeline:
             self._engine_logger.log_rule_processing_error(
                 rule, source_obj, exc, phase=EnginePhase.UPDATE_RECONCILE, cleanup=True
             )
-            return True, True, None
+            return RulePlanningOutcome(
+                status=RulePlanningStatus.FAILED,
+                failure=self._build_rule_failure_info(exc, phase=EnginePhase.UPDATE_RECONCILE),
+            )
+
+    def _build_rule_failure_info(self, exc, *, phase):
+        """Build structured failure info from one planning/materialization exception."""
+        reason_code = EngineReason.RULE_PROCESSING_ERROR
+        if isinstance(exc, DNSRuleTemplateRenderedEmptyError):
+            if "view_template" in str(exc):
+                reason_code = EngineReason.VIEW_TEMPLATE_EMPTY
+            else:
+                reason_code = EngineReason.CANDIDATE_TEMPLATE_ERROR
+        elif isinstance(exc, TemplateError):
+            reason_code = EngineReason.CANDIDATE_TEMPLATE_ERROR
+
+        return RuleFailureInfo(
+            reason_code=reason_code,
+            phase=phase,
+            message=str(exc),
+        )
 
     @staticmethod
     def _collect_batch_address_ids(record_variations, batch_address_ids):
@@ -282,9 +305,7 @@ class EnginePipeline:
         batch_address_ids,
     ):
         """Stage 3: materialize desired record data into prepared entries."""
-        preloaded_ip_by_id = {}
-        if batch_address_ids:
-            preloaded_ip_by_id = ipam_models.IPAddress.objects.in_bulk(batch_address_ids)
+        preloaded_ip_by_id = self._preload_batch_ip_addresses(batch_address_ids)
 
         for work_items in rule_work_items.values():
             for pending in work_items:
@@ -292,44 +313,63 @@ class EnginePipeline:
                 if prepared_entry is None:
                     continue
 
-                rule = pending.rule
-                source_obj = prepared_entry.source_obj
-                base_context = pending.base_context
-                record_variations = pending.record_variations
-                requires_ip_context = pending.requires_ip_context
-                desired_by_rule_id = prepared_entry.desired_by_rule_id
-                failed_rule_ids = prepared_entry.failed_rule_ids
-
-                if rule.pk in failed_rule_ids:
+                if prepared_entry.has_failed_rule(pending.rule.pk):
                     continue
 
-                all_record_data = []
-                for record_data in record_variations:
-                    try:
-                        if requires_ip_context:
-                            record_context = self._materializer.build_record_context_with_preloaded_ips(
-                                base_context, record_data, preloaded_ip_by_id
-                            )
-                        else:
-                            record_context = dict(base_context)
-                            record_context["record"] = record_data.copy()
+                desired_records = self._materialize_work_item_records(
+                    pending=pending,
+                    source_obj=prepared_entry.source_obj,
+                    preloaded_ip_by_id=preloaded_ip_by_id,
+                )
+                prepared_entry.set_desired_records(pending.rule.pk, desired_records)
 
-                        selected_views = self._materializer.get_dns_views_for_rule(rule, record_context)
-                        zones = self._materializer.get_zones_for_rule(rule, record_context, selected_views)
-                        for zone in zones:
-                            all_record_data.append({**record_data, "zone": zone})
-                    except (
-                        DNSRuleTemplateRenderedEmptyError,
-                        DNSRuleRenderedValueLookupError,
-                        TemplateError,
-                        ValueError,
-                    ) as exc:
-                        self._engine_logger.log_candidate_skip(
-                            rule, source_obj, record_data, exc, phase=EnginePhase.UPDATE_RECONCILE
-                        )
-                        continue
+    @staticmethod
+    def _preload_batch_ip_addresses(batch_address_ids):
+        """Preload batch IP objects for record-context expansion."""
+        if not batch_address_ids:
+            return {}
 
-                desired_by_rule_id[rule.pk] = all_record_data
+        return ipam_models.IPAddress.objects.in_bulk(batch_address_ids)
+
+    def _materialize_work_item_records(self, *, pending, source_obj, preloaded_ip_by_id):
+        """Materialize one deferred work item into desired record rows."""
+        all_record_data = []
+        for record_data in pending.record_variations:
+            try:
+                record_context = self._build_materialization_context(
+                    base_context=pending.base_context,
+                    record_data=record_data,
+                    requires_ip_context=pending.requires_ip_context,
+                    preloaded_ip_by_id=preloaded_ip_by_id,
+                )
+                selected_views = self._materializer.get_dns_views_for_rule(pending.rule, record_context)
+                zones = self._materializer.get_zones_for_rule(pending.rule, record_context, selected_views)
+                for zone in zones:
+                    all_record_data.append({**record_data, "zone": zone})
+            except (
+                DNSRuleTemplateRenderedEmptyError,
+                DNSRuleRenderedValueLookupError,
+                TemplateError,
+                ValueError,
+            ) as exc:
+                self._engine_logger.log_candidate_skip(
+                    pending.rule, source_obj, record_data, exc, phase=EnginePhase.UPDATE_RECONCILE
+                )
+                continue
+
+        return all_record_data
+
+    def _build_materialization_context(self, *, base_context, record_data, requires_ip_context, preloaded_ip_by_id):
+        """Build per-record materialization context with optional preloaded IP data."""
+        if requires_ip_context:
+            return self._materializer.build_record_context_with_preloaded_ips(
+                base_context, record_data, preloaded_ip_by_id
+            )
+
+        return {
+            **base_context,
+            "record": record_data.copy(),
+        }
 
     def _apply_changes(self, prepared_entries):
         """Stage 4: apply prepared reconcile entries and queue rename updates."""
@@ -338,10 +378,7 @@ class EnginePipeline:
         pending_bulk_deletes = defaultdict(set)
         summaries = []
         create_flush_result = None
-        self._batched_create_state.pending_by_record_class.clear()
-        self._batched_create_state.active = True
-
-        try:
+        with self._batched_create_state.activate():
             for entry in prepared_entries:
                 summaries.append(
                     self._apply_prepared_reconcile_entry(
@@ -354,9 +391,6 @@ class EnginePipeline:
             self._writer.flush_bulk_delete_queue(pending_bulk_deletes)
             if self._batched_create_state.active:
                 create_flush_result = self._writer.flush_batched_create_queue()
-        finally:
-            self._batched_create_state.active = False
-            self._batched_create_state.pending_by_record_class.clear()
 
         return ApplyChangesResult(
             summaries=summaries,

@@ -120,6 +120,10 @@ class PipelineBatchMetrics:
         finally:
             self.stage_metrics.add(stage_name, perf_counter() - started_at)
 
+    def finalize_total(self, started_at):
+        """Finalize batch total time from a start timestamp."""
+        self.stage_metrics.total = perf_counter() - started_at
+
 
 @dataclass
 class PipelineMetrics:

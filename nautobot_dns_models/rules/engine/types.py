@@ -1,7 +1,11 @@
 """Typed internal payloads for the DNS rule engine pipeline."""
 
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from enum import Enum
+
+from nautobot_dns_models.rules.engine.enums import EnginePhase, EngineReason
 
 
 @dataclass
@@ -20,6 +24,35 @@ class BatchedCreateState:
     active: bool = False
     # Avoids unnecessary failure-state cleanup probes in happy-path create runs.
     create_failures_recorded: bool = False
+
+    @contextmanager
+    def activate(self):
+        """Enable batched-create mode for the duration of a context manager."""
+        self.pending_by_record_class.clear()
+        self.active = True
+
+        try:
+            yield
+        finally:
+            self.active = False
+            self.pending_by_record_class.clear()
+
+
+class RulePlanningStatus(str, Enum):
+    """Typed status for per-rule planning outcomes."""
+
+    NOT_NEEDED = "not_needed"
+    READY = "ready"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class RuleFailureInfo:
+    """Structured planning/materialization failure classification."""
+
+    reason_code: EngineReason
+    phase: EnginePhase
+    message: str | None = None
 
 
 @dataclass
@@ -55,6 +88,15 @@ class RuleWorkItem:
     requires_ip_context: bool
 
 
+@dataclass(frozen=True)
+class RulePlanningOutcome:
+    """Planning result for a single object/rule pair."""
+
+    status: RulePlanningStatus
+    work_item: RuleWorkItem | None = None
+    failure: RuleFailureInfo | None = None
+
+
 @dataclass
 class PreparedReconcileEntry:
     """Prepared per-object reconcile state that survives stage boundaries.
@@ -73,7 +115,32 @@ class PreparedReconcileEntry:
     needed_rule_ids: set = field(default_factory=set)
     desired_by_rule_id: dict = field(default_factory=dict)
     failed_rule_ids: set = field(default_factory=set)
+    failed_rule_by_id: dict = field(default_factory=dict)
     tracking_rows: list = field(default_factory=list)
+
+    def mark_rule_needed(self, rule_id):
+        """Mark a rule as needed for reconciliation work."""
+        self.needed_rule_ids.add(rule_id)
+
+    def mark_rule_failed(self, rule_id, *, failure=None):
+        """Mark a rule as failed and clear any desired records for it."""
+        self.needed_rule_ids.add(rule_id)
+        self.failed_rule_ids.add(rule_id)
+        if failure is not None:
+            self.failed_rule_by_id[rule_id] = failure
+        self.desired_by_rule_id.pop(rule_id, None)
+
+    def set_desired_records(self, rule_id, records):
+        """Set desired records for one non-failed, needed rule."""
+        if rule_id not in self.needed_rule_ids:
+            raise ValueError(f"Rule id {rule_id} is not marked as needed.")
+        if rule_id in self.failed_rule_ids:
+            raise ValueError(f"Rule id {rule_id} is marked as failed.")
+        self.desired_by_rule_id[rule_id] = records
+
+    def has_failed_rule(self, rule_id):
+        """Return whether rule id is in failed state."""
+        return rule_id in self.failed_rule_ids
 
 
 @dataclass
