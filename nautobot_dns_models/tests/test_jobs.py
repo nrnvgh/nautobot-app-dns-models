@@ -259,19 +259,6 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         self.assertEqual(result["reconciliation"]["dns_record_total_count"], 3)
         self.assertEqual(result["reconciliation"]["targets_noop_count"], 0)
 
-    def test_result_matches_json_schema(self):
-        """Successful job output should validate against the published JSON schema."""
-        job = ReconcileDNSObjectJob()
-        result = job.run(
-            dryrun=True,
-            object_model=ContentType.objects.get_for_model(Interface),
-            object_id=str(self.interface.id),
-        )
-
-        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "reconcile_dns_job_result.schema.json"
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        jsonschema.validate(instance=result, schema=schema)
-
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_object_job_path_uses_process_object_not_pipeline(self, mock_dns_rule_engine_class):
         """Object reconcile job flow should call process_object and not process_objects_pipeline."""
@@ -289,6 +276,58 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         rule_engine.process_objects_pipeline.assert_not_called()
         self.assertEqual(result["execution"]["targets_processed_count"], 1)
         self.assertEqual(result["execution"]["targets_failed_count"], 0)
+
+
+class ReconcileDNSJobJSONSchemaValidationTestCase(BaseRuleEngineMixin, TransactionTestCase):
+    """Validate DNS reconciliation job outputs against the published JSON schema."""
+
+    @classmethod
+    def setUpTestData(cls):
+        """Set up schema-validation fixtures and one enabled Interface rule."""
+        super().setUpTestData()
+        cls.interface.ip_addresses.set([cls.ip_addresses[0]])
+        cls.interface_rule = DNSRule.objects.create(
+            name="job-interface-schema",
+            content_type=ContentType.objects.get_for_model(Interface),
+            record_type="A",
+            zone_template="example.com",
+            name_template="{{ obj.device.name }}-{{ obj.name }}",
+            value_template="{{ obj.ip_addresses.all() }}",
+        )
+
+    def setUp(self):
+        """Rebuild fixtures per test under TransactionTestCase semantics."""
+        ContentType.objects.clear_cache()
+        TransactionTestCase.setUp(self)
+        type(self).setUpTestData()
+        BaseRuleEngineMixin.setUp(self)
+
+    @staticmethod
+    def _load_result_schema():
+        """Load and parse the canonical reconcile job result JSON schema."""
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "reconcile_dns_job_result.schema.json"
+        return json.loads(schema_path.read_text(encoding="utf-8"))
+
+    def test_object_result_matches_json_schema(self):
+        """Successful object job output should validate against the published JSON schema."""
+        result = ReconcileDNSObjectJob().run(
+            dryrun=True,
+            object_model=ContentType.objects.get_for_model(Interface),
+            object_id=str(self.interface.id),
+        )
+        jsonschema.validate(instance=result, schema=self._load_result_schema())
+
+    def test_bulk_result_matches_json_schema(self):
+        """Successful bulk job output should validate against the published JSON schema."""
+        result = ReconcileDNSBulkJob().run(
+            dryrun=True,
+            source_models=[ContentType.objects.get_for_model(Interface)],
+            rules=[self.interface_rule],
+            limit=1,
+            batch_size=1,
+            fast_mode=True,
+        )
+        jsonschema.validate(instance=result, schema=self._load_result_schema())
 
     def test_single_object_parent_include_child_devices_creates_parent_and_child_device_records(self):
         """Single-object Device run with child-device expansion should create DNS records for parent and child devices."""
@@ -452,7 +491,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         rule_engine.process_objects_pipeline.return_value = []
         rule_engine.get_pipeline_metrics.return_value = {
             "batches": 0,
-            "objects_total": 0,
+            "source_object_count_total": 0,
             "tracking_rows_total": 0,
             "pending_rule_calculations_total": 0,
             "pending_bulk_updates_total": 0,
@@ -462,7 +501,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             "update_failure_recorded_count_total": 0,
             "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             "avg_per_batch": {
-                "objects": 0,
+                "source_object_count": 0,
                 "tracking_rows": 0,
                 "pending_rule_calculations": 0,
                 "pending_bulk_updates": 0,
@@ -490,7 +529,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         rule_engine.process_objects_pipeline.return_value = []
         rule_engine.get_pipeline_metrics.return_value = {
             "batches": 0,
-            "objects_total": 0,
+            "source_object_count_total": 0,
             "tracking_rows_total": 0,
             "pending_rule_calculations_total": 0,
             "pending_bulk_updates_total": 0,
@@ -500,7 +539,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             "update_failure_recorded_count_total": 0,
             "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             "avg_per_batch": {
-                "objects": 0,
+                "source_object_count": 0,
                 "tracking_rows": 0,
                 "pending_rule_calculations": 0,
                 "pending_bulk_updates": 0,
@@ -534,7 +573,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         rule_engine.process_objects_pipeline.return_value = [ObjectProcessingMetrics()]
         rule_engine.get_pipeline_metrics.return_value = {
             "batches": 1,
-            "objects_total": 1,
+            "source_object_count_total": 1,
             "tracking_rows_total": 1,
             "pending_rule_calculations_total": 1,
             "pending_bulk_updates_total": 1,
@@ -544,7 +583,7 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             "update_failure_recorded_count_total": 2,
             "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             "avg_per_batch": {
-                "objects": 1,
+                "source_object_count": 1,
                 "tracking_rows": 1,
                 "pending_rule_calculations": 1,
                 "pending_bulk_updates": 1,
