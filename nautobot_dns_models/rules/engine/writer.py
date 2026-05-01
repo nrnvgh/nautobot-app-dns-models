@@ -27,10 +27,11 @@ logger = logging.getLogger(__name__)
 class BulkRenameFlushResult:
     """Aggregate counters and failure impacts from fast bulk-rename flush."""
 
-    fallback_chunk_attempt_count: int = 0
-    fallback_singleton_attempt_count: int = 0
-    fallback_singleton_failure_count: int = 0
-    update_failure_recorded_count: int = 0
+    update_fallback_chunk_attempt_count: int = 0
+    update_fallback_singleton_attempt_count: int = 0
+    update_fallback_singleton_failure_count: int = 0
+    new_update_failure_state_count: int = 0
+    existing_update_failure_state_count: int = 0
     failed_updates_by_object_id: dict = field(default_factory=dict)
 
 
@@ -40,6 +41,9 @@ class BulkCreateFlushResult:
 
     successful_creates_by_object_id: dict = field(default_factory=dict)
     failed_creates_by_object_id: dict = field(default_factory=dict)
+    create_fallback_chunk_attempt_count: int = 0
+    create_fallback_singleton_attempt_count: int = 0
+    create_fallback_singleton_failure_count: int = 0
 
 
 class RecordWriter:
@@ -391,6 +395,7 @@ class RecordWriter:
         if not queued_rows:
             return
 
+        result.create_fallback_chunk_attempt_count += 1
         try:
             self._bulk_create_entries(
                 record_class,
@@ -418,12 +423,14 @@ class RecordWriter:
         # TODO(phase-b): Batch successful singleton cleanup per fallback run instead of
         # deleting one failure-state row per successful singleton candidate.
         for queued_row in queued_rows:
+            result.create_fallback_singleton_attempt_count += 1
             if self._apply_singleton_create(record_class, queued_row):
                 self._record_singleton_create_success(queued_row, result)
                 self._delete_failure_state_for_candidate(queued_row)
                 continue
 
             self._batched_create_state.create_failures_recorded = True
+            result.create_fallback_singleton_failure_count += 1
             self._record_singleton_create_failure(queued_row, result)
             self._upsert_failure_state_for_candidate(queued_row)
 
@@ -543,7 +550,7 @@ class RecordWriter:
         if not update_entries:
             return
 
-        result.fallback_chunk_attempt_count += 1
+        result.update_fallback_chunk_attempt_count += 1
         try:
             logger.error("Binary search fallback for %s attempting bulk update", update_entries)
             self._bulk_update_entries(
@@ -569,7 +576,7 @@ class RecordWriter:
     def _flush_bulk_rename_updates_as_singletons(self, record_model, update_entries, result):
         """Retry failed chunk updates one row at a time with savepoints."""
         for update_entry in update_entries:
-            result.fallback_singleton_attempt_count += 1
+            result.update_fallback_singleton_attempt_count += 1
             if self._apply_singleton_rename_update(record_model, update_entry):
                 self._delete_failure_state_for_candidate(update_entry)
                 continue
@@ -578,8 +585,12 @@ class RecordWriter:
             result.failed_updates_by_object_id[source_object_id] = (
                 result.failed_updates_by_object_id.get(source_object_id, 0) + 1
             )
-            result.fallback_singleton_failure_count += 1
-            result.update_failure_recorded_count += self._upsert_failure_state_for_candidate(update_entry)
+            result.update_fallback_singleton_failure_count += 1
+            is_new_failure_state = self._upsert_failure_state_for_candidate(update_entry)
+            if is_new_failure_state:
+                result.new_update_failure_state_count += 1
+            else:
+                result.existing_update_failure_state_count += 1
 
     @staticmethod
     def _bulk_update_entries(record_model, update_entries, *, batch_size):
@@ -714,7 +725,7 @@ class RecordWriter:
             },
         )
         if created:
-            return 1
+            return True
 
         state.last_seen = now
         state.attempt_count += 1
@@ -734,7 +745,7 @@ class RecordWriter:
                 "latest_constraint",
             ]
         )
-        return 1
+        return False
 
     @staticmethod
     def _capture_entry_error_details(update_entry, exc):

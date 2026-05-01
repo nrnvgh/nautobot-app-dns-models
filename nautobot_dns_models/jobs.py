@@ -51,10 +51,14 @@ class ReconcileRunSummary:
     dns_record_update_count: int = 0
     dns_record_unchanged_count: int = 0
     targets_noop_count: int = 0
-    fallback_chunk_attempt_count: int = 0
-    fallback_singleton_attempt_count: int = 0
-    fallback_singleton_failure_count: int = 0
-    update_failure_recorded_count: int = 0
+    update_fallback_chunk_attempt_count: int = 0
+    update_fallback_singleton_attempt_count: int = 0
+    update_fallback_singleton_failure_count: int = 0
+    create_fallback_chunk_attempt_count: int = 0
+    create_fallback_singleton_attempt_count: int = 0
+    create_fallback_singleton_failure_count: int = 0
+    new_update_failure_state_count: int = 0
+    existing_update_failure_state_count: int = 0
 
     def mark_target_selected(self):
         """Increment count for selected targets encountered."""
@@ -115,10 +119,14 @@ class ReconcileRunSummary:
             ),
             "changed_record_count": self.changed_record_count,
             "targets_noop_count": self.targets_noop_count,
-            "fallback_chunk_attempt_count": self.fallback_chunk_attempt_count,
-            "fallback_singleton_attempt_count": self.fallback_singleton_attempt_count,
-            "fallback_singleton_failure_count": self.fallback_singleton_failure_count,
-            "update_failure_recorded_count": self.update_failure_recorded_count,
+            "update_fallback_chunk_attempt_count": self.update_fallback_chunk_attempt_count,
+            "update_fallback_singleton_attempt_count": self.update_fallback_singleton_attempt_count,
+            "update_fallback_singleton_failure_count": self.update_fallback_singleton_failure_count,
+            "create_fallback_chunk_attempt_count": self.create_fallback_chunk_attempt_count,
+            "create_fallback_singleton_attempt_count": self.create_fallback_singleton_attempt_count,
+            "create_fallback_singleton_failure_count": self.create_fallback_singleton_failure_count,
+            "new_update_failure_state_count": self.new_update_failure_state_count,
+            "existing_update_failure_state_count": self.existing_update_failure_state_count,
         }
 
 
@@ -228,7 +236,6 @@ def _build_result_payload(
             "single_object": bool(single_object),
             "include_child_devices": bool(include_child_devices),
             "include_interfaces": bool(include_interfaces),
-            "fast_mode": selected_execution_mode == ExecutionMode.FAST,
             "execution_mode": selected_execution_mode.value,
         },
         "scope": {
@@ -447,16 +454,38 @@ class ReconcileDNSBulkJob(Job):
         result["execution"]["runtime_seconds"] = round(perf_counter() - started_at, 3)
         pipeline_metrics = rule_engine.get_pipeline_metrics()
         result["mode"]["pipeline_stage_metrics"] = pipeline_metrics
-        summary.fallback_chunk_attempt_count = pipeline_metrics.get("fallback_chunk_attempt_count_total", 0)
-        summary.fallback_singleton_attempt_count = pipeline_metrics.get("fallback_singleton_attempt_count_total", 0)
-        summary.fallback_singleton_failure_count = pipeline_metrics.get("fallback_singleton_failure_count_total", 0)
-        summary.update_failure_recorded_count = pipeline_metrics.get("update_failure_recorded_count_total", 0)
+        summary.update_fallback_chunk_attempt_count = pipeline_metrics.get(
+            "update_fallback_chunk_attempt_count_total", 0
+        )
+        summary.update_fallback_singleton_attempt_count = pipeline_metrics.get(
+            "update_fallback_singleton_attempt_count_total", 0
+        )
+        summary.update_fallback_singleton_failure_count = pipeline_metrics.get(
+            "update_fallback_singleton_failure_count_total", 0
+        )
+        summary.create_fallback_chunk_attempt_count = pipeline_metrics.get(
+            "create_fallback_chunk_attempt_count_total", 0
+        )
+        summary.create_fallback_singleton_attempt_count = pipeline_metrics.get(
+            "create_fallback_singleton_attempt_count_total", 0
+        )
+        summary.create_fallback_singleton_failure_count = pipeline_metrics.get(
+            "create_fallback_singleton_failure_count_total", 0
+        )
+        summary.new_update_failure_state_count = pipeline_metrics.get("new_update_failure_state_count_total", 0)
+        summary.existing_update_failure_state_count = pipeline_metrics.get(
+            "existing_update_failure_state_count_total", 0
+        )
         result["reconciliation"].update(
             {
-                "fallback_chunk_attempt_count": summary.fallback_chunk_attempt_count,
-                "fallback_singleton_attempt_count": summary.fallback_singleton_attempt_count,
-                "fallback_singleton_failure_count": summary.fallback_singleton_failure_count,
-                "update_failure_recorded_count": summary.update_failure_recorded_count,
+                "update_fallback_chunk_attempt_count": summary.update_fallback_chunk_attempt_count,
+                "update_fallback_singleton_attempt_count": summary.update_fallback_singleton_attempt_count,
+                "update_fallback_singleton_failure_count": summary.update_fallback_singleton_failure_count,
+                "create_fallback_chunk_attempt_count": summary.create_fallback_chunk_attempt_count,
+                "create_fallback_singleton_attempt_count": summary.create_fallback_singleton_attempt_count,
+                "create_fallback_singleton_failure_count": summary.create_fallback_singleton_failure_count,
+                "new_update_failure_state_count": summary.new_update_failure_state_count,
+                "existing_update_failure_state_count": summary.existing_update_failure_state_count,
             }
         )
 

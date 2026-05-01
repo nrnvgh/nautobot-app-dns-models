@@ -102,19 +102,20 @@ class EnginePipeline:
 
         with batch_metrics.time_stage("bulk_flush"):
             logger.debug("[process_objects_pipeline] Flushing bulk rename updates for %d objects", len(source_objects))
-            flush_result = self._writer.flush_bulk_rename_updates(apply_result.pending_rename_updates)
+            update_flush_result = self._writer.flush_bulk_rename_updates(apply_result.pending_rename_updates)
             self._apply_failed_update_adjustments(
                 prepared_entries=plan_result.prepared_entries,
                 summaries=apply_result.summaries,
-                failed_updates_by_object_id=flush_result.failed_updates_by_object_id,
+                failed_updates_by_object_id=update_flush_result.failed_updates_by_object_id,
             )
 
         batch_metrics.finalize_total(total_started_at)
         batch_metrics.apply_pipeline_outputs(
-            tracking_rows=len(fetch_result.tracking_rows),
-            pending_rule_calculations=plan_result.pending_rule_calculations,
+            tracking_row_count=len(fetch_result.tracking_rows),
+            pending_rule_work_items=plan_result.pending_rule_work_items,
             pending_rename_updates=apply_result.pending_rename_updates,
-            flush_result=flush_result,
+            create_flush_result=apply_result.create_flush_result,
+            update_flush_result=update_flush_result,
         )
         self._pipeline_metrics.record_batch(batch_metrics)
 
@@ -164,7 +165,7 @@ class EnginePipeline:
             prepared_entry_by_object_id=prepared_entry_by_object_id,
             rule_work_items=rule_work_items,
             batch_address_ids=batch_address_ids,
-            pending_rule_calculations=sum(len(items) for items in rule_work_items.values()),
+            pending_rule_work_items=sum(len(items) for items in rule_work_items.values()),
         )
 
     def _build_prepared_entry_for_object(
@@ -343,7 +344,6 @@ class EnginePipeline:
         bulk_update_collector = pending_rename_updates if self._context.execution_mode == ExecutionMode.FAST else None
         pending_bulk_deletes = defaultdict(set)
         summaries = []
-        create_flush_result = None
         with self._batched_create_state.activate():
             for entry in prepared_entries:
                 summaries.append(
@@ -355,8 +355,7 @@ class EnginePipeline:
                 )
 
             self._writer.flush_bulk_delete_queue(pending_bulk_deletes)
-            if self._batched_create_state.active:
-                create_flush_result = self._writer.flush_batched_create_queue()
+            create_flush_result = self._writer.flush_batched_create_queue()
 
         return ApplyChangesResult(
             summaries=summaries,

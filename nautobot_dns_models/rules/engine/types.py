@@ -152,7 +152,7 @@ class PlanWorkResult:
         prepared_entry_by_object_id: Lookup map for prepared entries by object id.
         rule_work_items: Deferred work items keyed by rule id.
         batch_address_ids: Distinct IP address ids needed for materialization.
-        pending_rule_calculations: Count of deferred rule calculations queued.
+        pending_rule_work_items: Count of deferred rule work items queued.
     """
 
     prepared_entries: list
@@ -161,8 +161,8 @@ class PlanWorkResult:
     rule_work_items: dict
     # Enables one batched IP preload (`in_bulk`) instead of per-record lookups.
     batch_address_ids: set
-    # Observability counter for queued rule calculations per batch.
-    pending_rule_calculations: int
+    # Observability counter for queued per-rule work items per batch.
+    pending_rule_work_items: int
 
 
 @dataclass

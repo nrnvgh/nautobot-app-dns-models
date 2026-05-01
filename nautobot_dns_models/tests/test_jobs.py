@@ -440,23 +440,31 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         rule_engine.get_pipeline_metrics.return_value = {
             "batches": 0,
             "source_object_count_total": 0,
-            "tracking_rows_total": 0,
-            "pending_rule_calculations_total": 0,
+            "tracking_row_count_total": 0,
+            "pending_rule_work_items_total": 0,
             "pending_bulk_updates_total": 0,
-            "fallback_chunk_attempt_count_total": 0,
-            "fallback_singleton_attempt_count_total": 0,
-            "fallback_singleton_failure_count_total": 0,
-            "update_failure_recorded_count_total": 0,
+            "update_fallback_chunk_attempt_count_total": 0,
+            "update_fallback_singleton_attempt_count_total": 0,
+            "update_fallback_singleton_failure_count_total": 0,
+            "create_fallback_chunk_attempt_count_total": 0,
+            "create_fallback_singleton_attempt_count_total": 0,
+            "create_fallback_singleton_failure_count_total": 0,
+            "new_update_failure_state_count_total": 0,
+            "existing_update_failure_state_count_total": 0,
             "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             "avg_per_batch": {
                 "source_object_count": 0,
-                "tracking_rows": 0,
-                "pending_rule_calculations": 0,
+                "tracking_row_count": 0,
+                "pending_rule_work_items": 0,
                 "pending_bulk_updates": 0,
-                "fallback_chunk_attempt_count": 0,
-                "fallback_singleton_attempt_count": 0,
-                "fallback_singleton_failure_count": 0,
-                "update_failure_recorded_count": 0,
+                "update_fallback_chunk_attempt_count": 0,
+                "update_fallback_singleton_attempt_count": 0,
+                "update_fallback_singleton_failure_count": 0,
+                "create_fallback_chunk_attempt_count": 0,
+                "create_fallback_singleton_attempt_count": 0,
+                "create_fallback_singleton_failure_count": 0,
+                "new_update_failure_state_count": 0,
+                "existing_update_failure_state_count": 0,
                 "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             },
         }
@@ -467,7 +475,6 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             execution_mode=ExecutionMode.STANDARD,
             selected_rules=[self.interface_rule],
         )
-        self.assertFalse(result["mode"]["fast_mode"])
         self.assertEqual(result["mode"]["execution_mode"], ExecutionMode.STANDARD.value)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
@@ -478,23 +485,31 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         rule_engine.get_pipeline_metrics.return_value = {
             "batches": 0,
             "source_object_count_total": 0,
-            "tracking_rows_total": 0,
-            "pending_rule_calculations_total": 0,
+            "tracking_row_count_total": 0,
+            "pending_rule_work_items_total": 0,
             "pending_bulk_updates_total": 0,
-            "fallback_chunk_attempt_count_total": 0,
-            "fallback_singleton_attempt_count_total": 0,
-            "fallback_singleton_failure_count_total": 0,
-            "update_failure_recorded_count_total": 0,
+            "update_fallback_chunk_attempt_count_total": 0,
+            "update_fallback_singleton_attempt_count_total": 0,
+            "update_fallback_singleton_failure_count_total": 0,
+            "create_fallback_chunk_attempt_count_total": 0,
+            "create_fallback_singleton_attempt_count_total": 0,
+            "create_fallback_singleton_failure_count_total": 0,
+            "new_update_failure_state_count_total": 0,
+            "existing_update_failure_state_count_total": 0,
             "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             "avg_per_batch": {
                 "source_object_count": 0,
-                "tracking_rows": 0,
-                "pending_rule_calculations": 0,
+                "tracking_row_count": 0,
+                "pending_rule_work_items": 0,
                 "pending_bulk_updates": 0,
-                "fallback_chunk_attempt_count": 0,
-                "fallback_singleton_attempt_count": 0,
-                "fallback_singleton_failure_count": 0,
-                "update_failure_recorded_count": 0,
+                "update_fallback_chunk_attempt_count": 0,
+                "update_fallback_singleton_attempt_count": 0,
+                "update_fallback_singleton_failure_count": 0,
+                "create_fallback_chunk_attempt_count": 0,
+                "create_fallback_singleton_attempt_count": 0,
+                "create_fallback_singleton_failure_count": 0,
+                "new_update_failure_state_count": 0,
+                "existing_update_failure_state_count": 0,
                 "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             },
         }
@@ -511,7 +526,6 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             execution_mode=ExecutionMode.FAST,
             selected_rules=[self.interface_rule],
         )
-        self.assertTrue(result["mode"]["fast_mode"])
         self.assertEqual(result["mode"]["execution_mode"], ExecutionMode.FAST.value)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
@@ -522,23 +536,31 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
         rule_engine.get_pipeline_metrics.return_value = {
             "batches": 1,
             "source_object_count_total": 1,
-            "tracking_rows_total": 1,
-            "pending_rule_calculations_total": 1,
+            "tracking_row_count_total": 1,
+            "pending_rule_work_items_total": 1,
             "pending_bulk_updates_total": 1,
-            "fallback_chunk_attempt_count_total": 3,
-            "fallback_singleton_attempt_count_total": 7,
-            "fallback_singleton_failure_count_total": 2,
-            "update_failure_recorded_count_total": 2,
+            "update_fallback_chunk_attempt_count_total": 3,
+            "update_fallback_singleton_attempt_count_total": 7,
+            "update_fallback_singleton_failure_count_total": 2,
+            "create_fallback_chunk_attempt_count_total": 5,
+            "create_fallback_singleton_attempt_count_total": 11,
+            "create_fallback_singleton_failure_count_total": 4,
+            "new_update_failure_state_count_total": 2,
+            "existing_update_failure_state_count_total": 1,
             "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             "avg_per_batch": {
                 "source_object_count": 1,
-                "tracking_rows": 1,
-                "pending_rule_calculations": 1,
+                "tracking_row_count": 1,
+                "pending_rule_work_items": 1,
                 "pending_bulk_updates": 1,
-                "fallback_chunk_attempt_count": 3,
-                "fallback_singleton_attempt_count": 7,
-                "fallback_singleton_failure_count": 2,
-                "update_failure_recorded_count": 2,
+                "update_fallback_chunk_attempt_count": 3,
+                "update_fallback_singleton_attempt_count": 7,
+                "update_fallback_singleton_failure_count": 2,
+                "create_fallback_chunk_attempt_count": 5,
+                "create_fallback_singleton_attempt_count": 11,
+                "create_fallback_singleton_failure_count": 4,
+                "new_update_failure_state_count": 2,
+                "existing_update_failure_state_count": 1,
                 "stage_metrics": {"fetch": 0, "planning": 0, "apply": 0, "bulk_flush": 0, "total": 0},
             },
         }
@@ -552,10 +574,14 @@ class ReconcileDNSJobTestCase(BaseRuleEngineMixin, TransactionTestCase):
             fast_mode=True,
         )
 
-        self.assertEqual(result["reconciliation"]["fallback_chunk_attempt_count"], 3)
-        self.assertEqual(result["reconciliation"]["fallback_singleton_attempt_count"], 7)
-        self.assertEqual(result["reconciliation"]["fallback_singleton_failure_count"], 2)
-        self.assertEqual(result["reconciliation"]["update_failure_recorded_count"], 2)
+        self.assertEqual(result["reconciliation"]["update_fallback_chunk_attempt_count"], 3)
+        self.assertEqual(result["reconciliation"]["update_fallback_singleton_attempt_count"], 7)
+        self.assertEqual(result["reconciliation"]["update_fallback_singleton_failure_count"], 2)
+        self.assertEqual(result["reconciliation"]["create_fallback_chunk_attempt_count"], 5)
+        self.assertEqual(result["reconciliation"]["create_fallback_singleton_attempt_count"], 11)
+        self.assertEqual(result["reconciliation"]["create_fallback_singleton_failure_count"], 4)
+        self.assertEqual(result["reconciliation"]["new_update_failure_state_count"], 2)
+        self.assertEqual(result["reconciliation"]["existing_update_failure_state_count"], 1)
 
     @patch("nautobot_dns_models.jobs.DNSRuleEngine")
     def test_bulk_mode_include_children_includes_child_devices_and_interfaces(self, mock_dns_rule_engine_class):

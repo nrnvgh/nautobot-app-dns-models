@@ -13,10 +13,12 @@
   ],
   "properties": {
     "schema_version": {
+      "description": "Schema contract version for this payload.",
       "type": "integer",
       "const": 1
     },
     "mode": {
+      "description": "Execution mode and flags describing how the job was run.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -24,90 +26,261 @@
         "single_object",
         "include_child_devices",
         "include_interfaces",
-        "fast_mode",
         "execution_mode"
       ],
       "properties": {
-        "dryrun": { "type": "boolean" },
-        "single_object": { "type": "boolean" },
-        "include_child_devices": { "type": "boolean" },
-        "include_interfaces": { "type": "boolean" },
-        "fast_mode": { "type": "boolean" },
+        "dryrun": {
+          "description": "Whether this run was preview-only and made no writes.",
+          "type": "boolean"
+        },
+        "single_object": {
+          "description": "Whether this payload came from object-scoped reconciliation.",
+          "type": "boolean"
+        },
+        "include_child_devices": {
+          "description": "Whether child-device expansion was enabled for this run.",
+          "type": "boolean"
+        },
+        "include_interfaces": {
+          "description": "Whether interface expansion was enabled for this run.",
+          "type": "boolean"
+        },
         "execution_mode": {
+          "description": "Canonical execution mode used by the engine for this run.",
           "type": "string",
           "enum": ["standard", "fast"]
         },
         "pipeline_stage_metrics": {
+          "description": "Bulk-only pipeline metrics including totals and per-batch averages.",
           "type": "object",
           "additionalProperties": false,
           "required": [
             "batches",
             "source_object_count_total",
-            "tracking_rows_total",
-            "pending_rule_calculations_total",
+            "tracking_row_count_total",
+            "pending_rule_work_items_total",
             "pending_bulk_updates_total",
-            "fallback_chunk_attempt_count_total",
-            "fallback_singleton_attempt_count_total",
-            "fallback_singleton_failure_count_total",
-            "update_failure_recorded_count_total",
+            "update_fallback_chunk_attempt_count_total",
+            "update_fallback_singleton_attempt_count_total",
+            "update_fallback_singleton_failure_count_total",
+            "create_fallback_chunk_attempt_count_total",
+            "create_fallback_singleton_attempt_count_total",
+            "create_fallback_singleton_failure_count_total",
+            "new_update_failure_state_count_total",
+            "existing_update_failure_state_count_total",
             "stage_metrics",
             "avg_per_batch"
           ],
           "properties": {
-            "batches": { "type": "integer", "minimum": 0 },
-            "source_object_count_total": { "type": "number", "minimum": 0 },
-            "tracking_rows_total": { "type": "number", "minimum": 0 },
-            "pending_rule_calculations_total": { "type": "number", "minimum": 0 },
-            "pending_bulk_updates_total": { "type": "number", "minimum": 0 },
-            "fallback_chunk_attempt_count_total": { "type": "number", "minimum": 0 },
-            "fallback_singleton_attempt_count_total": { "type": "number", "minimum": 0 },
-            "fallback_singleton_failure_count_total": { "type": "number", "minimum": 0 },
-            "update_failure_recorded_count_total": { "type": "number", "minimum": 0 },
+            "batches": {
+              "description": "Number of pipeline batches recorded in this report.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "source_object_count_total": {
+              "description": "Total source objects processed across all batches.",
+              "type": "number",
+              "minimum": 0
+            },
+            "tracking_row_count_total": {
+              "description": "Total tracked DNS records seen across all batches.",
+              "type": "number",
+              "minimum": 0
+            },
+            "pending_rule_work_items_total": {
+              "description": "Total per-object rule evaluations queued during planning across all batches.",
+              "type": "number",
+              "minimum": 0
+            },
+            "pending_bulk_updates_total": {
+              "description": "Total queued rename updates across all batches.",
+              "type": "number",
+              "minimum": 0
+            },
+            "update_fallback_chunk_attempt_count_total": {
+              "description": "Total update-path chunk fallback retries across all batches.",
+              "type": "number",
+              "minimum": 0
+            },
+            "update_fallback_singleton_attempt_count_total": {
+              "description": "Total update-path per-record fallback retries across all batches.",
+              "type": "number",
+              "minimum": 0
+            },
+            "update_fallback_singleton_failure_count_total": {
+              "description": "Total update-path per-record fallback retries that still failed.",
+              "type": "number",
+              "minimum": 0
+            },
+            "create_fallback_chunk_attempt_count_total": {
+              "description": "Total create-path chunk fallback retries across all batches.",
+              "type": "number",
+              "minimum": 0
+            },
+            "create_fallback_singleton_attempt_count_total": {
+              "description": "Total create-path per-record fallback retries across all batches.",
+              "type": "number",
+              "minimum": 0
+            },
+            "create_fallback_singleton_failure_count_total": {
+              "description": "Total create-path per-record fallback retries that still failed.",
+              "type": "number",
+              "minimum": 0
+            },
+            "new_update_failure_state_count_total": {
+              "description": "Total new repeated-update failure entries created across all batches.",
+              "type": "number",
+              "minimum": 0
+            },
+            "existing_update_failure_state_count_total": {
+              "description": "Total updates to existing repeated-update failure entries.",
+              "type": "number",
+              "minimum": 0
+            },
             "stage_metrics": {
+              "description": "Cumulative elapsed seconds per pipeline stage.",
               "type": "object",
               "additionalProperties": false,
               "required": ["fetch", "planning", "apply", "bulk_flush", "total"],
               "properties": {
-                "fetch": { "type": "number", "minimum": 0 },
-                "planning": { "type": "number", "minimum": 0 },
-                "apply": { "type": "number", "minimum": 0 },
-                "bulk_flush": { "type": "number", "minimum": 0 },
-                "total": { "type": "number", "minimum": 0 }
+                "fetch": {
+                  "description": "Total seconds spent in the fetch stage.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "planning": {
+                  "description": "Total seconds spent in the planning/materialization stage.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "apply": {
+                  "description": "Total seconds spent in reconciliation apply stage.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "bulk_flush": {
+                  "description": "Total seconds spent flushing queued bulk operations.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "total": {
+                  "description": "Total end-to-end seconds across complete batch processing.",
+                  "type": "number",
+                  "minimum": 0
+                }
               }
             },
             "avg_per_batch": {
+              "description": "Per-batch averages for totals in this pipeline report.",
               "type": "object",
               "additionalProperties": false,
               "required": [
                 "source_object_count",
-                "tracking_rows",
-                "pending_rule_calculations",
+                "tracking_row_count",
+                "pending_rule_work_items",
                 "pending_bulk_updates",
-                "fallback_chunk_attempt_count",
-                "fallback_singleton_attempt_count",
-                "fallback_singleton_failure_count",
-                "update_failure_recorded_count",
+                "update_fallback_chunk_attempt_count",
+                "update_fallback_singleton_attempt_count",
+                "update_fallback_singleton_failure_count",
+                "create_fallback_chunk_attempt_count",
+                "create_fallback_singleton_attempt_count",
+                "create_fallback_singleton_failure_count",
+                "new_update_failure_state_count",
+                "existing_update_failure_state_count",
                 "stage_metrics"
               ],
               "properties": {
-                "source_object_count": { "type": "number", "minimum": 0 },
-                "tracking_rows": { "type": "number", "minimum": 0 },
-                "pending_rule_calculations": { "type": "number", "minimum": 0 },
-                "pending_bulk_updates": { "type": "number", "minimum": 0 },
-                "fallback_chunk_attempt_count": { "type": "number", "minimum": 0 },
-                "fallback_singleton_attempt_count": { "type": "number", "minimum": 0 },
-                "fallback_singleton_failure_count": { "type": "number", "minimum": 0 },
-                "update_failure_recorded_count": { "type": "number", "minimum": 0 },
+                "source_object_count": {
+                  "description": "Average source objects processed per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "tracking_row_count": {
+                  "description": "Average tracked DNS records seen per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "pending_rule_work_items": {
+                  "description": "Average per-object rule evaluations queued during planning per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "pending_bulk_updates": {
+                  "description": "Average queued rename updates per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "update_fallback_chunk_attempt_count": {
+                  "description": "Average update-path chunk fallback retries per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "update_fallback_singleton_attempt_count": {
+                  "description": "Average update-path per-record fallback retries per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "update_fallback_singleton_failure_count": {
+                  "description": "Average update-path per-record fallback failures per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "create_fallback_chunk_attempt_count": {
+                  "description": "Average create-path chunk fallback retries per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "create_fallback_singleton_attempt_count": {
+                  "description": "Average create-path per-record fallback retries per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "create_fallback_singleton_failure_count": {
+                  "description": "Average create-path per-record fallback failures per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "new_update_failure_state_count": {
+                  "description": "Average new repeated-update failure entries created per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "existing_update_failure_state_count": {
+                  "description": "Average updates to existing repeated-update failure entries per batch.",
+                  "type": "number",
+                  "minimum": 0
+                },
                 "stage_metrics": {
+                  "description": "Per-batch average elapsed seconds per pipeline stage.",
                   "type": "object",
                   "additionalProperties": false,
                   "required": ["fetch", "planning", "apply", "bulk_flush", "total"],
                   "properties": {
-                    "fetch": { "type": "number", "minimum": 0 },
-                    "planning": { "type": "number", "minimum": 0 },
-                    "apply": { "type": "number", "minimum": 0 },
-                    "bulk_flush": { "type": "number", "minimum": 0 },
-                    "total": { "type": "number", "minimum": 0 }
+                    "fetch": {
+                      "description": "Average seconds spent in fetch stage per batch.",
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "planning": {
+                      "description": "Average seconds spent in planning stage per batch.",
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "apply": {
+                      "description": "Average seconds spent in apply stage per batch.",
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "bulk_flush": {
+                      "description": "Average seconds spent in bulk flush stage per batch.",
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "total": {
+                      "description": "Average end-to-end seconds per batch.",
+                      "type": "number",
+                      "minimum": 0
+                    }
                   }
                 }
               }
@@ -117,6 +290,7 @@
       }
     },
     "scope": {
+      "description": "Target selection scope and applied filter values.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -125,10 +299,12 @@
       ],
       "properties": {
         "scanned_models": {
+          "description": "Model labels scanned while selecting targets for this run.",
           "type": "array",
           "items": { "type": "string" }
         },
         "filters": {
+          "description": "Caller-provided filter values recorded in the result payload.",
           "type": "object",
           "additionalProperties": false,
           "required": [
@@ -140,17 +316,42 @@
             "batch_size"
           ],
           "properties": {
-            "source_models": { "type": "array", "items": { "type": "string" } },
-            "rule_ids": { "type": "array", "items": { "type": "string" } },
-            "location_ids": { "type": "array", "items": { "type": "string" } },
-            "tenant_ids": { "type": "array", "items": { "type": "string" } },
-            "limit": { "type": ["integer", "null"], "minimum": 1 },
-            "batch_size": { "type": "integer", "minimum": 1 }
+            "source_models": {
+              "description": "Source model labels provided by the caller as a filter.",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "rule_ids": {
+              "description": "DNS rule UUIDs provided by the caller as a filter.",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "location_ids": {
+              "description": "Location UUIDs provided by the caller as a filter.",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "tenant_ids": {
+              "description": "Tenant UUIDs provided by the caller as a filter.",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "limit": {
+              "description": "Optional maximum number of in-scope targets to process.",
+              "type": ["integer", "null"],
+              "minimum": 1
+            },
+            "batch_size": {
+              "description": "Pipeline batch size used during processing.",
+              "type": "integer",
+              "minimum": 1
+            }
           }
         }
       }
     },
     "execution": {
+      "description": "Execution counters and total runtime for this reconciliation run.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -161,14 +362,35 @@
         "runtime_seconds"
       ],
       "properties": {
-        "targets_selected_count": { "type": "integer", "minimum": 0 },
-        "targets_processed_count": { "type": "integer", "minimum": 0 },
-        "targets_succeeded_count": { "type": "integer", "minimum": 0 },
-        "targets_failed_count": { "type": "integer", "minimum": 0 },
-        "runtime_seconds": { "type": "number", "minimum": 0 }
+        "targets_selected_count": {
+          "description": "Number of targets selected after scope/filter evaluation.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "targets_processed_count": {
+          "description": "Number of selected targets actually processed.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "targets_succeeded_count": {
+          "description": "Number of processed targets without target-level failure.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "targets_failed_count": {
+          "description": "Number of processed targets that failed at target level.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "runtime_seconds": {
+          "description": "End-to-end runtime for this job execution in seconds.",
+          "type": "number",
+          "minimum": 0
+        }
       }
     },
     "reconciliation": {
+      "description": "Aggregated reconciliation outcomes and change counters.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -182,26 +404,106 @@
         "dns_record_total_count",
         "changed_record_count",
         "targets_noop_count",
-        "fallback_chunk_attempt_count",
-        "fallback_singleton_attempt_count",
-        "fallback_singleton_failure_count",
-        "update_failure_recorded_count"
+        "update_fallback_chunk_attempt_count",
+        "update_fallback_singleton_attempt_count",
+        "update_fallback_singleton_failure_count",
+        "create_fallback_chunk_attempt_count",
+        "create_fallback_singleton_attempt_count",
+        "create_fallback_singleton_failure_count",
+        "new_update_failure_state_count",
+        "existing_update_failure_state_count"
       ],
       "properties": {
-        "objects_with_existing_rule_records": { "type": "integer", "minimum": 0 },
-        "existing_rule_record_count": { "type": "integer", "minimum": 0 },
-        "objects_changed": { "type": "integer", "minimum": 0 },
-        "dns_record_create_count": { "type": "integer", "minimum": 0 },
-        "dns_record_delete_count": { "type": "integer", "minimum": 0 },
-        "dns_record_update_count": { "type": "integer", "minimum": 0 },
-        "dns_record_unchanged_count": { "type": "integer", "minimum": 0 },
-        "dns_record_total_count": { "type": "integer", "minimum": 0 },
-        "changed_record_count": { "type": "integer", "minimum": 0 },
-        "targets_noop_count": { "type": "integer", "minimum": 0 },
-        "fallback_chunk_attempt_count": { "type": "integer", "minimum": 0 },
-        "fallback_singleton_attempt_count": { "type": "integer", "minimum": 0 },
-        "fallback_singleton_failure_count": { "type": "integer", "minimum": 0 },
-        "update_failure_recorded_count": { "type": "integer", "minimum": 0 }
+        "objects_with_existing_rule_records": {
+          "description": "Targets that already had tracked rule records.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "existing_rule_record_count": {
+          "description": "Total pre-existing tracked rule records seen before reconciliation.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "objects_changed": {
+          "description": "Targets that had at least one create, delete, or update operation.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "dns_record_create_count": {
+          "description": "DNS records created during reconciliation.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "dns_record_delete_count": {
+          "description": "DNS records deleted during reconciliation.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "dns_record_update_count": {
+          "description": "DNS records updated in place during reconciliation.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "dns_record_unchanged_count": {
+          "description": "Existing DNS records evaluated and left unchanged.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "dns_record_total_count": {
+          "description": "Total DNS record create plus delete plus update operations.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_record_count": {
+          "description": "Total DNS records changed across create, delete, and update operations (currently equivalent to dns_record_total_count).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "targets_noop_count": {
+          "description": "Targets evaluated with no required changes.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "update_fallback_chunk_attempt_count": {
+          "description": "Update-path recursive chunk retries triggered by bulk flush failures.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "update_fallback_singleton_attempt_count": {
+          "description": "Update-path per-record retries attempted after fallback switched to per-record mode.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "update_fallback_singleton_failure_count": {
+          "description": "Update-path per-record retries that still failed.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "create_fallback_chunk_attempt_count": {
+          "description": "Create-path recursive chunk retries triggered by batched create failures.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "create_fallback_singleton_attempt_count": {
+          "description": "Create-path per-record retries attempted after fallback switched to per-record mode.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "create_fallback_singleton_failure_count": {
+          "description": "Create-path per-record retries that still failed.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "new_update_failure_state_count": {
+          "description": "New repeated-update failure entries created from failed per-record update retries.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "existing_update_failure_state_count": {
+          "description": "Existing repeated-update failure entries updated from failed per-record update retries.",
+          "type": "integer",
+          "minimum": 0
+        }
       }
     }
   }

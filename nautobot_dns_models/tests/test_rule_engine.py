@@ -3680,10 +3680,14 @@ class IntegrationAndMultiRecordTestCase(BaseRuleEngineMixin, TestCase):  # pylin
         self.assertEqual(len(summaries), 1)
         self.assertEqual(summaries[0].dns_record_update_count, 1)
         metrics = fast_engine.get_pipeline_metrics()
-        self.assertEqual(metrics["fallback_chunk_attempt_count_total"], 0)
-        self.assertEqual(metrics["fallback_singleton_attempt_count_total"], 0)
-        self.assertEqual(metrics["fallback_singleton_failure_count_total"], 0)
-        self.assertEqual(metrics["update_failure_recorded_count_total"], 0)
+        self.assertEqual(metrics["update_fallback_chunk_attempt_count_total"], 0)
+        self.assertEqual(metrics["update_fallback_singleton_attempt_count_total"], 0)
+        self.assertEqual(metrics["update_fallback_singleton_failure_count_total"], 0)
+        self.assertEqual(metrics["create_fallback_chunk_attempt_count_total"], 0)
+        self.assertEqual(metrics["create_fallback_singleton_attempt_count_total"], 0)
+        self.assertEqual(metrics["create_fallback_singleton_failure_count_total"], 0)
+        self.assertEqual(metrics["new_update_failure_state_count_total"], 0)
+        self.assertEqual(metrics["existing_update_failure_state_count_total"], 0)
 
     def test_fast_pipeline_update_failure_state_resolves_after_successful_retry(self):
         """Open failure state should move to resolved when later update succeeds."""

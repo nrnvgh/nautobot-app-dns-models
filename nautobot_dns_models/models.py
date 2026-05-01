@@ -860,13 +860,10 @@ class DNSRule(PrimaryModel):
         Validate DNS-literal fragments in template fields for the DNS rule.
 
         Args:
-            template_fields: The template fields to validate.
+            template_fields: Template field-name/value pairs to validate.
 
         Returns:
-            A dictionary of field names and their corresponding errors in the order in which they are encountered.
-
-        Raises:
-            ValidationError: If the template literals are not valid.
+            Mapping of field names to collected literal-validation errors.
         """
         errors = defaultdict(list)
 

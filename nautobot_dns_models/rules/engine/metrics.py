@@ -85,30 +85,45 @@ class PipelineBatchMetrics:
 
     Attributes:
         source_object_count: Number of source objects included in this pipeline batch.
-        tracking_rows: Number of `DNSRuleRecord` rows fetched for this batch.
-        pending_rule_calculations: Number of deferred rule work items generated
+        tracking_row_count: Number of `DNSRuleRecord` rows fetched for this
+            batch.
+        pending_rule_work_items: Number of deferred rule work items generated
             during planning for this batch.
         pending_bulk_updates: Number of queued rename updates prepared for bulk
             flush in this batch.
-        fallback_chunk_attempt_count: Number of fallback chunk-level retry
-            attempts executed after fast bulk-update failures in this batch.
-        fallback_singleton_attempt_count: Number of singleton savepoint retries
-            executed while isolating failed fast updates in this batch.
-        fallback_singleton_failure_count: Number of singleton retries that still
-            failed in this batch.
-        update_failure_recorded_count: Number of singleton failures recorded to
-            failure-state storage in this batch.
+        update_fallback_chunk_attempt_count: Number of fallback chunk-level
+            retry attempts executed after fast bulk-update failures in this
+            batch.
+        update_fallback_singleton_attempt_count: Number of singleton savepoint
+            retries executed while isolating failed fast updates in this batch.
+        update_fallback_singleton_failure_count: Number of singleton retries
+            that still failed in this batch.
+        create_fallback_chunk_attempt_count: Number of fallback chunk-level
+            retry attempts executed after batched create failures in this batch.
+        create_fallback_singleton_attempt_count: Number of singleton savepoint
+            retries executed while isolating failed batched creates in this
+            batch.
+        create_fallback_singleton_failure_count: Number of singleton create
+            retries that still failed in this batch.
+        new_update_failure_state_count: Number of singleton fallback update
+            failures that created new failure-state rows in this batch.
+        existing_update_failure_state_count: Number of singleton fallback update
+            failures that updated existing failure-state rows in this batch.
         stage_metrics: Per-stage elapsed time accumulator for this batch.
     """
 
     source_object_count: int = 0
-    tracking_rows: int = 0
-    pending_rule_calculations: int = 0
+    tracking_row_count: int = 0
+    pending_rule_work_items: int = 0
     pending_bulk_updates: int = 0
-    fallback_chunk_attempt_count: int = 0
-    fallback_singleton_attempt_count: int = 0
-    fallback_singleton_failure_count: int = 0
-    update_failure_recorded_count: int = 0
+    update_fallback_chunk_attempt_count: int = 0
+    update_fallback_singleton_attempt_count: int = 0
+    update_fallback_singleton_failure_count: int = 0
+    create_fallback_chunk_attempt_count: int = 0
+    create_fallback_singleton_attempt_count: int = 0
+    create_fallback_singleton_failure_count: int = 0
+    new_update_failure_state_count: int = 0
+    existing_update_failure_state_count: int = 0
     stage_metrics: PipelineStageMetrics = field(default_factory=PipelineStageMetrics)
 
     @contextmanager
@@ -127,20 +142,26 @@ class PipelineBatchMetrics:
     def apply_pipeline_outputs(
         self,
         *,
-        tracking_rows,
-        pending_rule_calculations,
+        tracking_row_count,
+        pending_rule_work_items,
         pending_rename_updates,
-        flush_result,
+        create_flush_result,
+        update_flush_result,
     ):
         """Apply post-stage pipeline counters computed from stage outputs."""
-        self.tracking_rows = tracking_rows
-        self.pending_rule_calculations = pending_rule_calculations
+        self.tracking_row_count = tracking_row_count
+        self.pending_rule_work_items = pending_rule_work_items
         self.pending_bulk_updates = sum(len(entries) for entries in pending_rename_updates.values())
 
-        self.fallback_chunk_attempt_count = flush_result.fallback_chunk_attempt_count
-        self.fallback_singleton_attempt_count = flush_result.fallback_singleton_attempt_count
-        self.fallback_singleton_failure_count = flush_result.fallback_singleton_failure_count
-        self.update_failure_recorded_count = flush_result.update_failure_recorded_count
+        self.create_fallback_chunk_attempt_count = create_flush_result.create_fallback_chunk_attempt_count
+        self.create_fallback_singleton_attempt_count = create_flush_result.create_fallback_singleton_attempt_count
+        self.create_fallback_singleton_failure_count = create_flush_result.create_fallback_singleton_failure_count
+
+        self.update_fallback_chunk_attempt_count = update_flush_result.update_fallback_chunk_attempt_count
+        self.update_fallback_singleton_attempt_count = update_flush_result.update_fallback_singleton_attempt_count
+        self.update_fallback_singleton_failure_count = update_flush_result.update_fallback_singleton_failure_count
+        self.new_update_failure_state_count = update_flush_result.new_update_failure_state_count
+        self.existing_update_failure_state_count = update_flush_result.existing_update_failure_state_count
 
 
 @dataclass
@@ -152,33 +173,48 @@ class PipelineMetrics:
             metrics instance.
         source_object_count_total: Total number of source objects processed across all
             recorded batches.
-        tracking_rows_total: Total number of fetched tracking rows across all
+        tracking_row_count_total: Total number of fetched tracking rows across
+            all
             recorded batches.
-        pending_rule_calculations_total: Total number of deferred rule work
+        pending_rule_work_items_total: Total number of deferred rule work
             items generated across all recorded batches.
         pending_bulk_updates_total: Total number of queued bulk rename updates
             accumulated across all recorded batches.
-        fallback_chunk_attempt_count_total: Total number of fallback chunk
-            attempts across all recorded batches.
-        fallback_singleton_attempt_count_total: Total number of fallback
-            singleton retry attempts across all recorded batches.
-        fallback_singleton_failure_count_total: Total number of fallback
-            singleton failures across all recorded batches.
-        update_failure_recorded_count_total: Total number of update failures
-            persisted to failure-state storage across all recorded batches.
+        update_fallback_chunk_attempt_count_total: Total number of update
+            fallback chunk attempts across all recorded batches.
+        update_fallback_singleton_attempt_count_total: Total number of update
+            fallback singleton retry attempts across all recorded batches.
+        update_fallback_singleton_failure_count_total: Total number of update
+            fallback singleton failures across all recorded batches.
+        create_fallback_chunk_attempt_count_total: Total number of create
+            fallback chunk attempts across all recorded batches.
+        create_fallback_singleton_attempt_count_total: Total number of create
+            fallback singleton retry attempts across all recorded batches.
+        create_fallback_singleton_failure_count_total: Total number of create
+            fallback singleton failures across all recorded batches.
+        new_update_failure_state_count_total: Total number of singleton fallback
+            update failures that created new failure-state rows across all
+            recorded batches.
+        existing_update_failure_state_count_total: Total number of singleton
+            fallback update failures that updated existing failure-state rows
+            across all recorded batches.
         stage_metrics: Cumulative per-stage elapsed-time totals across all
             recorded batches.
     """
 
     batches: int = 0
     source_object_count_total: int = 0
-    tracking_rows_total: int = 0
-    pending_rule_calculations_total: int = 0
+    tracking_row_count_total: int = 0
+    pending_rule_work_items_total: int = 0
     pending_bulk_updates_total: int = 0
-    fallback_chunk_attempt_count_total: int = 0
-    fallback_singleton_attempt_count_total: int = 0
-    fallback_singleton_failure_count_total: int = 0
-    update_failure_recorded_count_total: int = 0
+    update_fallback_chunk_attempt_count_total: int = 0
+    update_fallback_singleton_attempt_count_total: int = 0
+    update_fallback_singleton_failure_count_total: int = 0
+    create_fallback_chunk_attempt_count_total: int = 0
+    create_fallback_singleton_attempt_count_total: int = 0
+    create_fallback_singleton_failure_count_total: int = 0
+    new_update_failure_state_count_total: int = 0
+    existing_update_failure_state_count_total: int = 0
     stage_metrics: PipelineStageMetrics = field(default_factory=PipelineStageMetrics)
 
     @staticmethod
@@ -190,13 +226,17 @@ class PipelineMetrics:
         """Accumulate one batch into running totals."""
         self.batches += 1
         self.source_object_count_total += batch_metrics.source_object_count
-        self.tracking_rows_total += batch_metrics.tracking_rows
-        self.pending_rule_calculations_total += batch_metrics.pending_rule_calculations
+        self.tracking_row_count_total += batch_metrics.tracking_row_count
+        self.pending_rule_work_items_total += batch_metrics.pending_rule_work_items
         self.pending_bulk_updates_total += batch_metrics.pending_bulk_updates
-        self.fallback_chunk_attempt_count_total += batch_metrics.fallback_chunk_attempt_count
-        self.fallback_singleton_attempt_count_total += batch_metrics.fallback_singleton_attempt_count
-        self.fallback_singleton_failure_count_total += batch_metrics.fallback_singleton_failure_count
-        self.update_failure_recorded_count_total += batch_metrics.update_failure_recorded_count
+        self.update_fallback_chunk_attempt_count_total += batch_metrics.update_fallback_chunk_attempt_count
+        self.update_fallback_singleton_attempt_count_total += batch_metrics.update_fallback_singleton_attempt_count
+        self.update_fallback_singleton_failure_count_total += batch_metrics.update_fallback_singleton_failure_count
+        self.create_fallback_chunk_attempt_count_total += batch_metrics.create_fallback_chunk_attempt_count
+        self.create_fallback_singleton_attempt_count_total += batch_metrics.create_fallback_singleton_attempt_count
+        self.create_fallback_singleton_failure_count_total += batch_metrics.create_fallback_singleton_failure_count
+        self.new_update_failure_state_count_total += batch_metrics.new_update_failure_state_count
+        self.existing_update_failure_state_count_total += batch_metrics.existing_update_failure_state_count
         for stage_name, value in batch_metrics.stage_metrics.as_dict().items():
             self.stage_metrics.add(stage_name, value)
 
@@ -206,25 +246,47 @@ class PipelineMetrics:
         metrics = {
             "batches": self.batches,
             "source_object_count_total": self.source_object_count_total,
-            "tracking_rows_total": self.tracking_rows_total,
-            "pending_rule_calculations_total": self.pending_rule_calculations_total,
+            "tracking_row_count_total": self.tracking_row_count_total,
+            "pending_rule_work_items_total": self.pending_rule_work_items_total,
             "pending_bulk_updates_total": self.pending_bulk_updates_total,
-            "fallback_chunk_attempt_count_total": self.fallback_chunk_attempt_count_total,
-            "fallback_singleton_attempt_count_total": self.fallback_singleton_attempt_count_total,
-            "fallback_singleton_failure_count_total": self.fallback_singleton_failure_count_total,
-            "update_failure_recorded_count_total": self.update_failure_recorded_count_total,
+            "update_fallback_chunk_attempt_count_total": self.update_fallback_chunk_attempt_count_total,
+            "update_fallback_singleton_attempt_count_total": self.update_fallback_singleton_attempt_count_total,
+            "update_fallback_singleton_failure_count_total": self.update_fallback_singleton_failure_count_total,
+            "create_fallback_chunk_attempt_count_total": self.create_fallback_chunk_attempt_count_total,
+            "create_fallback_singleton_attempt_count_total": self.create_fallback_singleton_attempt_count_total,
+            "create_fallback_singleton_failure_count_total": self.create_fallback_singleton_failure_count_total,
+            "new_update_failure_state_count_total": self.new_update_failure_state_count_total,
+            "existing_update_failure_state_count_total": self.existing_update_failure_state_count_total,
             "stage_metrics": self.stage_metrics.as_rounded_dict(),
         }
         batches = metrics["batches"] or 1
         metrics["avg_per_batch"] = {
             "source_object_count": self._avg(metrics["source_object_count_total"], batches),
-            "tracking_rows": self._avg(metrics["tracking_rows_total"], batches),
-            "pending_rule_calculations": self._avg(metrics["pending_rule_calculations_total"], batches),
+            "tracking_row_count": self._avg(metrics["tracking_row_count_total"], batches),
+            "pending_rule_work_items": self._avg(metrics["pending_rule_work_items_total"], batches),
             "pending_bulk_updates": self._avg(metrics["pending_bulk_updates_total"], batches),
-            "fallback_chunk_attempt_count": self._avg(metrics["fallback_chunk_attempt_count_total"], batches),
-            "fallback_singleton_attempt_count": self._avg(metrics["fallback_singleton_attempt_count_total"], batches),
-            "fallback_singleton_failure_count": self._avg(metrics["fallback_singleton_failure_count_total"], batches),
-            "update_failure_recorded_count": self._avg(metrics["update_failure_recorded_count_total"], batches),
+            "update_fallback_chunk_attempt_count": self._avg(
+                metrics["update_fallback_chunk_attempt_count_total"], batches
+            ),
+            "update_fallback_singleton_attempt_count": self._avg(
+                metrics["update_fallback_singleton_attempt_count_total"], batches
+            ),
+            "update_fallback_singleton_failure_count": self._avg(
+                metrics["update_fallback_singleton_failure_count_total"], batches
+            ),
+            "create_fallback_chunk_attempt_count": self._avg(
+                metrics["create_fallback_chunk_attempt_count_total"], batches
+            ),
+            "create_fallback_singleton_attempt_count": self._avg(
+                metrics["create_fallback_singleton_attempt_count_total"], batches
+            ),
+            "create_fallback_singleton_failure_count": self._avg(
+                metrics["create_fallback_singleton_failure_count_total"], batches
+            ),
+            "new_update_failure_state_count": self._avg(metrics["new_update_failure_state_count_total"], batches),
+            "existing_update_failure_state_count": self._avg(
+                metrics["existing_update_failure_state_count_total"], batches
+            ),
             "stage_metrics": {k: self._avg(v, batches) for k, v in stage_totals.items()},
         }
 

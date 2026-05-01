@@ -74,13 +74,54 @@ Example success payload (bulk run):
 {
   "schema_version": 1,
   "mode": {
-    "dryrun": false,                              // True for preview-only runs.
-    "single_object": false,                       // True for object job runs; false for bulk.
-    "include_child_devices": true,                // Whether child-device expansion was enabled.
-    "include_interfaces": true,                   // Whether interface expansion was enabled.
-    "fast_mode": true,                            // True when bulk fast_mode was selected.
-    "execution_mode": "fast",                     // "standard" or "fast".
-    "pipeline_stage_metrics": {}                  // Bulk-only per-stage timing breakdown.
+    "dryrun": false,                                    // True for preview-only runs.
+    "single_object": false,                             // True for object job runs; false for bulk.
+    "include_child_devices": true,                      // Whether child-device expansion was enabled.
+    "include_interfaces": true,                         // Whether interface expansion was enabled.
+    "execution_mode": "fast",                           // "standard" or "fast".
+    "pipeline_stage_metrics": {                         // Bulk-only per-stage timing breakdown.
+      "batches": 3,                                        // Number of processed pipeline batches.
+      "source_object_count_total": 1250,                   // Total source objects processed across all batches.
+      "tracking_row_count_total": 420,                     // Total tracking rows fetched across all batches.
+      "pending_rule_work_items_total": 1800,               // Total deferred rule work items generated.
+      "pending_bulk_updates_total": 200,                   // Total queued bulk rename updates.
+      "update_fallback_chunk_attempt_count_total": 3,      // Total update-path fallback chunk retries.
+      "update_fallback_singleton_attempt_count_total": 7,  // Total update-path singleton fallback retries.
+      "update_fallback_singleton_failure_count_total": 2,  // Total update-path singleton retries that still failed.
+      "create_fallback_chunk_attempt_count_total": 5,      // Total create-path fallback chunk retries.
+      "create_fallback_singleton_attempt_count_total": 11, // Total create-path singleton fallback retries.
+      "create_fallback_singleton_failure_count_total": 4,  // Total create-path singleton retries that still failed.
+      "new_update_failure_state_count_total": 2,           // Total new update failure-state rows created.
+      "existing_update_failure_state_count_total": 1,      // Total existing update failure-state rows updated.
+      "stage_metrics": {                                // Cumulative stage timings (seconds).
+        "fetch": 0.412,
+        "planning": 1.128,
+        "apply": 0.963,
+        "bulk_flush": 0.307,
+        "total": 2.941
+      },
+      "avg_per_batch": {                                // Per-batch averages across all batches.
+        "source_object_count": 416.667,
+        "tracking_row_count": 140.0,
+        "pending_rule_work_items": 600.0,
+        "pending_bulk_updates": 66.667,
+        "update_fallback_chunk_attempt_count": 1.0,        // Avg update-path fallback chunk retries per batch.
+        "update_fallback_singleton_attempt_count": 2.333,  // Avg update-path singleton fallback retries per batch.
+        "update_fallback_singleton_failure_count": 0.667,  // Avg update-path singleton fallback failures per batch.
+        "create_fallback_chunk_attempt_count": 1.667,      // Avg create-path fallback chunk retries per batch.
+        "create_fallback_singleton_attempt_count": 3.667,  // Avg create-path singleton fallback retries per batch.
+        "create_fallback_singleton_failure_count": 1.333,  // Avg create-path singleton fallback failures per batch.
+        "new_update_failure_state_count": 0.667,           // Avg new update failure-state rows per batch.
+        "existing_update_failure_state_count": 0.333,      // Avg existing update failure-state row updates per batch.
+        "stage_metrics": {
+          "fetch": 0.137,
+          "planning": 0.376,
+          "apply": 0.321,
+          "bulk_flush": 0.102,
+          "total": 0.98
+        }
+      }
+    }
   },
   "scope": {
     "scanned_models": ["dcim.device", "dcim.interface"], // Model labels scanned while selecting targets.
@@ -104,13 +145,21 @@ Example success payload (bulk run):
     "objects_with_existing_rule_records": 175,     // Targets that already had tracking rows.
     "existing_rule_record_count": 420,             // Total existing tracking rows seen across targets.
     "objects_changed": 200,                        // Targets with at least one create/update/delete change.
-    "record_ops_create_count": 190,                // DNS records created.
-    "record_ops_delete_count": 10,                 // DNS records deleted.
-    "record_ops_update_count": 0,                  // DNS records updated in place.
-    "record_ops_unchanged_count": 800,             // Existing DNS records evaluated but unchanged.
-    "record_ops_total_count": 200,                 // Total create+delete+update operations.
+    "dns_record_create_count": 190,                // DNS records created.
+    "dns_record_delete_count": 10,                 // DNS records deleted.
+    "dns_record_update_count": 0,                  // DNS records updated in place.
+    "dns_record_unchanged_count": 800,             // Existing DNS records evaluated but unchanged.
+    "dns_record_total_count": 200,                 // Total create+delete+update operations.
     "changed_record_count": 200,                   // Total DNS records changed across operations.
-    "targets_noop_count": 1048                     // Targets evaluated with no required changes.
+    "targets_noop_count": 1048,                    // Targets evaluated with no required changes.
+    "update_fallback_chunk_attempt_count": 3,      // Recursive chunk retries for failed fast update bulk flush.
+    "update_fallback_singleton_attempt_count": 7,  // Per-row update retries after fallback reaches singleton mode.
+    "update_fallback_singleton_failure_count": 2,  // Singleton update retries that still failed.
+    "create_fallback_chunk_attempt_count": 5,      // Recursive chunk retries for failed batched create flush.
+    "create_fallback_singleton_attempt_count": 11, // Per-row create retries after fallback reaches singleton mode.
+    "create_fallback_singleton_failure_count": 4,  // Singleton create retries that still failed.
+    "new_update_failure_state_count": 2,           // New update failure-state rows created.
+    "existing_update_failure_state_count": 1       // Existing update failure-state rows updated.
   }
 }
 ```
@@ -119,8 +168,9 @@ Operationally useful fields are usually:
 
 - `execution.targets_failed_count`
 - `reconciliation.objects_changed`
-- `reconciliation.record_ops_total_count`
-- `reconciliation.record_ops_update_count`
+- `reconciliation.dns_record_total_count`
+- `reconciliation.dns_record_update_count`
+- `reconciliation.update_fallback_singleton_failure_count`
 - `execution.runtime_seconds`
 
 Failure paths can return a reduced payload instead of the full success shape, for example:
