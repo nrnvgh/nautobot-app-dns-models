@@ -33,3 +33,10 @@ class EngineReason(str, Enum):
     def __str__(self):
         """Return canonical serialized reason value."""
         return self.value
+
+
+class ExecutionMode(str, Enum):
+    """Execution profile for reconcile mutations."""
+
+    STANDARD = "standard"
+    FAST = "fast"

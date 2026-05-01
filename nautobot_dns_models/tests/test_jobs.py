@@ -19,7 +19,7 @@ from nautobot.virtualization.models import Cluster, VirtualMachine, VMInterface
 from nautobot_dns_models.jobs import ReconcileDNSBulkJob, ReconcileDNSObjectJob, ReconcileRunSummary
 from nautobot_dns_models.models import ARecord, DNSRule, DNSRuleRecord
 from nautobot_dns_models.rules.engine import DNSRuleEngine
-from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
+from nautobot_dns_models.rules.engine.enums import ExecutionMode
 from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics
 from nautobot_dns_models.tests.mixins.rule_engine import BaseRuleEngineMixin
 

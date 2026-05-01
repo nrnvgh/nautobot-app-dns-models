@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from jinja2 import Environment
 
-from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
+from nautobot_dns_models.rules.engine.enums import ExecutionMode
 
 
 @dataclass(frozen=True)

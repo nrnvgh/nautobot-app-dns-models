@@ -8,7 +8,7 @@ from django.template import engines as django_template_engines
 from nautobot_dns_models.models import DNSRuleRecord
 from nautobot_dns_models.rules.engine.cache import EngineCache
 from nautobot_dns_models.rules.engine.context import EngineContext
-from nautobot_dns_models.rules.engine.execution_mode import ExecutionMode
+from nautobot_dns_models.rules.engine.enums import ExecutionMode
 from nautobot_dns_models.rules.engine.materializer import RecordMaterializer
 from nautobot_dns_models.rules.engine.metrics import ObjectProcessingMetrics, PipelineMetrics
 from nautobot_dns_models.rules.engine.pipeline import EnginePipeline
