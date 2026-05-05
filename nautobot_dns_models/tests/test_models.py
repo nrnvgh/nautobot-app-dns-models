@@ -1525,7 +1525,7 @@ class DNSRuleTemplateValidationTestCase(TestCase):
             value_template="{{ obj.primary_ip4 }}",
         )
 
-        self.assertEqual(rule.value_template, "{{ obj.primary_ip4 }}")
+        self.assertEqual(rule.view_template, "")
 
     def test_dnsrule_template_syntax_validation_applies_to_all_template_fields(self):
         """Template syntax validation should run for zone/name/value/view template fields."""
