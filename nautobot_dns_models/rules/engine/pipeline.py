@@ -83,6 +83,7 @@ class EnginePipeline:
                 source_objects=source_objects,
                 tracking_by_object_id=fetch_result.tracking_by_object_id,
             )
+
             logger.debug("[process_objects_pipeline] Materializing desired data for %d objects", len(source_objects))
             self._materialize_desired_data(
                 rule_work_items=plan_result.rule_work_items,
@@ -122,7 +123,7 @@ class EnginePipeline:
 
     # Stage 1: Fetch tracking rows.
     def _fetch_tracking_data(self, source_objects):
-        """Stage 1: fetch and prefetch tracking rows for current object batch."""
+        """Stage 1: Fetch and prefetch tracking rows for current object batch."""
         content_type = ContentType.objects.get_for_model(source_objects[0])
         object_ids = [source_obj.pk for source_obj in source_objects]
         tracking_rows = list(DNSRuleRecord.objects.filter(content_type=content_type, object_id__in=object_ids))
@@ -143,7 +144,7 @@ class EnginePipeline:
         source_objects,
         tracking_by_object_id,
     ):
-        """Stage 2: build per-object prepared entries and per-rule work items."""
+        """Stage 2: Build per-object prepared entries and per-rule work items."""
         prepared_entries = []
         prepared_entry_by_object_id = {}
         rule_work_items = defaultdict(list)
@@ -269,7 +270,7 @@ class EnginePipeline:
         prepared_entry_by_object_id,
         batch_address_ids,
     ):
-        """Stage 3: materialize desired record data into prepared entries."""
+        """Stage 3: Materialize desired record data into prepared entries."""
         preloaded_ip_by_id = self._preload_batch_ip_addresses(batch_address_ids)
 
         for work_items in rule_work_items.values():
@@ -338,16 +339,16 @@ class EnginePipeline:
 
     # Stage 4: Apply and persistence flushes.
     def _apply_changes(self, prepared_entries):
-        """Stage 4: apply prepared reconcile entries and queue rename updates."""
+        """Stage 4: Apply prepared reconcile entries and queue rename updates."""
         pending_rename_updates = defaultdict(list)
         bulk_update_collector = pending_rename_updates if self._context.execution_mode == ExecutionMode.FAST else None
         pending_bulk_deletes = defaultdict(set)
         summaries = []
         with self._batched_create_state.activate():
-            for entry in prepared_entries:
+            for prepared_entry in prepared_entries:
                 summaries.append(
                     self._apply_prepared_reconcile_entry(
-                        entry,
+                        prepared_entry,
                         bulk_update_collector=bulk_update_collector,
                         bulk_delete_collector=pending_bulk_deletes,
                     )
@@ -364,17 +365,17 @@ class EnginePipeline:
 
     def _apply_prepared_reconcile_entry(
         self,
-        entry,
+        prepared_entry,
         bulk_update_collector=None,
         bulk_delete_collector=None,
     ):
         """Apply prepared desired/tracking data for one source object."""
-        source_obj = entry.source_obj
-        rules = entry.rules
-        needed_rule_ids = entry.needed_rule_ids
-        desired_by_rule_id = entry.desired_by_rule_id
-        failed_rule_ids = entry.failed_rule_ids
-        tracking_rows = entry.tracking_rows
+        source_obj = prepared_entry.source_obj
+        rules = prepared_entry.rules
+        needed_rule_ids = prepared_entry.needed_rule_ids
+        desired_by_rule_id = prepared_entry.desired_by_rule_id
+        failed_rule_ids = prepared_entry.failed_rule_ids
+        tracking_rows = prepared_entry.tracking_rows
 
         summary = ObjectProcessingMetrics()
         existing_count = len(tracking_rows)
