@@ -1,4 +1,7 @@
-"""DNS Rule Processing Engine for Nautobot DNS Models."""
+"""DNS Rule Processing Engine for Nautobot DNS Models.
+
+This module contains the main engine class that orchestrates the reconciliation of DNS records.
+"""
 
 import logging
 
@@ -28,11 +31,9 @@ logger = logging.getLogger(__name__)
 class DNSRuleEngine:
     """Primary engine that reconciles DNS records in explicit batch phases."""
 
-    # Tuned against ~65k update benchmarks:
-    # - 250: ~2572 changed/sec (avg, best)
-    # - 500: ~2459 changed/sec (avg)
-    # - 1000: ~2468 changed/sec (avg)
-    # Keep this constant in sync with docs/dev/reconcile_greenfield_performance_tally.md.
+    # NOTE: These likely want cleaning up. They're marginally useful while we're still tuning the engine, but they
+    # NOTE: should probably either be passed in as arguments or moved to a the app configuration. Wherever they
+    # NOTE: wind up, their values should be kept in sync with docs/dev/reconcile_greenfield_performance_tally.md.
     BULK_RENAME_UPDATE_BATCH_SIZE = 250
     BULK_CREATE_BATCHED_PIPELINE_SIZE = 1000
     BULK_DELETE_BATCHED_PIPELINE_SIZE = 1000
