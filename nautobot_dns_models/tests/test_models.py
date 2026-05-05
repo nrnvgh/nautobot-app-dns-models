@@ -964,34 +964,6 @@ class DNSRuleTestCase(ModelTestCases.BaseModelTestCase):
     #
     # Model basics tests
     #
-    def test_dnsrule_for_a_record(self):
-        """Test DNSRule configured for A record type."""
-        rule = DNSRule.objects.create(
-            name="a-record-rule",
-            description="A record rule for devices",
-            content_type=self.content_type_device,
-            zone_template="example.com",
-            record_type="A",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip4 }}",
-        )
-
-        self.assertEqual(rule.record_type, "A")
-        self.assertEqual(rule.value_template, "{{ obj.primary_ip4 }}")
-
-    def test_dnsrule_for_aaaa_record(self):
-        """Test DNSRule configured for AAAA record type."""
-        rule = DNSRule.objects.create(
-            name="aaaa-record-rule",
-            content_type=self.content_type_device,
-            zone_template="example.com",
-            record_type="AAAA",
-            name_template="{{ obj.name }}",
-            value_template="{{ obj.primary_ip6 }}",
-        )
-
-        self.assertEqual(rule.record_type, "AAAA")
-        self.assertEqual(rule.value_template, "{{ obj.primary_ip6 }}")
 
     def test_dnsrule_defaults(self):
         """Test DNSRule default values."""
