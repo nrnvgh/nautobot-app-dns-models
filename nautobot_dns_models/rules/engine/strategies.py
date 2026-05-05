@@ -7,6 +7,9 @@ from django.db import transaction
 from nautobot.extras.models import ContactAssociation, Note, TaggedItem
 
 from nautobot_dns_models.models import DNSRuleRecord
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class UpdateResult(str, Enum):
@@ -75,7 +78,9 @@ class FastUpdateExecutor(UpdateExecutor):
         bulk_update_collector,
     ):
         """Queue rename updates when possible, otherwise fallback to standard."""
+        logger.debug("[FastUpdateExecutor] Applying update for %s %s", source_obj, tracking_record)
         if bulk_update_collector is None:
+            logger.debug("[FastUpdateExecutor] No bulk update collector, falling back to standard update")
             return StandardUpdateExecutor().apply(
                 writer=writer,
                 rule=rule,
@@ -86,6 +91,7 @@ class FastUpdateExecutor(UpdateExecutor):
                 bulk_update_collector=None,
             )
 
+        logger.debug("[FastUpdateExecutor] Applying update for %s %s in fast mode", source_obj, tracking_record)
         dns_record = writer._resolve_prefetched_dns_record(tracking_record)  # pylint: disable=protected-access
         if dns_record is None:
             return UpdateResult.FAILED
