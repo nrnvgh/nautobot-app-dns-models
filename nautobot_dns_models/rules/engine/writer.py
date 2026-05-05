@@ -864,6 +864,7 @@ class RecordWriter:
         for rule_id in list(tracking_by_rule_id.keys()):
             if rule_id in applicable_rule_ids:
                 continue
+
             deleted_count += self.cleanup_records_for_rule_prefetched(
                 tracking_by_rule_id, rule_id, bulk_delete_collector=bulk_delete_collector
             )

@@ -128,14 +128,17 @@ class PreparedReconcileEntry:
         self.failed_rule_ids.add(rule_id)
         if failure is not None:
             self.failed_rule_by_id[rule_id] = failure
+
         self.desired_by_rule_id.pop(rule_id, None)
 
     def set_desired_records(self, rule_id, records):
         """Set desired records for one non-failed, needed rule."""
         if rule_id not in self.needed_rule_ids:
             raise ValueError(f"Rule id {rule_id} is not marked as needed.")
+
         if rule_id in self.failed_rule_ids:
             raise ValueError(f"Rule id {rule_id} is marked as failed.")
+
         self.desired_by_rule_id[rule_id] = records
 
     def has_failed_rule(self, rule_id):
