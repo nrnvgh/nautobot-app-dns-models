@@ -141,8 +141,28 @@ class CatalogZoneFormTestCase(TestCase):
 
     def test_members_field_uses_dns_zone_exclusion_query_param(self):
         form = self.form_class(data={"dns_zone": self.zone_1.id})
+        self.assertEqual(form.fields["dns_zone"].query_params.get("sort"), "name")
         self.assertIn("members", form.fields)
         self.assertEqual(form.fields["members"].query_params.get("id__n"), "$dns_zone")
+        self.assertFalse(form.fields["members"].query_params.get("has_catalog_zone"))
+
+
+class CatalogZoneFilterFormTestCase(TestCase):
+    """Test catalog zone filter form behavior."""
+
+    form_class = forms.CatalogZoneFilterForm
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_backing_zone = DNSZone.objects.create(name="catalog-filter-backing.example.com")
+        cls.non_catalog_zone = DNSZone.objects.create(name="catalog-filter-non-catalog.example.com")
+        CatalogZone.objects.create(dns_zone=cls.catalog_backing_zone)
+
+    def test_backing_dns_zone_choices_only_include_catalog_backing_zones(self):
+        """Backing DNS Zone chooser should request only catalog-backing zones."""
+        form = self.form_class()
+        self.assertEqual(form.fields["dns_zone"].query_params.get("has_catalog_zone"), "true")
+        self.assertEqual(form.fields["dns_zone"].query_params.get("sort"), "name")
 
 
 class DNSRegistrarFormTestCase(TestCase):

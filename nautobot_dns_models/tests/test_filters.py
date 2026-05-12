@@ -386,6 +386,18 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(self.filterset({"q": "zone1"}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"q": "zone"}, self.queryset).qs.count(), 3)
 
+    def test_has_catalog_zone_filter(self):
+        """Filter DNS zones by whether they back catalog zones."""
+        non_backing_zone = DNSZone.objects.create(name="dnszone-filter-non-backing.example.com")
+        backing_zone = DNSZone.objects.create(name="dnszone-filter-backing.example.com")
+        CatalogZone.objects.create(dns_zone=backing_zone)
+
+        self.assertIn(backing_zone, self.filterset({"has_catalog_zone": "true"}, self.queryset).qs)
+        self.assertNotIn(non_backing_zone, self.filterset({"has_catalog_zone": "true"}, self.queryset).qs)
+
+        self.assertIn(non_backing_zone, self.filterset({"has_catalog_zone": "false"}, self.queryset).qs)
+        self.assertNotIn(backing_zone, self.filterset({"has_catalog_zone": "false"}, self.queryset).qs)
+
 
 class CatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
     """CatalogZone Filter Test Case."""
@@ -417,6 +429,13 @@ class CatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
         self.assertEqual(self.filterset({"q": "catalog-filter-one"}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"q": "catalog-filter"}, self.queryset).qs.count(), 3)
         self.assertEqual(self.filterset({"q": "member-filter"}, self.queryset).qs.count(), 0)
+
+    def test_dns_zone_filter_queryset_only_contains_catalog_backing_zones(self):
+        """Advanced filter choices for dns_zone should include only catalog backing zones."""
+        filterset = self.filterset({}, self.queryset)
+        dns_zone_queryset = filterset.filters["dns_zone"].queryset
+        self.assertEqual(dns_zone_queryset.count(), 3)
+        self.assertNotIn(self.member_zone, dns_zone_queryset)
 
 
 class NSRecordFilterTestCase(TestCase):
