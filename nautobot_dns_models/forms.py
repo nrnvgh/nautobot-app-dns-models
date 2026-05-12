@@ -344,6 +344,57 @@ class CatalogZoneFilterForm(NautobotFilterForm):
     ]
 
 
+class CatalogZoneMembershipForm(NautobotModelForm):
+    """CatalogZoneMembership creation/edit form."""
+
+    catalog_zone = DynamicModelChoiceField(
+        queryset=models.CatalogZone.objects.all(),
+        required=True,
+        label="Catalog Zone",
+    )
+    member_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=True,
+        label="Member DNS Zone",
+        query_params={"eligible_for_catalog_zone": "$catalog_zone"},
+    )
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.CatalogZoneMembership
+        fields = [
+            "catalog_zone",
+            "member_zone",
+        ]
+
+
+class CatalogZoneMembershipFilterForm(NautobotFilterForm):
+    """Filter form to filter catalog membership searches."""
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        help_text="Search within catalog zone, member zone, and member node label.",
+    )
+    catalog_zone = DynamicModelMultipleChoiceField(
+        queryset=models.CatalogZone.objects.all(),
+        required=False,
+        label="Catalog Zone",
+    )
+    member_zone = DynamicModelMultipleChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=False,
+        label="Member DNS Zone",
+    )
+    model = models.CatalogZoneMembership
+    fields = [
+        "q",
+        "catalog_zone",
+        "member_zone",
+    ]
+
+
 class NSRecordForm(NautobotModelForm):
     """NSRecord creation/edit form."""
 

@@ -62,6 +62,7 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
         "DNSRegistration",
         "DNSZone",
         "CatalogZone",
+        "CatalogZoneMembership",
         "ARecord",
         "AAAARecord",
         "PTRRecord",

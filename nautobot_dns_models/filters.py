@@ -97,6 +97,7 @@ class DNSRegistrationFilterSet(NautobotFilterSet):
 class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
     """Filter for DNSZone."""
 
+    eligible_for_catalog_zone = django_filters.UUIDFilter(method="filter_eligible_for_catalog_zone")
     member_of_catalog_zones = NaturalKeyOrPKMultipleChoiceFilter(
         field_name="member_of_catalog_zones",
         queryset=models.CatalogZone.objects.all(),
@@ -112,6 +113,14 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
             "soa_rname": "icontains",
         }
     )
+
+    def filter_eligible_for_catalog_zone(self, queryset, name, value):  # pylint: disable=unused-argument
+        """Limit DNS zones to valid membership candidates for a catalog zone."""
+        catalog_zone = models.CatalogZone.objects.filter(pk=value).first()
+        if not catalog_zone:
+            return queryset.none()
+
+        return queryset.exclude(pk=catalog_zone.dns_zone_id).exclude(catalog_zone__isnull=False)
 
     class Meta:
         """Meta attributes for filter."""
@@ -133,6 +142,24 @@ class CatalogZoneFilterSet(NautobotFilterSet):
         """Meta attributes for filter."""
 
         model = models.CatalogZone
+        fields = "__all__"
+
+
+class CatalogZoneMembershipFilterSet(NautobotFilterSet):
+    """Filter for CatalogZoneMembership."""
+
+    q = SearchFilter(
+        filter_predicates={
+            "catalog_zone__dns_zone__name": "icontains",
+            "member_zone__name": "icontains",
+            "member_node_label": "icontains",
+        }
+    )
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.CatalogZoneMembership
         fields = "__all__"
 
 

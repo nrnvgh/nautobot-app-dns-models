@@ -15,6 +15,7 @@ from nautobot.ipam.tables import PrefixTable
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
+    CatalogZoneMembershipSerializer,
     CatalogZoneSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
@@ -31,6 +32,7 @@ from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
     CatalogZoneFilterSet,
+    CatalogZoneMembershipFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -52,6 +54,8 @@ from nautobot_dns_models.forms import (
     CatalogZoneBulkEditForm,
     CatalogZoneFilterForm,
     CatalogZoneForm,
+    CatalogZoneMembershipFilterForm,
+    CatalogZoneMembershipForm,
     CNAMERecordBulkEditForm,
     CNAMERecordFilterForm,
     CNAMERecordForm,
@@ -87,6 +91,7 @@ from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
     CatalogZone,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -101,6 +106,7 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
+    CatalogZoneMembershipTable,
     CatalogZoneTable,
     CNAMERecordTable,
     DNSRegistrarTable,
@@ -406,12 +412,31 @@ class CatalogZoneUIViewSet(views.NautobotUIViewSet):
             ObjectsTablePanel(
                 weight=100,
                 section=SectionChoices.RIGHT_HALF,
-                table_filter="member_of_catalog_zones",
-                table_class=DNSZoneTable,
-                table_title="Member Zones",
-                include_columns=["name", "dns_view", "ttl", "filename", "actions"],
+                table_filter="catalog_zone",
+                table_class=CatalogZoneMembershipTable,
+                table_title="Zones",
+                include_columns=["member_zone", "actions"],
+                exclude_columns=["catalog_zone"],
             ),
-        ]
+        ],
+    )
+
+
+class CatalogZoneMembershipUIViewSet(views.NautobotUIViewSet):
+    """CatalogZoneMembership UI ViewSet."""
+
+    form_class = CatalogZoneMembershipForm
+    filterset_class = CatalogZoneMembershipFilterSet
+    filterset_form_class = CatalogZoneMembershipFilterForm
+    serializer_class = CatalogZoneMembershipSerializer
+    lookup_field = "pk"
+    queryset = CatalogZoneMembership.objects.all()
+    table_class = CatalogZoneMembershipTable
+
+    object_detail_content = ObjectDetailContent(
+        panels=[
+            ObjectFieldsPanel(weight=100, section=SectionChoices.LEFT_HALF, fields="__all__"),
+        ],
     )
 
 

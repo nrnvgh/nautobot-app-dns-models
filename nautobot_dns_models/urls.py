@@ -15,6 +15,7 @@ router.register("dns-registrars", views.DNSRegistrarUIViewSet)
 router.register("dns-registrations", views.DNSRegistrationUIViewSet)
 router.register("dns-zones", views.DNSZoneUIViewSet)
 router.register("catalog-zones", views.CatalogZoneUIViewSet)
+router.register("catalog-zone-memberships", views.CatalogZoneMembershipUIViewSet)
 router.register("a-records", views.ARecordUIViewSet)
 router.register("aaaa-records", views.AAAARecordUIViewSet)
 router.register("ns-records", views.NSRecordUIViewSet)
@@ -27,6 +28,13 @@ router.register("srv-records", views.SRVRecordUIViewSet)
 urlpatterns = [
     path("docs/", RedirectView.as_view(url=static("nautobot_dns_models/docs/index.html")), name="docs"),
     # Paths for buttons used in DNS zone viewset
+    path(
+        "catalog-zones/<uuid:pk>/members/add/",
+        RedirectView.as_view(
+            url="/plugins/dns/catalog-zone-memberships/add/?catalog_zone=%(pk)s&return_url=/plugins/dns/catalog-zones/%(pk)s"
+        ),
+        name="catalogzone_members_add",
+    ),
     path(
         "dns-zones/<uuid:pk>/a-records/add/",
         RedirectView.as_view(url="/plugins/dns/a-records/add/?zone=%(pk)s&return_url=/plugins/dns/dns-zones/%(pk)s"),

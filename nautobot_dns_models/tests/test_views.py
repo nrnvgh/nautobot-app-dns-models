@@ -214,6 +214,14 @@ class CatalogZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
         cls.bulk_edit_data = {"dns_zone": cls.create_zone.id}
 
+    def test_add_member_zone_button_redirect_loads_add_form(self):
+        """Verify add-member button route loads the membership add form."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
+        catalog_zone = CatalogZone.objects.first()
+        url = reverse("plugins:nautobot_dns_models:catalogzone_members_add", kwargs={"pk": catalog_zone.pk})
+        response = self.client.get(url, follow=True)
+        self.assertHttpStatus(response, 200)
+
 
 class NSRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
     """Test the NSRecord views."""
