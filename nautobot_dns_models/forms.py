@@ -67,20 +67,20 @@ class DNSViewFilterForm(NautobotFilterForm):
     ]
 
 
-class DNSCatalogZoneForm(NautobotModelForm):
-    """DNSCatalogZone creation/edit form."""
+class CatalogZoneForm(NautobotModelForm):
+    """CatalogZone creation/edit form."""
 
     class Meta:
         """Meta attributes."""
 
-        model = models.DNSCatalogZone
+        model = models.CatalogZone
         exclude = ["members"]
 
 
-class DNSCatalogZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
-    """DNSCatalogZone bulk edit form."""
+class CatalogZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
+    """CatalogZone bulk edit form."""
 
-    pk = forms.ModelMultipleChoiceField(queryset=models.DNSCatalogZone.objects.all(), widget=forms.MultipleHiddenInput)
+    pk = forms.ModelMultipleChoiceField(queryset=models.CatalogZone.objects.all(), widget=forms.MultipleHiddenInput)
     description = forms.CharField(required=False)
 
     class Meta:
@@ -91,7 +91,7 @@ class DNSCatalogZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         ]
 
 
-class DNSCatalogZoneFilterForm(NautobotFilterForm):
+class CatalogZoneFilterForm(NautobotFilterForm):
     """Filter form to filter searches."""
 
     q = forms.CharField(
@@ -100,7 +100,7 @@ class DNSCatalogZoneFilterForm(NautobotFilterForm):
         help_text="Search within Name and Description.",
     )
     name = forms.CharField(required=False, label="Name")
-    model = models.DNSCatalogZone
+    model = models.CatalogZone
     # Define the fields above for ordering and widget purposes
     fields = [
         "q",
@@ -108,11 +108,11 @@ class DNSCatalogZoneFilterForm(NautobotFilterForm):
     ]
 
 
-class DNSCatalogZoneMembershipForm(forms.ModelForm):
-    """DNSCatalogZoneMembership creation/edit form."""
+class CatalogZoneMembershipForm(forms.ModelForm):
+    """CatalogZoneMembership creation/edit form."""
 
     catalog_zone = forms.ModelChoiceField(
-        queryset=models.DNSCatalogZone.objects.all(),
+        queryset=models.CatalogZone.objects.all(),
         required=True,
     )
     member_zone = DynamicModelChoiceField(
@@ -124,7 +124,7 @@ class DNSCatalogZoneMembershipForm(forms.ModelForm):
     class Meta:
         """Meta attributes."""
 
-        model = models.DNSCatalogZoneMembership
+        model = models.CatalogZoneMembership
         fields = "__all__"
 
     def __init__(self, *args, **kwargs):
@@ -143,11 +143,11 @@ class DNSCatalogZoneMembershipForm(forms.ModelForm):
         return cleaned_data
 
 
-class DNSCatalogZoneMembershipBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
-    """DNSCatalogZoneMembership bulk edit form."""
+class CatalogZoneMembershipBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
+    """CatalogZoneMembership bulk edit form."""
 
     pk = forms.ModelMultipleChoiceField(
-        queryset=models.DNSCatalogZoneMembership.objects.all(), widget=forms.MultipleHiddenInput
+        queryset=models.CatalogZoneMembership.objects.all(), widget=forms.MultipleHiddenInput
     )
     member_node_label = forms.CharField(required=False)
 
@@ -159,7 +159,7 @@ class DNSCatalogZoneMembershipBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEd
         ]
 
 
-class DNSCatalogZoneMembershipFilterForm(NautobotFilterForm):
+class CatalogZoneMembershipFilterForm(NautobotFilterForm):
     """Filter form to filter membership searches."""
 
     q = forms.CharField(
@@ -168,7 +168,7 @@ class DNSCatalogZoneMembershipFilterForm(NautobotFilterForm):
         help_text="Search within Catalog Zone, Member Zone, and Member Node Label.",
     )
     catalog_zone = DynamicModelChoiceField(
-        queryset=models.DNSCatalogZone.objects.all(),
+        queryset=models.CatalogZone.objects.all(),
         required=False,
         label="Catalog Zone",
     )
@@ -177,7 +177,7 @@ class DNSCatalogZoneMembershipFilterForm(NautobotFilterForm):
         required=False,
         label="Member Zone",
     )
-    model = models.DNSCatalogZoneMembership
+    model = models.CatalogZoneMembership
     fields = [
         "q",
         "catalog_zone",

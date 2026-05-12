@@ -5,7 +5,7 @@ from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
 from nautobot_dns_models import forms
-from nautobot_dns_models.models import DNSCatalogZone, DNSRegistrar, DNSView, DNSZone
+from nautobot_dns_models.models import CatalogZone, DNSRegistrar, DNSView, DNSZone
 
 
 class DNSViewFormTestCase(TestCase):
@@ -145,10 +145,10 @@ class DNSRegistrarFormTestCase(TestCase):
         self.assertIn("This field is required.", form.errors["name"])
 
 
-class DNSCatalogZoneFormTestCase(TestCase):
-    """Test DNSCatalogZone forms."""
+class CatalogZoneFormTestCase(TestCase):
+    """Test CatalogZone forms."""
 
-    form_class = forms.DNSCatalogZoneForm
+    form_class = forms.CatalogZoneForm
 
     def test_specifying_all_fields_success(self):
         form = self.form_class(
@@ -195,7 +195,7 @@ class DNSCatalogZoneFormTestCase(TestCase):
         self.assertIn("This field is required.", form.errors["name"])
 
     def test_validate_name_catalogzone_is_unique(self):
-        DNSCatalogZone.objects.create(
+        CatalogZone.objects.create(
             name="catalog-unique.example.com",
             filename="catalog-unique.example.com.zone",
             soa_mname="ns1.catalog-unique.example.com",

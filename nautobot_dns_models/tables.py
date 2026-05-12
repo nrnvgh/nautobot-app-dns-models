@@ -48,21 +48,21 @@ class DNSViewTable(BaseTable):
         )
 
 
-class DNSCatalogZoneTable(BaseTable):
+class CatalogZoneTable(BaseTable):
     """Table for Catalog Zone list view."""
 
     pk = ToggleColumn()
     name = tables.Column(linkify=True)
     dns_view = tables.Column(linkify=True)
     actions = ButtonsColumn(
-        models.DNSCatalogZone,
+        models.CatalogZone,
         buttons=("changelog", "edit", "delete"),
     )
 
     class Meta(BaseTable.Meta):
         """Meta attributes."""
 
-        model = models.DNSCatalogZone
+        model = models.CatalogZone
         fields = (
             "pk",
             "name",
@@ -90,21 +90,21 @@ class DNSCatalogZoneTable(BaseTable):
         )
 
 
-class DNSCatalogZoneMembershipTable(BaseTable):
+class CatalogZoneMembershipTable(BaseTable):
     """Table for Catalog Zone Membership list view."""
 
     pk = ToggleColumn()
     catalog_zone = tables.Column(linkify=True)
     member_zone = tables.Column(linkify=True)
     actions = ButtonsColumn(
-        models.DNSCatalogZoneMembership,
+        models.CatalogZoneMembership,
         buttons=("changelog", "edit", "delete"),
     )
 
     class Meta(BaseTable.Meta):
         """Meta attributes."""
 
-        model = models.DNSCatalogZoneMembership
+        model = models.CatalogZoneMembership
         fields = (
             "pk",
             "catalog_zone",

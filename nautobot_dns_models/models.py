@@ -321,7 +321,7 @@ class DNSViewPrefixAssignment(BaseModel):
     "relationships",
     "webhooks",
 )
-class DNSCatalogZone(DNSZoneBase):
+class CatalogZone(DNSZoneBase):
     """Model for DNS Catalog Zones."""
 
     schema_version = models.CharField(
@@ -333,14 +333,14 @@ class DNSCatalogZone(DNSZoneBase):
     members = models.ManyToManyField(
         to="nautobot_dns_models.DNSZone",
         related_name="catalog_zones",
-        through="DNSCatalogZoneMembership",
+        through="CatalogZoneMembership",
         through_fields=("catalog_zone", "member_zone"),
         blank=True,
         help_text="DNS Zones that are members of this catalog zone.",
     )
 
     class Meta:
-        """Meta attributes for DNSCatalogZone."""
+        """Meta attributes for CatalogZone."""
 
         unique_together = [["name", "dns_view"]]
         verbose_name = "Catalog Zone"
@@ -348,11 +348,11 @@ class DNSCatalogZone(DNSZoneBase):
 
 
 @extras_features("graphql")
-class DNSCatalogZoneMembership(BaseModel):
-    """Through model for DNSCatalogZone and DNSZone member-zone relationship."""
+class CatalogZoneMembership(BaseModel):
+    """Through model for CatalogZone and DNSZone member-zone relationship."""
 
     catalog_zone = ForeignKeyWithAutoRelatedName(
-        DNSCatalogZone,
+        CatalogZone,
         on_delete=models.CASCADE,
     )
     member_zone = ForeignKeyWithAutoRelatedName(
@@ -367,7 +367,7 @@ class DNSCatalogZoneMembership(BaseModel):
     )
 
     class Meta:
-        """Meta attributes for DNSCatalogZoneMembership."""
+        """Meta attributes for CatalogZoneMembership."""
 
         unique_together = [["catalog_zone", "member_zone"], ["catalog_zone", "member_node_label"]]
         verbose_name = "Catalog Zone Membership"

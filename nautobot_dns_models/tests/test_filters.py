@@ -11,7 +11,7 @@ from nautobot.tenancy.models import Tenant, TenantGroup
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
-    DNSCatalogZoneFilterSet,
+    CatalogZoneFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -27,7 +27,7 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
-    DNSCatalogZone,
+    CatalogZone,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -139,11 +139,11 @@ class DNSViewPrefixAssignmentFilterTestCase(FilterTestCases.FilterTestCase):
         self.assertEqual(self.filterset({"q": "Nikos"}, self.queryset).qs.count(), 0)
 
 
-class DNSCatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
-    """DNSCatalogZone Filter Test Case."""
+class CatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
+    """CatalogZone Filter Test Case."""
 
-    queryset = DNSCatalogZone.objects.all()
-    filterset = DNSCatalogZoneFilterSet
+    queryset = CatalogZone.objects.all()
+    filterset = CatalogZoneFilterSet
     generic_filter_tests = [
         ["name"],
         ["description"],
@@ -151,22 +151,22 @@ class DNSCatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
 
     @classmethod
     def setUpTestData(cls):
-        """Setup test data for DNSCatalogZone model."""
-        DNSCatalogZone.objects.create(
+        """Setup test data for CatalogZone model."""
+        CatalogZone.objects.create(
             name="catalog-one.example.com",
             description="Primary catalog zone",
             filename="catalog-one.example.com.zone",
             soa_mname="ns1.catalog-one.example.com",
             soa_rname="admin@example.com",
         )
-        DNSCatalogZone.objects.create(
+        CatalogZone.objects.create(
             name="catalog-two.example.com",
             description="Secondary catalog zone",
             filename="catalog-two.example.com.zone",
             soa_mname="ns1.catalog-two.example.com",
             soa_rname="admin@example.com",
         )
-        DNSCatalogZone.objects.create(
+        CatalogZone.objects.create(
             name="catalog-three.example.com",
             description="Tertiary catalog zone",
             filename="catalog-three.example.com.zone",
@@ -175,12 +175,12 @@ class DNSCatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
         )
 
     def test_name(self):
-        """Test using name search with name of DNSCatalogZone."""
+        """Test using name search with name of CatalogZone."""
         params = {"name__ic": ["catalog-t"]}
         self.assertEqual(self.filterset(params, self.queryset).qs.count(), 2)
 
     def test_name_invalid(self):
-        """Test using invalid name search for DNSCatalogZone."""
+        """Test using invalid name search for CatalogZone."""
         params = {"name": "wrong-name"}
         self.assertEqual(self.filterset(params, self.queryset).qs.count(), 0)
 

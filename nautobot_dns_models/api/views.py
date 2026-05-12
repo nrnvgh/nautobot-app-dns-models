@@ -5,8 +5,8 @@ from nautobot.apps.api import NautobotModelViewSet
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
-    DNSCatalogZoneSerializer,
-    DNSCatalogZoneMembershipSerializer,
+    CatalogZoneSerializer,
+    CatalogZoneMembershipSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -22,8 +22,8 @@ from nautobot_dns_models.api.serializers import (
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
-    DNSCatalogZoneFilterSet,
-    DNSCatalogZoneMembershipFilterSet,
+    CatalogZoneFilterSet,
+    CatalogZoneMembershipFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -39,8 +39,8 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
-    DNSCatalogZone,
-    DNSCatalogZoneMembership,
+    CatalogZone,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -75,22 +75,22 @@ class DNSViewPrefixAssignmentViewSet(NautobotModelViewSet):
     filterset_class = DNSViewPrefixAssignmentFilterSet
 
 
-class DNSCatalogZoneViewSet(NautobotModelViewSet):
-    """DNSCatalogZone API ViewSet."""
+class CatalogZoneViewSet(NautobotModelViewSet):
+    """CatalogZone API ViewSet."""
 
-    queryset = DNSCatalogZone.objects.all()
-    serializer_class = DNSCatalogZoneSerializer
-    filterset_class = DNSCatalogZoneFilterSet
+    queryset = CatalogZone.objects.all()
+    serializer_class = CatalogZoneSerializer
+    filterset_class = CatalogZoneFilterSet
 
     lookup_field = "pk"
 
 
-class DNSCatalogZoneMembershipViewSet(NautobotModelViewSet):
-    """DNSCatalogZoneMembership API ViewSet."""
+class CatalogZoneMembershipViewSet(NautobotModelViewSet):
+    """CatalogZoneMembership API ViewSet."""
 
-    queryset = DNSCatalogZoneMembership.objects.all()
-    serializer_class = DNSCatalogZoneMembershipSerializer
-    filterset_class = DNSCatalogZoneMembershipFilterSet
+    queryset = CatalogZoneMembership.objects.all()
+    serializer_class = CatalogZoneMembershipSerializer
+    filterset_class = CatalogZoneMembershipFilterSet
 
     lookup_field = "pk"
 

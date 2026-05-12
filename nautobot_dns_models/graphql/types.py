@@ -6,7 +6,7 @@ from nautobot.core.graphql.types import OptimizedNautobotObjectType
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
-    DNSCatalogZoneFilterSet,
+    CatalogZoneFilterSet,
     CNAMERecordFilterSet,
     MXRecordFilterSet,
     NSRecordFilterSet,
@@ -17,7 +17,7 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
-    DNSCatalogZone,
+    CatalogZone,
     CNAMERecord,
     DNSRecord,
     MXRecord,
@@ -119,18 +119,18 @@ class SRVRecordType(DNSRecordType):
         filterset_class = SRVRecordFilterSet
 
 
-class DNSCatalogZoneType(OptimizedNautobotObjectType):
-    """Graphql Type Object for the DNSCatalogZone model."""
+class CatalogZoneType(OptimizedNautobotObjectType):
+    """Graphql Type Object for the CatalogZone model."""
 
     class Meta:
-        """Metadata for the DNSCatalogZone."""
+        """Metadata for the CatalogZone."""
 
-        model = DNSCatalogZone
-        filterset_class = DNSCatalogZoneFilterSet
+        model = CatalogZone
+        filterset_class = CatalogZoneFilterSet
 
 
 graphql_types = [
-    DNSCatalogZoneType,
+    CatalogZoneType,
     NSRecordType,
     ARecordType,
     AAAARecordType,

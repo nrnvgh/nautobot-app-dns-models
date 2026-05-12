@@ -32,25 +32,25 @@ class DNSViewPrefixAssignmentSerializer(ValidatedModelSerializer):
         fields = "__all__"
 
 
-class DNSCatalogZoneSerializer(NautobotModelSerializer):
-    """DNSCatalogZone Serializer."""
+class CatalogZoneSerializer(NautobotModelSerializer):
+    """CatalogZone Serializer."""
 
-    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:dnscatalogzone-detail")
+    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:catalogzone-detail")
 
     class Meta:
         """Meta attributes."""
 
-        model = models.DNSCatalogZone
+        model = models.CatalogZone
         fields = "__all__"
 
 
-class DNSCatalogZoneMembershipSerializer(ValidatedModelSerializer):
-    """DNSCatalogZoneMembership Serializer."""
+class CatalogZoneMembershipSerializer(ValidatedModelSerializer):
+    """CatalogZoneMembership Serializer."""
 
     class Meta:
         """Meta attributes."""
 
-        model = models.DNSCatalogZoneMembership
+        model = models.CatalogZoneMembership
         fields = "__all__"
 
 

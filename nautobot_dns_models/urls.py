@@ -11,8 +11,8 @@ app_name = "nautobot_dns_models"
 router = NautobotUIViewSetRouter()
 
 router.register("dns-views", views.DNSViewUIViewSet)
-router.register("catalog-zones", views.DNSCatalogZoneUIViewSet)
-router.register("catalog-zone-memberships", views.DNSCatalogZoneMembershipUIViewSet)
+router.register("catalog-zones", views.CatalogZoneUIViewSet)
+router.register("catalog-zone-memberships", views.CatalogZoneMembershipUIViewSet)
 router.register("dns-registrars", views.DNSRegistrarUIViewSet)
 router.register("dns-registrations", views.DNSRegistrationUIViewSet)
 router.register("dns-zones", views.DNSZoneUIViewSet)

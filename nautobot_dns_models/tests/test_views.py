@@ -13,7 +13,7 @@ from netutils.ip import ipaddress_address
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
-    DNSCatalogZone,
+    CatalogZone,
     CNAMERecord,
     DNSRegistrar,
     DNSView,
@@ -97,28 +97,28 @@ class DNSViewViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         cls.bulk_edit_data = {"description": "Bulk edit views"}
 
 
-class DNSCatalogZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
-    """Test the DNSCatalogZone views."""
+class CatalogZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
+    """Test the CatalogZone views."""
 
-    model = DNSCatalogZone
+    model = CatalogZone
 
     @classmethod
     def setUpTestData(cls):
-        DNSCatalogZone.objects.create(
+        CatalogZone.objects.create(
             name="catalog-1.example.com",
             description="Catalog zone one",
             filename="catalog-1.example.com.zone",
             soa_mname="ns1.catalog-1.example.com",
             soa_rname="admin@example.com",
         )
-        DNSCatalogZone.objects.create(
+        CatalogZone.objects.create(
             name="catalog-2.example.com",
             description="Catalog zone two",
             filename="catalog-2.example.com.zone",
             soa_mname="ns1.catalog-2.example.com",
             soa_rname="admin@example.com",
         )
-        DNSCatalogZone.objects.create(
+        CatalogZone.objects.create(
             name="catalog-3.example.com",
             description="Catalog zone three",
             filename="catalog-3.example.com.zone",

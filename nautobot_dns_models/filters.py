@@ -44,8 +44,8 @@ class DNSViewPrefixAssignmentFilterSet(NautobotFilterSet):
         fields = "__all__"
 
 
-class DNSCatalogZoneFilterSet(NautobotFilterSet):
-    """Filter for DNSCatalogZone."""
+class CatalogZoneFilterSet(NautobotFilterSet):
+    """Filter for CatalogZone."""
 
     q = SearchFilter(
         filter_predicates={
@@ -60,15 +60,15 @@ class DNSCatalogZoneFilterSet(NautobotFilterSet):
     class Meta:
         """Meta attributes for filter."""
 
-        model = models.DNSCatalogZone
+        model = models.CatalogZone
         fields = "__all__"
 
 
-class DNSCatalogZoneMembershipFilterSet(NautobotFilterSet):
-    """Filter for DNSCatalogZoneMembership."""
+class CatalogZoneMembershipFilterSet(NautobotFilterSet):
+    """Filter for CatalogZoneMembership."""
 
     catalog_zone = NaturalKeyOrPKMultipleChoiceFilter(
-        queryset=models.DNSCatalogZone.objects.all(),
+        queryset=models.CatalogZone.objects.all(),
         to_field_name="name",
         label="Catalog Zone (name or ID)",
     )
@@ -89,7 +89,7 @@ class DNSCatalogZoneMembershipFilterSet(NautobotFilterSet):
     class Meta:
         """Meta attributes for filter."""
 
-        model = models.DNSCatalogZoneMembership
+        model = models.CatalogZoneMembership
         fields = "__all__"
 
 
@@ -166,8 +166,8 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
     def filter_catalog_zone(self, queryset, name, value):  # pylint: disable=unused-argument
         """Filter zones to the selected catalog zone's DNS view."""
         try:
-            catalog_zone = models.DNSCatalogZone.objects.only("dns_view_id").get(pk=value)
-        except (models.DNSCatalogZone.DoesNotExist, ValueError, TypeError):
+            catalog_zone = models.CatalogZone.objects.only("dns_view_id").get(pk=value)
+        except (models.CatalogZone.DoesNotExist, ValueError, TypeError):
             return queryset.none()
 
         return queryset.filter(dns_view_id=catalog_zone.dns_view_id).exclude(catalog_zones__pk=catalog_zone.pk).distinct()

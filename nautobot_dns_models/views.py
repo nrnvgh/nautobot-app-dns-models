@@ -21,8 +21,8 @@ from nautobot.ipam.tables import PrefixTable
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
-    DNSCatalogZoneSerializer,
-    DNSCatalogZoneMembershipSerializer,
+    CatalogZoneSerializer,
+    CatalogZoneMembershipSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -37,8 +37,8 @@ from nautobot_dns_models.api.serializers import (
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
-    DNSCatalogZoneFilterSet,
-    DNSCatalogZoneMembershipFilterSet,
+    CatalogZoneFilterSet,
+    CatalogZoneMembershipFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -57,12 +57,12 @@ from nautobot_dns_models.forms import (
     ARecordBulkEditForm,
     ARecordFilterForm,
     ARecordForm,
-    DNSCatalogZoneBulkEditForm,
-    DNSCatalogZoneMembershipBulkEditForm,
-    DNSCatalogZoneMembershipFilterForm,
-    DNSCatalogZoneMembershipForm,
-    DNSCatalogZoneFilterForm,
-    DNSCatalogZoneForm,
+    CatalogZoneBulkEditForm,
+    CatalogZoneMembershipBulkEditForm,
+    CatalogZoneMembershipFilterForm,
+    CatalogZoneMembershipForm,
+    CatalogZoneFilterForm,
+    CatalogZoneForm,
     CNAMERecordBulkEditForm,
     CNAMERecordFilterForm,
     CNAMERecordForm,
@@ -97,8 +97,8 @@ from nautobot_dns_models.forms import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
-    DNSCatalogZone,
-    DNSCatalogZoneMembership,
+    CatalogZone,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -113,8 +113,8 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
-    DNSCatalogZoneTable,
-    DNSCatalogZoneMembershipTable,
+    CatalogZoneTable,
+    CatalogZoneMembershipTable,
     CNAMERecordTable,
     DNSRegistrarTable,
     DNSRegistrationTable,
@@ -180,17 +180,17 @@ class DNSViewUIViewSet(views.NautobotUIViewSet):
     )
 
 
-class DNSCatalogZoneUIViewSet(views.NautobotUIViewSet):
-    """DNSCatalogZone UI ViewSet."""
+class CatalogZoneUIViewSet(views.NautobotUIViewSet):
+    """CatalogZone UI ViewSet."""
 
-    form_class = DNSCatalogZoneForm
-    bulk_update_form_class = DNSCatalogZoneBulkEditForm
-    filterset_class = DNSCatalogZoneFilterSet
-    filterset_form_class = DNSCatalogZoneFilterForm
-    serializer_class = DNSCatalogZoneSerializer
+    form_class = CatalogZoneForm
+    bulk_update_form_class = CatalogZoneBulkEditForm
+    filterset_class = CatalogZoneFilterSet
+    filterset_form_class = CatalogZoneFilterForm
+    serializer_class = CatalogZoneSerializer
     lookup_field = "pk"
-    queryset = DNSCatalogZone.objects.all()
-    table_class = DNSCatalogZoneTable
+    queryset = CatalogZone.objects.all()
+    table_class = CatalogZoneTable
 
     object_detail_content = ObjectDetailContent(
         panels=[
@@ -209,7 +209,7 @@ class DNSCatalogZoneUIViewSet(views.NautobotUIViewSet):
                     ObjectsTablePanel(
                         weight=100,
                         section=SectionChoices.LEFT_HALF,
-                        table_class=DNSCatalogZoneMembershipTable,
+                        table_class=CatalogZoneMembershipTable,
                         table_filter="catalog_zone",
                         related_field_name="catalog_zone",
                         # available columns: catalog_zone, member_zone, member_node_label
@@ -223,17 +223,17 @@ class DNSCatalogZoneUIViewSet(views.NautobotUIViewSet):
     )
 
 
-class DNSCatalogZoneMembershipUIViewSet(views.NautobotUIViewSet):
-    """DNSCatalogZoneMembership UI ViewSet."""
+class CatalogZoneMembershipUIViewSet(views.NautobotUIViewSet):
+    """CatalogZoneMembership UI ViewSet."""
 
-    form_class = DNSCatalogZoneMembershipForm
-    bulk_update_form_class = DNSCatalogZoneMembershipBulkEditForm
-    filterset_class = DNSCatalogZoneMembershipFilterSet
-    filterset_form_class = DNSCatalogZoneMembershipFilterForm
-    serializer_class = DNSCatalogZoneMembershipSerializer
+    form_class = CatalogZoneMembershipForm
+    bulk_update_form_class = CatalogZoneMembershipBulkEditForm
+    filterset_class = CatalogZoneMembershipFilterSet
+    filterset_form_class = CatalogZoneMembershipFilterForm
+    serializer_class = CatalogZoneMembershipSerializer
     lookup_field = "pk"
-    queryset = DNSCatalogZoneMembership.objects.all()
-    table_class = DNSCatalogZoneMembershipTable
+    queryset = CatalogZoneMembership.objects.all()
+    table_class = CatalogZoneMembershipTable
 
     object_detail_content = ObjectDetailContent(
         panels=[

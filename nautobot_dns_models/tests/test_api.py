@@ -17,7 +17,7 @@ from rest_framework.relations import ManyRelatedField
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
-    DNSCatalogZone,
+    CatalogZone,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -124,10 +124,10 @@ class DNSViewPrefixAssignmentAPITestCase(APIViewTestCases.APIViewTestCase):
         ]
 
 
-class DNSCatalogZoneAPITestCase(APIViewTestCases.APIViewTestCase):
-    """Test the Nautobot DNSCatalogZone API."""
+class CatalogZoneAPITestCase(APIViewTestCases.APIViewTestCase):
+    """Test the Nautobot CatalogZone API."""
 
-    model = DNSCatalogZone
+    model = CatalogZone
     view_namespace = "plugins-api:nautobot_dns_models"
     bulk_update_data = {
         "description": "Example bulk description",
@@ -139,7 +139,7 @@ class DNSCatalogZoneAPITestCase(APIViewTestCases.APIViewTestCase):
     @classmethod
     def setUpTestData(cls):
         dns_view = DNSView.objects.get(name="Default")
-        DNSCatalogZone.objects.create(
+        CatalogZone.objects.create(
             name="catalog-one.example.com",
             description="First catalog zone",
             dns_view=dns_view,
@@ -147,7 +147,7 @@ class DNSCatalogZoneAPITestCase(APIViewTestCases.APIViewTestCase):
             soa_mname="ns1.catalog-one.example.com",
             soa_rname="admin@example.com",
         )
-        DNSCatalogZone.objects.create(
+        CatalogZone.objects.create(
             name="catalog-two.example.com",
             description="Second catalog zone",
             dns_view=dns_view,
@@ -155,7 +155,7 @@ class DNSCatalogZoneAPITestCase(APIViewTestCases.APIViewTestCase):
             soa_mname="ns1.catalog-two.example.com",
             soa_rname="admin@example.com",
         )
-        DNSCatalogZone.objects.create(
+        CatalogZone.objects.create(
             name="catalog-three.example.com",
             description="Third catalog zone",
             dns_view=dns_view,
