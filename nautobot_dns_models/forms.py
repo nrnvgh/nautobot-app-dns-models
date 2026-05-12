@@ -294,12 +294,13 @@ class CatalogZoneForm(NautobotModelForm):
         queryset=models.DNSZone.objects.all(),
         required=True,
         label="Backing DNS Zone",
+        query_params={"sort": "name"},
     )
     members = DynamicModelMultipleChoiceField(
         queryset=models.DNSZone.objects.all(),
         required=False,
-        query_params={"id__n": "$dns_zone"},
         label="Member DNS Zones",
+        query_params={"id__n": "$dns_zone", "has_catalog_zone": False, "sort": "name"},
     )
 
     class Meta:
@@ -336,6 +337,7 @@ class CatalogZoneFilterForm(NautobotFilterForm):
         queryset=models.DNSZone.objects.all(),
         required=False,
         label="Backing DNS Zone",
+        query_params={"has_catalog_zone": True},
     )
     model = models.CatalogZone
     fields = [

@@ -417,6 +417,7 @@ class CatalogZoneUIViewSet(views.NautobotUIViewSet):
                 table_title="Zones",
                 include_columns=["member_zone", "actions"],
                 exclude_columns=["catalog_zone"],
+                order_by_fields=["member_zone__name"],
             ),
         ],
     )
