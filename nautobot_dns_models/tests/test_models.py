@@ -325,6 +325,19 @@ class CatalogZoneMembershipTestCase(TestCase):
                 with self.assertRaises(CatalogZoneMembershipAlreadyExistsError):
                     membership.save()
 
+    def test_member_zone_constraint_raises_membership_exists_error_real_db(self):
+        """Verify duplicate membership save() maps DB constraint to custom exception."""
+        CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.member_zone_1,
+        )
+        duplicate_membership = CatalogZoneMembership(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.member_zone_1,
+        )
+        with self.assertRaises(CatalogZoneMembershipAlreadyExistsError):
+            duplicate_membership.save()
+
     def test_label_collision_exhaustion_raises_generation_error(self):
         """Verify repeated label collisions raise custom generation exception."""
         membership = CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1)

@@ -13,6 +13,7 @@ from netutils.ip import ipaddress_address
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZone,
     CNAMERecord,
     DNSRegistrar,
     DNSView,
@@ -184,6 +185,34 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
+
+
+class CatalogZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
+    """Test the CatalogZone views."""
+
+    model = CatalogZone
+
+    @classmethod
+    def setUpTestData(cls):
+        zone_1 = DNSZone.objects.create(name="catalog-view-one.example.com")
+        zone_2 = DNSZone.objects.create(name="catalog-view-two.example.com")
+        zone_3 = DNSZone.objects.create(name="catalog-view-three.example.com")
+        cls.create_zone = DNSZone.objects.create(name="catalog-view-create.example.com")
+        cls.csv_zone = DNSZone.objects.create(name="catalog-view-csv.example.com")
+        CatalogZone.objects.create(dns_zone=zone_1)
+        CatalogZone.objects.create(dns_zone=zone_2)
+        CatalogZone.objects.create(dns_zone=zone_3)
+
+        cls.form_data = {
+            "dns_zone": cls.create_zone.id,
+        }
+
+        cls.csv_data = (
+            "dns_zone",
+            f"{cls.csv_zone.id}",
+        )
+
+        cls.bulk_edit_data = {"dns_zone": cls.create_zone.id}
 
 
 class NSRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):

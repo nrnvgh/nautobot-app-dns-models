@@ -11,6 +11,7 @@ from nautobot.tenancy.models import Tenant, TenantGroup
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
+    CatalogZoneFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -26,6 +27,7 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZone,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -383,6 +385,38 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(self.filterset({"q": "Test"}, self.queryset).qs.count(), 3)
         self.assertEqual(self.filterset({"q": "zone1"}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"q": "zone"}, self.queryset).qs.count(), 3)
+
+
+class CatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
+    """CatalogZone Filter Test Case."""
+
+    queryset = CatalogZone.objects.all()
+    filterset = CatalogZoneFilterSet
+
+    generic_filter_tests = (
+        ("id",),
+        ("created",),
+        ("last_updated",),
+        ("dns_zone",),
+    )
+
+    @classmethod
+    def setUpTestData(cls):
+        """Setup test data for CatalogZone model."""
+        zone_1 = DNSZone.objects.create(name="catalog-filter-one.example.com")
+        zone_2 = DNSZone.objects.create(name="catalog-filter-two.example.com")
+        zone_3 = DNSZone.objects.create(name="catalog-filter-three.example.com")
+        zone_4 = DNSZone.objects.create(name="member-filter.example.com")
+        CatalogZone.objects.create(dns_zone=zone_1)
+        CatalogZone.objects.create(dns_zone=zone_2)
+        CatalogZone.objects.create(dns_zone=zone_3)
+        cls.member_zone = zone_4
+
+    def test_search(self):
+        """q search should match backing zone name."""
+        self.assertEqual(self.filterset({"q": "catalog-filter-one"}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"q": "catalog-filter"}, self.queryset).qs.count(), 3)
+        self.assertEqual(self.filterset({"q": "member-filter"}, self.queryset).qs.count(), 0)
 
 
 class NSRecordFilterTestCase(TestCase):

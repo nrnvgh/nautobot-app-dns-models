@@ -5,7 +5,7 @@ from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
 from nautobot_dns_models import forms
-from nautobot_dns_models.models import DNSRegistrar, DNSView, DNSZone
+from nautobot_dns_models.models import CatalogZone, DNSRegistrar, DNSView, DNSZone
 
 
 class DNSViewFormTestCase(TestCase):
@@ -116,6 +116,33 @@ class DNSZoneTest(TestCase):
             }
         )
         self.assertTrue(form.is_valid())
+
+
+class CatalogZoneFormTestCase(TestCase):
+    """Test CatalogZone forms."""
+
+    form_class = forms.CatalogZoneForm
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.zone_1 = DNSZone.objects.create(name="catalog-form-one.example.com")
+        cls.zone_2 = DNSZone.objects.create(name="catalog-form-two.example.com")
+
+    def test_specifying_required_fields_success(self):
+        form = self.form_class(data={"dns_zone": self.zone_1.id})
+        self.assertTrue(form.is_valid())
+        catalog_zone = form.save()
+        self.assertIsInstance(catalog_zone, CatalogZone)
+
+    def test_dns_zone_is_required(self):
+        form = self.form_class(data={})
+        self.assertFalse(form.is_valid())
+        self.assertIn("This field is required.", form.errors["dns_zone"])
+
+    def test_members_field_uses_dns_zone_exclusion_query_param(self):
+        form = self.form_class(data={"dns_zone": self.zone_1.id})
+        self.assertIn("members", form.fields)
+        self.assertEqual(form.fields["members"].query_params.get("id__n"), "$dns_zone")
 
 
 class DNSRegistrarFormTestCase(TestCase):
