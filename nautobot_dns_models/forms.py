@@ -271,12 +271,76 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
     )
     name = forms.CharField(required=False, label="Name")
     filename = forms.CharField(required=False, label="Filename")
+    member_of_catalog_zones = DynamicModelMultipleChoiceField(
+        queryset=models.CatalogZone.objects.all(),
+        required=False,
+        to_field_name="id",
+        label="Member of Catalog Zones",
+    )
     model = models.DNSZone
     # Define the fields above for ordering and widget purposes
     fields = [
         "q",
         "name",
         "filename",
+        "member_of_catalog_zones",
+    ]
+
+
+class CatalogZoneForm(NautobotModelForm):
+    """CatalogZone creation/edit form."""
+
+    dns_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=True,
+        label="Backing DNS Zone",
+    )
+    members = DynamicModelMultipleChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=False,
+        query_params={"id__n": "$dns_zone"},
+        label="Member DNS Zones",
+    )
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.CatalogZone
+        fields = "__all__"
+
+
+class CatalogZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
+    """CatalogZone bulk edit form."""
+
+    pk = forms.ModelMultipleChoiceField(queryset=models.CatalogZone.objects.all(), widget=forms.MultipleHiddenInput)
+    dns_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=False,
+    )
+
+    class Meta:
+        """Meta attributes."""
+
+        nullable_fields = []
+
+
+class CatalogZoneFilterForm(NautobotFilterForm):
+    """Filter form to filter catalog zone searches."""
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        help_text="Search within backing DNS Zone name.",
+    )
+    dns_zone = DynamicModelMultipleChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=False,
+        label="Backing DNS Zone",
+    )
+    model = models.CatalogZone
+    fields = [
+        "q",
+        "dns_zone",
     ]
 
 

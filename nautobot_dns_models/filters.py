@@ -97,6 +97,13 @@ class DNSRegistrationFilterSet(NautobotFilterSet):
 class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
     """Filter for DNSZone."""
 
+    member_of_catalog_zones = NaturalKeyOrPKMultipleChoiceFilter(
+        field_name="member_of_catalog_zones",
+        queryset=models.CatalogZone.objects.all(),
+        to_field_name="id",
+        label="Member of Catalog Zones",
+    )
+
     q = SearchFilter(
         filter_predicates={
             "name": "icontains",
@@ -110,6 +117,22 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
         """Meta attributes for filter."""
 
         model = models.DNSZone
+        fields = "__all__"
+
+
+class CatalogZoneFilterSet(NautobotFilterSet):
+    """Filter for CatalogZone."""
+
+    q = SearchFilter(
+        filter_predicates={
+            "dns_zone__name": "icontains",
+        }
+    )
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.CatalogZone
         fields = "__all__"
 
 

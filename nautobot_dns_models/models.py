@@ -261,6 +261,7 @@ class CatalogZone(PrimaryModel):
         on_delete=models.PROTECT,
         related_name="catalog_zone",
         help_text="Backing DNS Zone for this catalog zone wrapper.",
+        verbose_name="DNS Zone",
     )
     description = models.TextField(help_text="Description of this catalog zone.", blank=True)
     members = models.ManyToManyField(

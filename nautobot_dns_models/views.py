@@ -15,6 +15,7 @@ from nautobot.ipam.tables import PrefixTable
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
+    CatalogZoneSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -29,6 +30,7 @@ from nautobot_dns_models.api.serializers import (
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
+    CatalogZoneFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -47,6 +49,9 @@ from nautobot_dns_models.forms import (
     ARecordBulkEditForm,
     ARecordFilterForm,
     ARecordForm,
+    CatalogZoneBulkEditForm,
+    CatalogZoneFilterForm,
+    CatalogZoneForm,
     CNAMERecordBulkEditForm,
     CNAMERecordFilterForm,
     CNAMERecordForm,
@@ -81,6 +86,7 @@ from nautobot_dns_models.forms import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZone,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -95,6 +101,7 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
+    CatalogZoneTable,
     CNAMERecordTable,
     DNSRegistrarTable,
     DNSRegistrationTable,
@@ -379,6 +386,32 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 ),
             ),
         ],
+    )
+
+
+class CatalogZoneUIViewSet(views.NautobotUIViewSet):
+    """CatalogZone UI ViewSet."""
+
+    form_class = CatalogZoneForm
+    bulk_update_form_class = CatalogZoneBulkEditForm
+    filterset_class = CatalogZoneFilterSet
+    filterset_form_class = CatalogZoneFilterForm
+    serializer_class = CatalogZoneSerializer
+    lookup_field = "pk"
+    queryset = CatalogZone.objects.all()
+    table_class = CatalogZoneTable
+    object_detail_content = ObjectDetailContent(
+        panels=[
+            ObjectFieldsPanel(weight=100, section=SectionChoices.LEFT_HALF, fields="__all__"),
+            ObjectsTablePanel(
+                weight=100,
+                section=SectionChoices.RIGHT_HALF,
+                table_filter="member_of_catalog_zones",
+                table_class=DNSZoneTable,
+                table_title="Member Zones",
+                include_columns=["name", "dns_view", "ttl", "filename", "actions"],
+            ),
+        ]
     )
 
 
