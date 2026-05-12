@@ -66,6 +66,16 @@ class DNSZoneSerializer(NautobotModelSerializer):
         fields = "__all__"
 
 
+class CatalogZoneSerializer(NautobotModelSerializer):
+    """CatalogZone Serializer."""
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.CatalogZone
+        fields = "__all__"
+
+
 class DNSRecordSerializer(NautobotModelSerializer):
     """DNSRecord Serializer."""
 
