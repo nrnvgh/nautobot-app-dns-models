@@ -1,14 +1,24 @@
 """Test DNSZone."""
 
+from unittest.mock import patch
+
 from constance.test import override_config
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
+from django.db.models.deletion import ProtectedError
 from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
 from nautobot_dns_models.models import (
+    CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE,
+    CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE,
     AAAARecord,
     ARecord,
+    CatalogMemberNodeLabelGenerationError,
+    CatalogZone,
+    CatalogZoneMembership,
+    CatalogZoneMembershipAlreadyExistsError,
     CNAMERecord,
     DNSRegistrar,
     DNSView,
@@ -174,6 +184,162 @@ class TestDnsZone(ModelTestCases.BaseModelTestCase):
     def test_get_absolute_url(self):
         dns_zone_model = DNSZone.objects.create(name="example.com")
         self.assertEqual(dns_zone_model.get_absolute_url(), f"/plugins/dns/dns-zones/{dns_zone_model.id}/")
+
+
+class CatalogZoneTestCase(TestCase):
+    """Test the CatalogZone wrapper model."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.zone = DNSZone.objects.create(name="catalog.example.com")
+
+    def test_catalog_zone_properties(self):
+        """Verify read-only schema version and string rendering."""
+        catalog_zone = CatalogZone.objects.create(dns_zone=self.zone)
+        self.assertEqual(catalog_zone.schema_version, "2")
+        self.assertEqual(str(catalog_zone), self.zone.name)
+
+    def test_one_wrapper_per_zone(self):
+        """Verify a DNSZone cannot have multiple wrappers."""
+        CatalogZone.objects.create(dns_zone=self.zone)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CatalogZone.objects.create(dns_zone=self.zone)
+
+    def test_delete_wrapper_deletes_backing_zone(self):
+        """Verify wrapper deletion removes the backing DNSZone."""
+        zone = DNSZone.objects.create(name="delete-catalog.example.com")
+        catalog_zone = CatalogZone.objects.create(dns_zone=zone)
+        zone_id = zone.id
+        catalog_zone.delete()
+        self.assertFalse(DNSZone.objects.filter(id=zone_id).exists())
+
+    def test_zone_delete_is_protected_when_wrapped(self):
+        """Verify backing DNSZone deletion is blocked by PROTECT."""
+        catalog_zone = CatalogZone.objects.create(dns_zone=self.zone)
+        with self.assertRaises(ProtectedError):
+            self.zone.delete()
+
+        self.assertTrue(CatalogZone.objects.filter(id=catalog_zone.id).exists())
+
+
+class CatalogZoneMembershipTestCase(TestCase):
+    """Test the CatalogZoneMembership through model."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_dns_zone = DNSZone.objects.create(name="catalog.example.com")
+        cls.catalog_zone = CatalogZone.objects.create(dns_zone=cls.catalog_dns_zone)
+        cls.member_zone_1 = DNSZone.objects.create(name="member-1.example.com")
+        cls.member_zone_2 = DNSZone.objects.create(name="member-2.example.com")
+
+    def test_create_membership_auto_generates_label(self):
+        """Verify membership creates with an opaque generated member node label."""
+        membership = CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.member_zone_1,
+        )
+        self.assertTrue(membership.member_node_label)
+        self.assertEqual(len(membership.member_node_label), 26)
+        self.assertTrue(membership.member_node_label.isalnum())
+
+    def test_one_member_zone_per_catalog_zone(self):
+        """Verify same member zone cannot be added twice to one catalog."""
+        CatalogZoneMembership.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1)
+        with self.assertRaises(CatalogZoneMembershipAlreadyExistsError):
+            with transaction.atomic():
+                CatalogZoneMembership.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1)
+
+    def test_member_node_label_unique_per_catalog_zone(self):
+        """Verify labels are unique within one catalog zone."""
+        CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.member_zone_1,
+            member_node_label="memberlabelone",
+        )
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CatalogZoneMembership.objects.create(
+                    catalog_zone=self.catalog_zone,
+                    member_zone=self.member_zone_2,
+                    member_node_label="memberlabelone",
+                )
+
+    def test_member_node_label_is_immutable(self):
+        """Verify member label cannot be changed after initial creation."""
+        membership = CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone, member_zone=self.member_zone_1
+        )
+        membership.member_node_label = "changedlabel"
+        with self.assertRaises(ValidationError):
+            membership.full_clean()
+
+    def test_catalog_zone_cannot_be_its_own_member(self):
+        """Verify catalog zone backing DNSZone cannot be added as member."""
+        membership = CatalogZoneMembership(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.catalog_dns_zone,
+            member_node_label="selfmember",
+        )
+        with self.assertRaises(ValidationError):
+            membership.full_clean()
+
+    def test_catalog_zone_dns_zone_cannot_be_member_zone(self):
+        """Verify a DNSZone wrapped as a catalog cannot be used as member."""
+        wrapped_member_zone = DNSZone.objects.create(name="wrapped-member.example.com")
+        CatalogZone.objects.create(dns_zone=wrapped_member_zone)
+        membership = CatalogZoneMembership(
+            catalog_zone=self.catalog_zone,
+            member_zone=wrapped_member_zone,
+            member_node_label="wrappedmember",
+        )
+        with self.assertRaises(ValidationError):
+            membership.full_clean()
+
+    def test_collision_retry_generates_new_label(self):
+        """Verify generated label collisions retry and succeed."""
+        CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.member_zone_1,
+            member_node_label="aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        with patch(
+            "nautobot_dns_models.models.generate_catalog_member_node_label",
+            side_effect=["aaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbb"],
+        ):
+            membership = CatalogZoneMembership.objects.create(
+                catalog_zone=self.catalog_zone,
+                member_zone=self.member_zone_2,
+            )
+        self.assertEqual(membership.member_node_label, "bbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+    def test_member_zone_constraint_raises_membership_exists_error(self):
+        """Verify member-zone uniqueness constraint maps to custom exception."""
+        membership = CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1)
+        with patch("nautobot_dns_models.models.PrimaryModel.save", side_effect=IntegrityError("constraint failed")):
+            with patch.object(
+                CatalogZoneMembership,
+                "_get_integrity_error_constraint_name",
+                return_value=CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE,
+            ):
+                with self.assertRaises(CatalogZoneMembershipAlreadyExistsError):
+                    membership.save()
+
+    def test_label_collision_exhaustion_raises_generation_error(self):
+        """Verify repeated label collisions raise custom generation exception."""
+        membership = CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1)
+        with patch(
+            "nautobot_dns_models.models.CATALOG_MEMBER_NODE_LABEL_MAX_GENERATION_ATTEMPTS",
+            2,
+        ):
+            with patch("nautobot_dns_models.models.PrimaryModel.save", side_effect=IntegrityError("constraint failed")):
+                with patch.object(
+                    CatalogZoneMembership,
+                    "_get_integrity_error_constraint_name",
+                    return_value=CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE,
+                ):
+                    with self.assertRaises(CatalogMemberNodeLabelGenerationError):
+                        membership.save()
 
 
 class NSRecordTestCase(TestCase):

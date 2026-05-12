@@ -1,13 +1,35 @@
 """Models for Nautobot DNS Models."""
 
+import base64
+import uuid
+
 from constance import config as constance_config
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
-from django.db import models
+from django.db import IntegrityError, models, transaction
 from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.extras.models import StatusField
 from nautobot.ipam.choices import IPAddressVersionChoices
+
+CATALOG_ZONE_SCHEMA_VERSION = "2"
+CATALOG_MEMBER_NODE_LABEL_MAX_GENERATION_ATTEMPTS = 10
+CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE = "dns_czm_unique_member_zone_per_catalog"
+CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE = "dns_czm_unique_member_node_label_per_catalog"
+
+
+class CatalogMemberNodeLabelGenerationError(Exception):
+    """Raised when a unique catalog member node label cannot be generated."""
+
+
+class CatalogZoneMembershipAlreadyExistsError(Exception):
+    """Raised when creating a duplicate member zone entry in the same catalog."""
+
+
+def generate_catalog_member_node_label():
+    """Generate an RFC-safe opaque label from random UUIDv4 bytes."""
+    # UUIDv4 keeps labels opaque and stable, decoupled from zone names.
+    return base64.b32encode(uuid.uuid4().bytes).decode("ascii").lower().rstrip("=")
 
 
 def dns_wire_label_length(label):
@@ -220,6 +242,176 @@ class DNSZone(DNSModel):
         unique_together = [["name", "dns_view"]]
         verbose_name = "DNS Zone"
         verbose_name_plural = "DNS Zones"
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class CatalogZone(PrimaryModel):
+    """Wrapper model identifying a DNSZone as a catalog zone."""
+
+    dns_zone = models.OneToOneField(
+        to=DNSZone,
+        on_delete=models.PROTECT,
+        related_name="catalog_zone",
+        help_text="Backing DNS Zone for this catalog zone wrapper.",
+    )
+    members = models.ManyToManyField(
+        to=DNSZone,
+        through="CatalogZoneMembership",
+        related_name="member_of_catalog_zones",
+        through_fields=("catalog_zone", "member_zone"),
+        blank=True,
+        help_text="Member DNS Zones included in this catalog zone.",
+    )
+
+    class Meta:
+        """Meta attributes for CatalogZone."""
+
+        verbose_name = "Catalog Zone"
+        verbose_name_plural = "Catalog Zones"
+
+    def __str__(self):
+        """Stringify instance."""
+        return str(self.dns_zone)
+
+    def delete(self, *args, **kwargs):
+        """Delete wrapper and its backing DNSZone in one transaction."""
+        with transaction.atomic():
+            zone = self.dns_zone
+            super().delete(*args, **kwargs)
+            zone.delete()
+
+    @property
+    def schema_version(self):
+        """Read-only RFC 9432 schema version for catalog serialization."""
+        return CATALOG_ZONE_SCHEMA_VERSION
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class CatalogZoneMembership(PrimaryModel):
+    """Through model representing a member zone within a catalog zone."""
+
+    catalog_zone = models.ForeignKey(
+        to=CatalogZone,
+        on_delete=models.PROTECT,
+        related_name="memberships",
+        help_text="Catalog Zone wrapper that owns this membership.",
+    )
+    member_zone = models.ForeignKey(
+        to=DNSZone,
+        on_delete=models.PROTECT,
+        related_name="catalog_zone_memberships",
+        help_text="DNS Zone that is a member of the catalog.",
+    )
+    member_node_label = models.CharField(
+        max_length=63,
+        blank=True,
+        help_text="Opaque immutable label for the member node in the catalog zone.",
+    )
+
+    class Meta:
+        """Meta attributes for CatalogZoneMembership."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["catalog_zone", "member_zone"],
+                name=CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE,
+            ),
+            models.UniqueConstraint(
+                fields=["catalog_zone", "member_node_label"],
+                name=CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE,
+            ),
+        ]
+        verbose_name = "Catalog Zone Membership"
+        verbose_name_plural = "Catalog Zone Memberships"
+
+    def __str__(self):
+        """Stringify instance."""
+        return f"{self.member_zone} in {self.catalog_zone}"
+
+    def clean(self):
+        """Validate invariants and member label format."""
+        super().clean()
+
+        self._validate_member_zone()
+        self._validate_member_node_label()
+
+    def save(self, *args, **kwargs):
+        """Persist membership while generating collision-safe random labels."""
+        if self.member_node_label:
+            return super().save(*args, **kwargs)
+
+        for _ in range(CATALOG_MEMBER_NODE_LABEL_MAX_GENERATION_ATTEMPTS):
+            self.member_node_label = generate_catalog_member_node_label()
+            try:
+                # Keep each retry attempt in its own savepoint so an IntegrityError on one attempt
+                # does not poison an outer transaction and block subsequent retries.
+                with transaction.atomic():
+                    return super().save(*args, **kwargs)
+            except IntegrityError as exc:
+                constraint_name = self._get_integrity_error_constraint_name(exc)
+                if constraint_name == CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE:
+                    continue
+
+                if constraint_name == CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE:
+                    raise CatalogZoneMembershipAlreadyExistsError(
+                        "Membership already exists for this catalog zone and member zone."
+                    ) from exc
+
+                # If the backend does not expose a constraint name (or this is a different IntegrityError),
+                # do not guess and do not retry; fail fast so callers see the original database error.
+                raise
+
+        raise CatalogMemberNodeLabelGenerationError("Unable to generate a unique member node label.")
+
+    def _get_integrity_error_constraint_name(self, exc):
+        """Return a database constraint name when available."""
+        cause = getattr(exc, "__cause__", None)
+        diag = getattr(cause, "diag", None)
+        return getattr(diag, "constraint_name", None)
+
+    def _validate_member_node_label(self):
+        """Validate member node label immutability and format."""
+        if self.pk:
+            current = CatalogZoneMembership.objects.only("member_node_label").filter(pk=self.pk).first()
+            if current and self.member_node_label != current.member_node_label:
+                raise ValidationError({"member_node_label": "Member node label is immutable after creation."})
+
+        if not self.member_node_label:
+            return
+
+        if "." in self.member_node_label:
+            raise ValidationError({"member_node_label": "Member node label must be a single DNS label."})
+
+        if not self.member_node_label.isalnum():
+            raise ValidationError({"member_node_label": "Member node label must contain only letters and digits."})
+
+        DNSModel._validate_dns_label(self.member_node_label, field="member_node_label")
+
+    def _validate_member_zone(self):
+        """Validate that member zone is not a catalog zone backing zone."""
+        catalog_with_member_zone_id = (
+            CatalogZone.objects.filter(dns_zone_id=self.member_zone_id).values_list("id", flat=True).first()
+        )
+        if catalog_with_member_zone_id is not None:
+            if catalog_with_member_zone_id == self.catalog_zone_id:
+                raise ValidationError({"member_zone": "A catalog zone cannot contain itself as a member."})
+            raise ValidationError({"member_zone": "A catalog zone cannot be added as a member zone."})
 
 
 @extras_features(
