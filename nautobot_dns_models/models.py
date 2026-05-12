@@ -262,6 +262,7 @@ class CatalogZone(PrimaryModel):
         related_name="catalog_zone",
         help_text="Backing DNS Zone for this catalog zone wrapper.",
     )
+    description = models.TextField(help_text="Description of this catalog zone.", blank=True)
     members = models.ManyToManyField(
         to=DNSZone,
         through="CatalogZoneMembership",
