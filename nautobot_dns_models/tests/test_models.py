@@ -199,6 +199,36 @@ class CatalogZoneTestCase(TestCase):
         self.assertEqual(catalog_zone.schema_version, "2")
         self.assertEqual(str(catalog_zone), self.zone.name)
 
+    def test_create_catalog_zone_creates_version_control_record(self):
+        """Verify wrapper creation materializes version TXT control record."""
+        catalog_zone = CatalogZone.objects.create(dns_zone=self.zone)
+
+        version_records = TXTRecord.objects.filter(zone=self.zone, name="version")
+        self.assertEqual(version_records.count(), 1)
+        self.assertEqual(version_records.first().text, catalog_zone.schema_version)
+
+    def test_save_catalog_zone_repairs_noncanonical_version_rrset(self):
+        """Verify save() repairs duplicate/incorrect version TXT RRset."""
+        catalog_zone = CatalogZone.objects.create(dns_zone=self.zone)
+        TXTRecord.objects.create(zone=self.zone, name="version", text="legacy")
+        TXTRecord.objects.create(zone=self.zone, name="version", text="unexpected")
+
+        catalog_zone.save()
+        version_records = TXTRecord.objects.filter(zone=self.zone, name="version")
+        self.assertEqual(version_records.count(), 1)
+        self.assertEqual(version_records.first().text, catalog_zone.schema_version)
+
+    def test_save_catalog_zone_recreates_missing_version_record(self):
+        """Verify save() recreates missing version TXT control record."""
+        catalog_zone = CatalogZone.objects.create(dns_zone=self.zone)
+        TXTRecord.objects.filter(zone=self.zone, name="version").delete()
+        self.assertEqual(TXTRecord.objects.filter(zone=self.zone, name="version").count(), 0)
+
+        catalog_zone.save()
+        version_records = TXTRecord.objects.filter(zone=self.zone, name="version")
+        self.assertEqual(version_records.count(), 1)
+        self.assertEqual(version_records.first().text, catalog_zone.schema_version)
+
     def test_one_wrapper_per_zone(self):
         """Verify a DNSZone cannot have multiple wrappers."""
         CatalogZone.objects.create(dns_zone=self.zone)

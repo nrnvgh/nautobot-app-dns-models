@@ -12,7 +12,9 @@ from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.extras.models import StatusField
 from nautobot.ipam.choices import IPAddressVersionChoices
 
+
 CATALOG_ZONE_SCHEMA_VERSION = "2"
+CATALOG_ZONE_VERSION_RECORD_NAME = "version"
 CATALOG_MEMBER_NODE_LABEL_MAX_GENERATION_ATTEMPTS = 10
 CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE = "dns_czm_unique_member_zone_per_catalog"
 CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE = "dns_czm_unique_member_node_label_per_catalog"
@@ -283,10 +285,18 @@ class CatalogZone(PrimaryModel):
         """Stringify instance."""
         return str(self.dns_zone)
 
+    def save(self, *args, **kwargs):
+        """Persist wrapper and reconcile required catalog control records."""
+        with transaction.atomic():
+            result = super().save(*args, **kwargs)
+            self._ensure_version_control_record()
+            return result
+
     def delete(self, *args, **kwargs):
         """Delete wrapper and its backing DNSZone in one transaction."""
         with transaction.atomic():
             zone = self.dns_zone
+            self._delete_version_control_record()
             super().delete(*args, **kwargs)
             zone.delete()
 
@@ -294,6 +304,28 @@ class CatalogZone(PrimaryModel):
     def schema_version(self):
         """Read-only RFC 9432 schema version for catalog serialization."""
         return CATALOG_ZONE_SCHEMA_VERSION
+
+    def _ensure_version_control_record(self):
+        """Ensure the catalog's version TXT RRset is present and canonical."""
+        # RFC 9432 §4.2.1 requires exactly one TXT RR at version.$CATZ with value "2".
+        # Per §5.1, catalogs violating this are broken and MUST NOT be processed.
+        version_rrset = TXTRecord.objects.filter(zone=self.dns_zone, name=CATALOG_ZONE_VERSION_RECORD_NAME)
+        if version_rrset.count() == 1 and version_rrset.first().text == self.schema_version:
+            return
+
+        version_rrset.delete()
+        TXTRecord(
+            zone=self.dns_zone,
+            name=CATALOG_ZONE_VERSION_RECORD_NAME,
+            text=self.schema_version,
+        ).validated_save()
+
+    def _delete_version_control_record(self):
+        """Delete the system-managed catalog version control record."""
+        TXTRecord.objects.filter(
+            zone_id=self.dns_zone_id,
+            name=CATALOG_ZONE_VERSION_RECORD_NAME,
+        ).delete()
 
 
 @extras_features(
