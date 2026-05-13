@@ -1,7 +1,6 @@
 """Tables for nautobot_dns_models."""
 
 import django_tables2 as tables
-from django.utils.html import format_html
 from nautobot.apps.tables import BaseTable, ButtonsColumn, ToggleColumn
 from nautobot.tenancy.tables import TenantColumn
 
@@ -173,23 +172,13 @@ class CatalogZoneTable(BaseTable):
 
     pk = ToggleColumn()
     name = tables.Column(accessor="dns_zone__name", verbose_name="Catalog Zone", linkify=True)
-    dns_zone = tables.Column(verbose_name="Backing DNS Zone")
+    dns_zone = tables.Column(verbose_name="Backing DNS Zone", linkify=True)
+    dns_zone__dns_view = tables.Column(accessor="dns_zone__dns_view", verbose_name="DNS View", linkify=True)
+    dns_zone__tenant = tables.Column(accessor="dns_zone__tenant", verbose_name="Tenant", linkify=True)
     actions = ButtonsColumn(
         models.CatalogZone,
         buttons=("changelog", "edit", "delete"),
     )
-
-    def render_dns_zone(self, value, record):
-        """Render backing DNS zone with DNS view context."""
-        dns_zone = record.dns_zone
-        dns_view = dns_zone.dns_view
-        return format_html(
-            '<a href="{}">{}</a> (<a href="{}">{}</a>)',
-            dns_zone.get_absolute_url(),
-            dns_zone,
-            dns_view.get_absolute_url(),
-            dns_view,
-        )
 
     class Meta(BaseTable.Meta):
         """Meta attributes."""
@@ -199,6 +188,8 @@ class CatalogZoneTable(BaseTable):
             "pk",
             "name",
             "dns_zone",
+            "dns_zone__dns_view",
+            "dns_zone__tenant",
             "actions",
         )
 
@@ -206,6 +197,7 @@ class CatalogZoneTable(BaseTable):
             "pk",
             "name",
             "dns_zone",
+            "dns_zone__dns_view",
             "actions",
         )
 
