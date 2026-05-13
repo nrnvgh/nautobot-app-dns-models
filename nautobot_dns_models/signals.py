@@ -7,7 +7,7 @@ from nautobot_dns_models.models import CatalogZoneMembership
 
 
 @receiver(m2m_changed, sender=CatalogZoneMembership)
-def assign_member_node_labels_on_members_add(sender, instance, action, reverse, model, pk_set, **kwargs):  # pylint: disable=unused-argument
+def assign_member_node_labels_on_members_add(sender, instance, action, reverse, model, pk_set, **kwargs):  # pylint: disable=unused-argument,too-many-arguments
     """
     Ensure through-table rows get labels when created via M2M add/set operations.
 
