@@ -387,16 +387,20 @@ class CatalogZoneMembership(PrimaryModel):
 
     def save(self, *args, **kwargs):
         """Persist membership while generating collision-safe random labels."""
+        #
+        # TODO: Probably remove this. we shouldn't allow users to define their own member node labels.
         if self.member_node_label:
-            return super().save(*args, **kwargs)
+            return self._save_and_create_ptr_if_new(*args, **kwargs)
 
+        # RFC 9432 §4.1 requires each member entry to use a unique member-node label,
+        # and catalogs with duplicate label usage/semantics are treated as broken per §5.1.
+        # Retry generation to avoid label collisions under concurrent create operations.
         for _ in range(CATALOG_MEMBER_NODE_LABEL_MAX_GENERATION_ATTEMPTS):
             self.member_node_label = generate_catalog_member_node_label()
             try:
                 # Keep each retry attempt in its own savepoint so an IntegrityError on one attempt
                 # does not poison an outer transaction and block subsequent retries.
-                with transaction.atomic():
-                    return super().save(*args, **kwargs)
+                return self._save_and_create_ptr_if_new(*args, **kwargs)
             except IntegrityError as exc:
                 constraint_name = self._get_integrity_error_constraint_name(exc)
                 if constraint_name == CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE:
@@ -418,6 +422,53 @@ class CatalogZoneMembership(PrimaryModel):
         cause = getattr(exc, "__cause__", None)
         diag = getattr(cause, "diag", None)
         return getattr(diag, "constraint_name", None)
+
+    def _save_and_create_ptr_if_new(self, *args, **kwargs):
+        """Save membership atomically and create derived PTR record on create."""
+        is_create = self._state.adding
+        with transaction.atomic():
+            result = super().save(*args, **kwargs)
+            if is_create:
+                self._create_member_ptr_record()
+
+            return result
+
+    def _create_member_ptr_record(self):
+        """Create RFC 9432 member PTR record in the catalog backing DNS zone."""
+        ptr_name = f"{self.member_node_label}.zones"
+        # RFC 9432 §4.1 states that if different member-node labels point to the same PTR target
+        # (same member zone), the catalog is broken; per §5.1 broken catalogs MUST NOT be processed.
+        conflicting_ptr_exists = (
+            PTRRecord.objects.filter(
+                zone=self.catalog_zone.dns_zone,
+                ptrdname=self.member_zone.name,
+            )
+            .exclude(name=ptr_name)
+            .exists()
+        )
+        if conflicting_ptr_exists:
+            raise ValidationError(
+                {
+                    "member_zone": (
+                        "Catalog backing zone already has a PTR record pointing to this member zone; "
+                        "membership would create a duplicate target reference."
+                    )
+                }
+            )
+
+        ptr_record = PTRRecord(
+            name=ptr_name,
+            ptrdname=self.member_zone.name,
+            zone=self.catalog_zone.dns_zone,
+        )
+        ptr_record.validated_save()
+
+    def _delete_member_ptr_record(self):
+        """Delete derived RFC 9432 member PTR record from the catalog backing zone."""
+        PTRRecord.objects.filter(
+            zone=self.catalog_zone.dns_zone,
+            name=f"{self.member_node_label}.zones",
+        ).delete()
 
     def _validate_member_node_label(self):
         """Validate member node label immutability and format."""

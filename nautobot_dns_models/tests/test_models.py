@@ -273,6 +273,69 @@ class CatalogZoneMembershipTestCase(TestCase):
         self.assertEqual(len(membership.member_node_label), 26)
         self.assertTrue(membership.member_node_label.isalnum())
 
+    def test_create_membership_creates_catalog_member_ptr_record(self):
+        """Verify membership creation materializes matching PTR record in catalog zone."""
+        membership = CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.member_zone_1,
+            member_node_label="membernodeone",
+        )
+
+        ptr_record = PTRRecord.objects.get(
+            zone=self.catalog_dns_zone,
+            name="membernodeone.zones",
+        )
+        self.assertEqual(ptr_record.ptrdname, self.member_zone_1.name)
+        self.assertEqual(ptr_record.zone, self.catalog_dns_zone)
+        self.assertEqual(membership.member_node_label, "membernodeone")
+
+    def test_delete_membership_removes_catalog_member_ptr_record(self):
+        """Verify deleting membership removes matching PTR record from catalog zone."""
+        membership = CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.member_zone_1,
+            member_node_label="membernodedelete",
+        )
+        ptr_name = f"{membership.member_node_label}.zones"
+
+        self.assertTrue(
+            PTRRecord.objects.filter(zone=self.catalog_dns_zone, name=ptr_name, ptrdname=self.member_zone_1.name).exists()
+        )
+        membership.delete()
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_dns_zone, name=ptr_name).exists())
+
+    def test_queryset_delete_membership_removes_catalog_member_ptr_record(self):
+        """Verify queryset delete path also removes derived PTR records."""
+        membership = CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.member_zone_1,
+            member_node_label="membernodequerysetdelete",
+        )
+        ptr_name = f"{membership.member_node_label}.zones"
+
+        CatalogZoneMembership.objects.filter(pk=membership.pk).delete()
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_dns_zone, name=ptr_name).exists())
+
+    def test_create_membership_fails_when_conflicting_ptr_target_exists(self):
+        """Verify membership create fails if backing zone already has another PTR to member zone."""
+        PTRRecord.objects.create(
+            zone=self.catalog_dns_zone,
+            name="existingmemberlabel.zones",
+            ptrdname=self.member_zone_1.name,
+        )
+
+        with self.assertRaises(ValidationError):
+            CatalogZoneMembership.objects.create(
+                catalog_zone=self.catalog_zone,
+                member_zone=self.member_zone_1,
+                member_node_label="newmemberlabel",
+            )
+
+        self.assertEqual(
+            CatalogZoneMembership.objects.filter(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1).count(),
+            0,
+        )
+
     def test_one_member_zone_per_catalog_zone(self):
         """Verify same member zone cannot be added twice to one catalog."""
         CatalogZoneMembership.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1)
