@@ -422,6 +422,7 @@ class CatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
         CatalogZone.objects.create(dns_zone=zone_1)
         CatalogZone.objects.create(dns_zone=zone_2)
         CatalogZone.objects.create(dns_zone=zone_3)
+        cls.catalog_zone = zone_1
         cls.member_zone = zone_4
 
     def test_search(self):
@@ -436,6 +437,13 @@ class CatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
         dns_zone_queryset = filterset.filters["dns_zone"].queryset
         self.assertEqual(dns_zone_queryset.count(), 3)
         self.assertNotIn(self.member_zone, dns_zone_queryset)
+
+    def test_members_filter_queryset_only_contains_non_catalog_zones(self):
+        """Advanced filter choices for members should include only non-catalog zones."""
+        filterset = self.filterset({}, self.queryset)
+        members_queryset = filterset.filters["members"].queryset
+        self.assertEqual(members_queryset.count(), 1)
+        self.assertNotIn(self.catalog_zone, members_queryset)
 
 
 class NSRecordFilterTestCase(TestCase):
