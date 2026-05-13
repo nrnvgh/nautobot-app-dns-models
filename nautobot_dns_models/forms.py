@@ -317,6 +317,8 @@ class CatalogZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
     dns_zone = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.all(),
         required=False,
+        label="Backing DNS Zone",
+        query_params={"sort": "name"},
     )
 
     class Meta:
@@ -337,7 +339,7 @@ class CatalogZoneFilterForm(NautobotFilterForm):
         queryset=models.DNSZone.objects.all(),
         required=False,
         label="Backing DNS Zone",
-        query_params={"has_catalog_zone": True},
+        query_params={"has_catalog_zone": True, "sort": "name"},
     )
     model = models.CatalogZone
     fields = [
@@ -358,17 +360,14 @@ class CatalogZoneMembershipForm(NautobotModelForm):
         queryset=models.DNSZone.objects.all(),
         required=True,
         label="Member DNS Zone",
-        query_params={"eligible_for_catalog_zone": "$catalog_zone"},
+        query_params={"eligible_for_catalog_zone": "$catalog_zone", "sort": "name"},
     )
 
     class Meta:
         """Meta attributes."""
 
         model = models.CatalogZoneMembership
-        fields = [
-            "catalog_zone",
-            "member_zone",
-        ]
+        fields = "__all__"
 
 
 class CatalogZoneMembershipFilterForm(NautobotFilterForm):

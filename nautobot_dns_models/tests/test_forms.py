@@ -161,7 +161,7 @@ class CatalogZoneFilterFormTestCase(TestCase):
     def test_backing_dns_zone_choices_only_include_catalog_backing_zones(self):
         """Backing DNS Zone chooser should request only catalog-backing zones."""
         form = self.form_class()
-        self.assertEqual(form.fields["dns_zone"].query_params.get("has_catalog_zone"), "true")
+        self.assertEqual(form.fields["dns_zone"].query_params.get("has_catalog_zone"), True)
         self.assertEqual(form.fields["dns_zone"].query_params.get("sort"), "name")
 
 

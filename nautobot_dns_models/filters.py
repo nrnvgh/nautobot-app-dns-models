@@ -145,14 +145,14 @@ class CatalogZoneFilterSet(NautobotFilterSet):
 
     dns_zone = NaturalKeyOrPKMultipleChoiceFilter(
         field_name="dns_zone",
-        queryset=models.DNSZone.objects.all(),
+        queryset=models.DNSZone.objects.filter(catalog_zone__isnull=False),
         to_field_name="id",
         label="Backing DNS Zone",
         query_params={"has_catalog_zone": True, "sort": "name"},
     )
     members = NaturalKeyOrPKMultipleChoiceFilter(
         field_name="members",
-        queryset=models.DNSZone.objects.all(),
+        queryset=models.DNSZone.objects.filter(catalog_zone__isnull=True),
         to_field_name="id",
         label="Member DNS Zones",
         query_params={"has_catalog_zone": False, "sort": "name"},
