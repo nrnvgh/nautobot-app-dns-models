@@ -222,6 +222,7 @@ class CatalogZoneTestCase(TestCase):
 
         self.assertTrue(CatalogZone.objects.filter(id=catalog_zone.id).exists())
 
+
 class CatalogZoneMembershipTestCase(TestCase):
     """Test the CatalogZoneMembership through model."""
 

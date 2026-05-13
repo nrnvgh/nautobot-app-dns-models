@@ -103,6 +103,7 @@ class DNSZoneViewSet(NautobotModelViewSet):
 
 class CatalogZoneViewSet(NautobotModelViewSet):
     """CatalogZone API ViewSet."""
+
     #
     # Nautobot doesn't currently optimize nested paths for API calls
     # (ref: the comment in nautobot/core/api/views.py:ModelViewSetMixin.get_queryset), so this
