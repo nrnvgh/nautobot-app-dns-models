@@ -9,6 +9,8 @@ from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.extras.models import StatusField
 from nautobot.ipam.choices import IPAddressVersionChoices
 
+from nautobot_dns_models.querysets import CatalogZoneMembershipQuerySet, DNSZoneQuerySet
+
 
 def dns_wire_label_length(label):
     """Return the wire-format (IDNA/Punycode) length of a DNS label."""
@@ -153,6 +155,11 @@ class DNSZone(DNSModel):
     """Model for DNS SOA Records. An SOA Record defines a DNS Zone."""
 
     name = models.CharField(max_length=200, help_text="FQDN of the Zone, w/ TLD. e.g example.com")
+    is_catalog_zone = models.BooleanField(
+        default=False,
+        help_text="Whether this DNS zone is designated as a catalog zone.",
+        verbose_name="Catalog Zone",
+    )
     dns_view = ForeignKeyWithAutoRelatedName(
         DNSView,
         on_delete=models.PROTECT,
@@ -213,6 +220,7 @@ class DNSZone(DNSModel):
         blank=True,
         null=True,
     )
+    objects = DNSZoneQuerySet.as_manager()
 
     class Meta:
         """Meta attributes for DNSZone."""
@@ -220,6 +228,138 @@ class DNSZone(DNSModel):
         unique_together = [["name", "dns_view"]]
         verbose_name = "DNS Zone"
         verbose_name_plural = "DNS Zones"
+
+    def clean(self):
+        """Validate DNSZone and protect invalid catalog designation transitions."""
+        super().clean()
+        self._validate_catalog_designation_transition()
+
+    def save(self, *args, **kwargs):
+        """Persist DNSZone after enforcing catalog designation transition rules."""
+        self._validate_catalog_designation_transition()
+        return super().save(*args, **kwargs)
+
+    def _validate_catalog_designation_transition(self):
+        """Prevent changing catalog designation after create."""
+        if self.pk is None:
+            return
+
+        current_is_catalog = (
+            DNSZone.objects.only("is_catalog_zone").filter(pk=self.pk).values_list("is_catalog_zone", flat=True).first()
+        )
+        if current_is_catalog is None or self.is_catalog_zone == current_is_catalog:
+            return
+
+        raise ValidationError({"is_catalog_zone": "Catalog zone designation is immutable after creation."})
+
+
+class CatalogZoneManager(models.Manager.from_queryset(DNSZoneQuerySet)):
+    """Manager restricting proxy rows to catalog-designated DNS zones."""
+
+    def get_queryset(self):
+        """Return only catalog-designated DNS zones for proxy access."""
+        return super().get_queryset().catalog()
+
+
+@extras_features(
+    "custom_fields",
+    "custom_links",
+    "custom_validators",
+    "export_templates",
+    "graphql",
+    "relationships",
+    "webhooks",
+)
+class CatalogZone(DNSZone):
+    """Proxy model representing DNS zones used as catalog zones."""
+
+    objects = CatalogZoneManager()
+
+    class Meta:
+        """Meta attributes for CatalogZone."""
+
+        proxy = True
+        verbose_name = "Catalog Zone"
+        verbose_name_plural = "Catalog Zones"
+
+    def clean(self):
+        """Enforce catalog designation for proxy-backed zones."""
+        self.is_catalog_zone = True
+        super().clean()
+
+    def save(self, *args, **kwargs):
+        """Persist catalog designation when saving through proxy model."""
+        self.is_catalog_zone = True
+        self.clean()
+        return super().save(*args, **kwargs)
+
+
+@extras_features("graphql")
+class CatalogZoneMembership(BaseModel):
+    """Membership mapping between a catalog zone and a non-catalog member zone."""
+
+    catalog_zone = ForeignKeyWithAutoRelatedName(
+        CatalogZone,
+        on_delete=models.PROTECT,
+        related_name="memberships",
+        help_text="Catalog DNS zone owning this membership.",
+    )
+    member_zone = models.OneToOneField(
+        DNSZone,
+        on_delete=models.PROTECT,
+        related_name="membership",
+        help_text="Member DNS zone assigned to the catalog.",
+    )
+
+    objects = CatalogZoneMembershipQuerySet.as_manager()
+
+    class Meta:
+        """Meta attributes for CatalogZoneMembership."""
+
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(catalog_zone=models.F("member_zone")),
+                name="nautobot_dns_models_catalogzonemembership_not_self",
+            ),
+        ]
+        verbose_name = "Catalog Zone Membership"
+        verbose_name_plural = "Catalog Zone Memberships"
+
+    def __str__(self):
+        """Stringify instance."""
+        return f"{self.member_zone} in {self.catalog_zone}"
+
+    def clean(self):
+        """Validate catalog-zone membership invariants."""
+        super().clean()
+
+        errors = {}
+        if self.catalog_zone_id is None:
+            errors["catalog_zone"] = "Catalog zone is required."
+
+        if self.member_zone_id is None:
+            errors["member_zone"] = "Member zone is required."
+
+        if errors:
+            raise ValidationError(errors)
+
+        if self.catalog_zone_id == self.member_zone_id:
+            raise ValidationError({"member_zone": "Member zone cannot match the catalog zone."})
+
+        catalog_zone = DNSZone.objects.only("is_catalog_zone").filter(pk=self.catalog_zone_id).first()
+        if catalog_zone is None:
+            raise ValidationError({"catalog_zone": "Catalog zone is invalid."})
+
+        if not catalog_zone.is_catalog_zone:
+            raise ValidationError({"catalog_zone": "Catalog zone must be designated as a catalog zone."})
+
+        if self.member_zone.is_catalog_zone:
+            raise ValidationError({"member_zone": "Member zone cannot be a catalog zone."})
+
+    def save(self, *args, **kwargs):
+        """Ensure membership validation runs on direct ORM writes."""
+        self.clean()
+        return super().save(*args, **kwargs)
 
 
 @extras_features(

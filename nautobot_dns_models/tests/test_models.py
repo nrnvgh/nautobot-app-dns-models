@@ -2,6 +2,7 @@
 
 from constance.test import override_config
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
@@ -9,6 +10,8 @@ from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZone,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSView,
@@ -174,6 +177,123 @@ class TestDnsZone(ModelTestCases.BaseModelTestCase):
     def test_get_absolute_url(self):
         dns_zone_model = DNSZone.objects.create(name="example.com")
         self.assertEqual(dns_zone_model.get_absolute_url(), f"/plugins/dns/dns-zones/{dns_zone_model.id}/")
+
+
+class CatalogZoneModelTestCase(TestCase):
+    """Test CatalogZone proxy model behavior."""
+
+    def test_catalog_zone_save_sets_catalog_flag(self):
+        catalog_zone = CatalogZone.objects.create(name="catalog.example")
+        catalog_zone.refresh_from_db()
+        self.assertTrue(catalog_zone.is_catalog_zone)
+
+        underlying_zone = DNSZone.objects.get(pk=catalog_zone.pk)
+        self.assertTrue(underlying_zone.is_catalog_zone)
+
+    def test_catalog_zone_manager_returns_only_catalog_zones(self):
+        standard_zone = DNSZone.objects.create(name="standard.example")
+        catalog_zone = CatalogZone.objects.create(name="catalog-only.example")
+
+        catalog_zone_ids = set(CatalogZone.objects.values_list("id", flat=True))
+        self.assertIn(catalog_zone.id, catalog_zone_ids)
+        self.assertNotIn(standard_zone.id, catalog_zone_ids)
+
+    def test_dns_zone_catalog_designation_cannot_change_false_to_true(self):
+        """Ensure non-catalog zones cannot be promoted after creation."""
+        zone = DNSZone.objects.create(name="immutable-false.example", is_catalog_zone=False)
+        zone.is_catalog_zone = True
+
+        with self.assertRaises(ValidationError):
+            zone.save()
+
+    def test_dns_zone_catalog_designation_cannot_change_true_to_false(self):
+        """Ensure catalog zones cannot be demoted after creation."""
+        catalog_zone = CatalogZone.objects.create(name="immutable-true.example")
+        zone = DNSZone.objects.get(pk=catalog_zone.pk)
+        zone.is_catalog_zone = False
+
+        with self.assertRaises(ValidationError):
+            zone.save()
+
+
+class CatalogZoneMembershipModelTestCase(TestCase):
+    """Test CatalogZoneMembership validation and persistence rules."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = CatalogZone.objects.create(name="catalog-parent.example")
+        cls.member_zone = DNSZone.objects.create(name="member-zone.example")
+        cls.other_member_zone = DNSZone.objects.create(name="member-zone-2.example")
+        cls.non_catalog_zone = DNSZone.objects.create(name="non-catalog.example")
+
+    def test_create_catalog_zone_membership(self):
+        membership = CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone,
+            member_zone=self.member_zone,
+        )
+        self.assertEqual(membership.catalog_zone_id, self.catalog_zone.id)
+        self.assertEqual(membership.member_zone, self.member_zone)
+
+    def test_reject_self_membership(self):
+        with self.assertRaises(ValidationError):
+            membership = CatalogZoneMembership(
+                catalog_zone=self.catalog_zone,
+                member_zone_id=self.catalog_zone.id,
+            )
+            membership.full_clean()
+
+    def test_reject_non_catalog_catalog_zone(self):
+        with self.assertRaises(ValidationError):
+            membership = CatalogZoneMembership(
+                catalog_zone_id=self.non_catalog_zone.id,
+                member_zone=self.member_zone,
+            )
+            membership.full_clean()
+
+    def test_reject_member_zone_that_is_catalog(self):
+        other_catalog_zone = CatalogZone.objects.create(name="catalog-child.example")
+        with self.assertRaises(ValidationError):
+            membership = CatalogZoneMembership(
+                catalog_zone=self.catalog_zone,
+                member_zone=other_catalog_zone,
+            )
+            membership.full_clean()
+
+    def test_member_zone_can_only_join_one_catalog(self):
+        CatalogZoneMembership.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone)
+        second_catalog_zone = CatalogZone.objects.create(name="catalog-parent-2.example")
+
+        with self.assertRaises(IntegrityError):
+            CatalogZoneMembership.objects.create(catalog_zone=second_catalog_zone, member_zone=self.member_zone)
+
+    def test_db_constraint_rejects_self_membership_via_bulk_create(self):
+        """Ensure DB check constraint rejects self-membership when clean() is bypassed."""
+        with self.assertRaises(IntegrityError):
+            CatalogZoneMembership.objects.bulk_create(
+                [
+                    CatalogZoneMembership(
+                        catalog_zone=self.catalog_zone,
+                        member_zone_id=self.catalog_zone.id,
+                    )
+                ]
+            )
+
+    def test_non_bulk_create_rejects_self_membership(self):
+        """Ensure non-bulk create path rejects self-membership via model validation."""
+        with self.assertRaises(ValidationError):
+            CatalogZoneMembership.objects.create(
+                catalog_zone=self.catalog_zone,
+                member_zone_id=self.catalog_zone.id,
+            )
+
+    def test_non_bulk_save_rejects_self_membership(self):
+        """Ensure direct save path rejects self-membership via model validation."""
+        with self.assertRaises(ValidationError):
+            membership = CatalogZoneMembership(
+                catalog_zone=self.catalog_zone,
+                member_zone_id=self.catalog_zone.id,
+            )
+            membership.save()
 
 
 class NSRecordTestCase(TestCase):
