@@ -71,7 +71,7 @@ class RecordNameNormalizationMixin:
         return expected_name, payload
 
     @override_config(nautobot_dns_models__NORMALIZE_DNS_RECORDS=True)
-    def test_record_name_normalized_on_save_with_constance_config_normalize_true(self):
+    def test_record_name_normalized_on_clean_with_constance_config_normalize_true(self):
         """Record.name should be normalized when the constance config is set to True."""
 
         for normalization_data in self.normalization_data:
@@ -83,19 +83,20 @@ class RecordNameNormalizationMixin:
                 self.assertEqual(record.name, expected_name)
 
     @override_config(nautobot_dns_models__NORMALIZE_DNS_RECORDS=False)
-    def test_record_fails_validation_on_save_with_constance_config_normalize_false(self):
+    def test_record_fails_validation_on_clean_with_constance_config_normalize_false(self):
         """Invalid record.name values should fail validation when the constance config is set to False."""
 
         for normalization_data in self.normalization_data:
-            _, record_create_data = self._strip_expected(normalization_data)
-            record = self.model(**record_create_data)  # pylint: disable=not-callable
-            with self.assertRaises(ValidationError) as context:
-                record.full_clean()
+            with self.subTest(normalization_data=normalization_data):
+                _, record_create_data = self._strip_expected(normalization_data)
+                record = self.model(**record_create_data)  # pylint: disable=not-callable
+                with self.assertRaises(ValidationError) as context:
+                    record.full_clean()
 
-            self.assertIn(
-                "Field is not normalized.",
-                str(context.exception),
-            )
+                self.assertIn(
+                    "Field is not normalized.",
+                    str(context.exception),
+                )
 
 
 class TestDNSView(ModelTestCases.BaseModelTestCase):
