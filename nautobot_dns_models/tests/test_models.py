@@ -64,20 +64,14 @@ class RecordNameNormalizationMixin:
 
     model = None
 
-    @classmethod
-    def _strip_expected(cls, normalization_data):
-        expected_name = normalization_data["expected_name"]
-        payload = {k: v for k, v in normalization_data.items() if k != "expected_name"}
-        return expected_name, payload
-
     @override_config(nautobot_dns_models__NORMALIZE_DNS_RECORDS=True)
     def test_record_name_normalized_on_clean_with_constance_config_normalize_true(self):
         """Record.name should be normalized when the constance config is set to True."""
 
         for normalization_data in self.normalization_data:
             with self.subTest(normalization_data=normalization_data):
-                expected_name, record_create_data = self._strip_expected(normalization_data)
-                record = self.model(**record_create_data)  # pylint: disable=not-callable
+                expected_name = normalization_data.pop("expected_name")
+                record = self.model(**normalization_data)  # pylint: disable=not-callable
                 record.full_clean()
 
                 self.assertEqual(record.name, expected_name)
@@ -88,8 +82,8 @@ class RecordNameNormalizationMixin:
 
         for normalization_data in self.normalization_data:
             with self.subTest(normalization_data=normalization_data):
-                _, record_create_data = self._strip_expected(normalization_data)
-                record = self.model(**record_create_data)  # pylint: disable=not-callable
+                normalization_data.pop("expected_name")
+                record = self.model(**normalization_data)  # pylint: disable=not-callable
                 with self.assertRaises(ValidationError) as context:
                     record.full_clean()
 
