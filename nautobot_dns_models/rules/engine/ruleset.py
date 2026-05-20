@@ -11,17 +11,31 @@ class RuleSetSelector:
     """Resolve applicable rules for a scoped content type."""
 
     def resolve_for_scope(self, content_type, object_location, object_tenant, selected_rule_ids=None):
-        """Resolve rules for a specific content-type/location/tenant scope."""
+        """Resolve rules for a specific content-type/location/tenant scope.
+
+        Args:
+            content_type: Source object content type used to scope candidate rules.
+            object_location: Resolved location for the source object, or None.
+            object_tenant: Resolved tenant for the source object, or None.
+            selected_rule_ids: Optional set of rule IDs used to constrain candidates.
+                - ``None`` means no explicit selection filter is applied, so all
+                  enabled scope-matching rules are considered by precedence logic.
+                - An empty set means explicitly select no rules.
+
+        Returns:
+            list: Ordered list of applicable ``DNSRule`` objects after applying
+                optional selection filtering and per-record-type scope precedence.
+        """
         if object_location is None and object_tenant is None:
             queryset = DNSRule.objects.filter(
                 content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
             )
-            if selected_rule_ids:
+            if selected_rule_ids is not None:
                 queryset = queryset.filter(pk__in=selected_rule_ids)
             return list(queryset)
 
         base_query = DNSRule.objects.filter(content_type=content_type, enabled=True)
-        if selected_rule_ids:
+        if selected_rule_ids is not None:
             base_query = base_query.filter(pk__in=selected_rule_ids)
 
         location_conditions = django_models.Q(location=object_location) | django_models.Q(location__isnull=True)

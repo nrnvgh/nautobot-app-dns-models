@@ -119,3 +119,30 @@ class RuleSetSelectorTestCase(BaseRuleEngineMixin, TestCase):
         )
 
         self.assertEqual({rule.pk for rule in rules}, {global_rule.pk})
+
+    def test_resolve_for_scope_empty_selected_rule_ids_returns_no_rules(self):
+        """Explicit empty selected_rule_ids should return no rules for scoped resolution."""
+        self._create_rule("location-tenant-a", record_type="A", location=self.location, tenant=self.tenant)
+        self._create_rule("global-a", record_type="A")
+
+        rules = self.selector.resolve_for_scope(
+            self.device_content_type,
+            self.location,
+            self.tenant,
+            selected_rule_ids=set(),
+        )
+
+        self.assertEqual(rules, [])
+
+    def test_resolve_for_scope_global_path_empty_selected_rule_ids_returns_no_rules(self):
+        """Explicit empty selected_rule_ids should return no rules for global-only resolution."""
+        self._create_rule("global-a", record_type="A")
+
+        rules = self.selector.resolve_for_scope(
+            self.device_content_type,
+            None,
+            None,
+            selected_rule_ids=set(),
+        )
+
+        self.assertEqual(rules, [])

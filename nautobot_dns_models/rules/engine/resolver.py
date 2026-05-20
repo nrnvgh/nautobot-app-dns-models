@@ -31,7 +31,16 @@ class RuleResolver:
         self._engine_logger = DEFAULT_ENGINE_LOGGER
         self._scope_resolver = ScopeResolver()
         self._ruleset_selector = RuleSetSelector()
-        self._selected_rule_ids = {rule.pk for rule in selected_rules} if selected_rules else None
+        if selected_rules is None:
+            self._selected_rule_ids = None
+        else:
+            selected_rule_ids = {rule.pk for rule in selected_rules}
+            if not selected_rule_ids:
+                raise ValueError(
+                    "selected_rules was provided but empty. "
+                    "Use None for unconstrained resolution, or provide at least one rule."
+                )
+            self._selected_rule_ids = selected_rule_ids
 
     def get_applicable_rules(self, source_obj):
         """Scope-key cache for applicable-rule resolution."""
@@ -43,10 +52,10 @@ class RuleResolver:
         if cached_rules is not None:
             return cached_rules
 
-        selected_rules = self._resolve_applicable_rules_for_scope(content_type, object_location, object_tenant)
-        self._cache.applicable_rules_cache[cache_key] = selected_rules
+        applicable_rules = self._resolve_applicable_rules_for_scope(content_type, object_location, object_tenant)
+        self._cache.applicable_rules_cache[cache_key] = applicable_rules
 
-        return selected_rules
+        return applicable_rules
 
     def object_needs_dns_records_for_rule(self, source_obj, rule):
         """Return whether this object should produce records for the given rule."""
