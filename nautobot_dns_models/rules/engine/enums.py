@@ -1,9 +1,21 @@
 """Shared enums for DNS rule engine collaborators."""
 
+# Prefer stdlib StrEnum when available; provide a local fallback for Python 3.10
+# compatibility until this project drops 3.10 support (upstream EOL: October 2026).
 from enum import Enum
 
+try:
+    from enum import StrEnum
+except ImportError:
+    class StrEnum(str, Enum):
+        """Compatibility fallback for Python versions without enum.StrEnum."""
 
-class EnginePhase(str, Enum):
+        def __str__(self):
+            """Return canonical serialized enum value."""
+            return self.value
+
+
+class EnginePhase(StrEnum):
     """Canonical phase labels used for log consistency and queryability."""
 
     CREATE = "create"
@@ -11,12 +23,8 @@ class EnginePhase(str, Enum):
     CANDIDATE_EXPANSION = "candidate_expansion"
     UNKNOWN = "unknown"
 
-    def __str__(self):
-        """Return canonical serialized phase value."""
-        return self.value
 
-
-class EngineReason(str, Enum):
+class EngineReason(StrEnum):
     """Stable reason tokens used for structured logging and error classification."""
 
     VIEW_TEMPLATE_EMPTY = "VIEW_TEMPLATE_EMPTY"
@@ -30,12 +38,8 @@ class EngineReason(str, Enum):
     INVALID_ADDRESS_UUID = "INVALID_ADDRESS_UUID"
     INTERFACE_PARENT_FALLBACK_FAILED = "INTERFACE_PARENT_FALLBACK_FAILED"
 
-    def __str__(self):
-        """Return canonical serialized reason value."""
-        return self.value
 
-
-class ExecutionMode(str, Enum):
+class ExecutionMode(StrEnum):
     """Execution profile for reconcile mutations."""
 
     STANDARD = "standard"
