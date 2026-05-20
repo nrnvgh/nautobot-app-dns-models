@@ -1,5 +1,6 @@
 """Scope resolution helpers for DNS rule source objects."""
 
+from django.core.exceptions import ObjectDoesNotExist
 from nautobot.dcim import models as dcim_models
 from nautobot.ipam import models as ipam_models
 from nautobot.virtualization import models as virtualization_models
@@ -76,7 +77,9 @@ class ScopeResolver:
         """
         if isinstance(source_obj, dcim_models.Interface):
             if source_obj.device:
-                return source_obj.device.tenant
+                resolved_tenant = self._resolve_device_chain_field(source_obj.device, "tenant")
+                if resolved_tenant is not None:
+                    return resolved_tenant
 
             module = source_obj.module
             if module and module.tenant:
@@ -84,7 +87,9 @@ class ScopeResolver:
 
             parent = source_obj.parent
             if isinstance(parent, dcim_models.Device):
-                return parent.tenant
+                resolved_tenant = self._resolve_device_chain_field(parent, "tenant")
+                if resolved_tenant is not None:
+                    return resolved_tenant
 
             self._engine_logger.log_interface_parent_fallback_failed(
                 source_obj=source_obj,
@@ -116,5 +121,22 @@ class ScopeResolver:
                 return vm.tenant or vm.cluster.tenant
 
             return None
+
+        return None
+
+    @staticmethod
+    def _resolve_device_chain_field(device, field_name):
+        """Return first non-null field value while traversing device parent chain."""
+        current = device
+        while current is not None:
+            value = getattr(current, field_name, None)
+            if value is not None:
+                return value
+            try:
+                parent_bay = current.parent_bay
+            except ObjectDoesNotExist:
+                parent_bay = None
+
+            current = parent_bay.device if parent_bay else None
 
         return None
