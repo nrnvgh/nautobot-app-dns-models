@@ -127,7 +127,7 @@ class DNSRuleEngine:
     def delete_dns_records_for_object(self, source_obj):
         """Delete all DNS records created from a source object."""
         content_type = ContentType.objects.get_for_model(source_obj)
-        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.id)
+        rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.pk)
 
         for rule_record in rule_records:
             self._writer.delete_tracking_and_dns_record(rule_record)
