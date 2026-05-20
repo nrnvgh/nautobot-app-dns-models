@@ -218,7 +218,7 @@ class EngineLogger:
             extra["candidate_address_id"] = str(record_data.get("address_id", ""))
             extra["candidate_name"] = record_data.get("name")
             zone = record_data.get("zone")
-            extra["candidate_zone_id"] = str(zone.id) if zone is not None else ""
+            extra["candidate_zone_id"] = str(zone.pk) if zone is not None else ""
 
         return extra
 
