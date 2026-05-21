@@ -77,17 +77,15 @@ class ScopeResolver:
         """
         if isinstance(source_obj, dcim_models.Interface):
             if source_obj.device:
-                resolved_tenant = self._resolve_device_chain_field(source_obj.device, "tenant")
-                if resolved_tenant is not None:
+                if resolved_tenant := self._resolve_device_chain_field(source_obj.device, "tenant"):
                     return resolved_tenant
 
-            module = source_obj.module
-            if module and module.tenant:
+            if (module := source_obj.module) and module.tenant:
                 return module.tenant
 
             parent = source_obj.parent
             if isinstance(parent, dcim_models.Device):
-                if resolved_tenant := self._resolve_device_chain_field(parent, "tenant")
+                if resolved_tenant := self._resolve_device_chain_field(parent, "tenant"):
                     return resolved_tenant
 
             self._engine_logger.log_interface_parent_fallback_failed(
