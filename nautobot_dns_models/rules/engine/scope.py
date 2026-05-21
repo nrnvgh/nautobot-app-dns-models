@@ -87,8 +87,7 @@ class ScopeResolver:
 
             parent = source_obj.parent
             if isinstance(parent, dcim_models.Device):
-                resolved_tenant = self._resolve_device_chain_field(parent, "tenant")
-                if resolved_tenant is not None:
+                if resolved_tenant := self._resolve_device_chain_field(parent, "tenant")
                     return resolved_tenant
 
             self._engine_logger.log_interface_parent_fallback_failed(
@@ -100,8 +99,7 @@ class ScopeResolver:
             return None
 
         if isinstance(source_obj, virtualization_models.VMInterface):
-            if source_obj.virtual_machine:
-                vm = source_obj.virtual_machine
+            if vm := source_obj.virtual_machine:
                 return vm.tenant or vm.cluster.tenant
 
             return None
@@ -116,8 +114,7 @@ class ScopeResolver:
             if source_obj.device:
                 return source_obj.device.tenant
 
-            if source_obj.virtual_machine:
-                vm = source_obj.virtual_machine
+            if vm := source_obj.virtual_machine:
                 return vm.tenant or vm.cluster.tenant
 
             return None
