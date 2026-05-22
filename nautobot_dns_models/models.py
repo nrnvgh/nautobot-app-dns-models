@@ -8,12 +8,11 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import IntegrityError, models, transaction
 from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
-from nautobot.core.models import BaseManager
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.extras.models import StatusField
 from nautobot.ipam.choices import IPAddressVersionChoices
 
-from nautobot_dns_models.querysets import CatalogZoneMembershipQuerySet
+from nautobot_dns_models.querysets import CatalogZoneMembershipManager
 
 CATALOG_ZONE_SCHEMA_VERSION = "2"
 CATALOG_ZONE_VERSION_RECORD_NAME = "version"
@@ -359,7 +358,7 @@ class CatalogZoneMembership(PrimaryModel):
         blank=True,
         help_text="Opaque immutable label for the member node in the catalog zone.",
     )
-    objects = BaseManager.from_queryset(CatalogZoneMembershipQuerySet)()
+    objects = CatalogZoneMembershipManager()
 
     class Meta:
         """Meta attributes for CatalogZoneMembership."""

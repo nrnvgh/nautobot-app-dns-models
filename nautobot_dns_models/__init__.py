@@ -95,10 +95,5 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
         ),
     }
 
-    def ready(self):
-        """Register app signal handlers."""
-        super().ready()
-        import nautobot_dns_models.signals  # noqa: F401  # pylint: disable=unused-import,import-outside-toplevel
-
 
 config = NautobotDnsModelsConfig  # pylint:disable=invalid-name
