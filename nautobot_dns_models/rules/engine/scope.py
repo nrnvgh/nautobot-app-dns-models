@@ -25,6 +25,15 @@ class ScopeResolver:
           * VMInterface: vminterface.virtual_machine.location
           * Device: device.location
           * VirtualMachine: virtual_machine.location
+
+        Args:
+            source_obj: Supported source object whose location scope should be
+                resolved.
+
+        Returns:
+            Location | None: Resolved location for the object. Returns ``None``
+                when no location can be resolved from configured relationships
+                for the given object.
         """
         if isinstance(source_obj, dcim_models.Interface):
             if source_obj.device:
@@ -52,6 +61,7 @@ class ScopeResolver:
             return source_obj.location
 
         if isinstance(source_obj, virtualization_models.VirtualMachine):
+            # VirtualMachine.location is a property method which resolves to VirtualMachine.cluster.location
             return source_obj.location
 
         if isinstance(source_obj, ipam_models.Service):
@@ -74,6 +84,15 @@ class ScopeResolver:
           * VMInterface: vm.tenant fallback to vm.cluster.tenant
           * Device: device.tenant
           * VirtualMachine: vm.tenant fallback to vm.cluster.tenant
+
+        Args:
+            source_obj: Supported source object whose tenant scope should be
+                resolved.
+
+        Returns:
+            Tenant | None: Resolved tenant for the object. Returns ``None``
+                when no tenant can be resolved from configured relationships
+                for the given object.
         """
         if isinstance(source_obj, dcim_models.Interface):
             if source_obj.device:
