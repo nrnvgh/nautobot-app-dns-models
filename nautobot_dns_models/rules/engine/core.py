@@ -92,9 +92,13 @@ class DNSRuleEngine:
         """Process one source object against applicable rules."""
         summary = ObjectProcessingMetrics()
         content_type = ContentType.objects.get_for_model(source_obj)
-        rules = self.get_applicable_rules(source_obj)
+        existing_rule_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.pk)
+        existing_rule_record_count = existing_rule_records.count()
+        summary.existing_rule_record_count = existing_rule_record_count
+        summary.had_existing_rule_records = existing_rule_record_count > 0
 
-        if not rules:
+        rules = self.get_applicable_rules(source_obj)
+        if not rules and existing_rule_record_count == 0:
             logger.debug(
                 "No DNS rules found for %s - skipping DNS record processing for %s",
                 content_type,
@@ -102,14 +106,14 @@ class DNSRuleEngine:
             )
             return summary
 
-        existing_records = DNSRuleRecord.objects.filter(content_type=content_type, object_id=source_obj.pk)
-        existing_count = existing_records.count()
-        summary.existing_rule_record_count = existing_count
-        summary.had_existing_rule_records = existing_count > 0
-
-        if created or existing_count == 0:
+        # Create only when rules exist and this object has no tracked DNS records yet.
+        # All other non-noop cases use update reconciliation (including no-rules cleanup).
+        if rules and (created or existing_rule_record_count == 0):
             change_result = self._writer.create_dns_records_for_object(source_obj, rules)
         else:
+            # Route through update reconciliation instead of direct delete so stale
+            # tracked records are cleaned up via orphan logic and counters remain
+            # accurate in ObjectProcessingMetrics/job summary output.
             change_result = self._writer.update_dns_records_for_object(source_obj, rules)
 
         summary.changed_record_count = change_result["changed_record_count"]
