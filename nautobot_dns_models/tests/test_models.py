@@ -299,7 +299,9 @@ class CatalogZoneMembershipTestCase(TestCase):
         ptr_name = f"{membership.member_node_label}.zones"
 
         self.assertTrue(
-            PTRRecord.objects.filter(zone=self.catalog_dns_zone, name=ptr_name, ptrdname=self.member_zone_1.name).exists()
+            PTRRecord.objects.filter(
+                zone=self.catalog_dns_zone, name=ptr_name, ptrdname=self.member_zone_1.name
+            ).exists()
         )
         membership.delete()
         self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_dns_zone, name=ptr_name).exists())
@@ -332,7 +334,9 @@ class CatalogZoneMembershipTestCase(TestCase):
             )
 
         self.assertEqual(
-            CatalogZoneMembership.objects.filter(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1).count(),
+            CatalogZoneMembership.objects.filter(
+                catalog_zone=self.catalog_zone, member_zone=self.member_zone_1
+            ).count(),
             0,
         )
 
@@ -342,6 +346,16 @@ class CatalogZoneMembershipTestCase(TestCase):
         with self.assertRaises(CatalogZoneMembershipAlreadyExistsError):
             with transaction.atomic():
                 CatalogZoneMembership.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1)
+
+    def test_member_zone_can_only_belong_to_one_catalog_zone(self):
+        """Verify a member zone cannot be assigned to multiple catalog zones."""
+        second_catalog_dns_zone = DNSZone.objects.create(name="catalog-2.example.com")
+        second_catalog_zone = CatalogZone.objects.create(dns_zone=second_catalog_dns_zone)
+        CatalogZoneMembership.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1)
+
+        with self.assertRaises(CatalogZoneMembershipAlreadyExistsError):
+            with transaction.atomic():
+                CatalogZoneMembership.objects.create(catalog_zone=second_catalog_zone, member_zone=self.member_zone_1)
 
     def test_member_node_label_unique_per_catalog_zone(self):
         """Verify labels are unique within one catalog zone."""

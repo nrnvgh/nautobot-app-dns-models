@@ -12,7 +12,6 @@ from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.extras.models import StatusField
 from nautobot.ipam.choices import IPAddressVersionChoices
 
-
 CATALOG_ZONE_SCHEMA_VERSION = "2"
 CATALOG_ZONE_VERSION_RECORD_NAME = "version"
 CATALOG_MEMBER_NODE_LABEL_MAX_GENERATION_ATTEMPTS = 10
@@ -387,6 +386,14 @@ class CatalogZoneMembership(PrimaryModel):
 
     def save(self, *args, **kwargs):
         """Persist membership while generating collision-safe random labels."""
+        existing_membership = CatalogZoneMembership.objects.filter(member_zone_id=self.member_zone_id).exclude(
+            pk=self.pk
+        )
+        if existing_membership.exists():
+            raise CatalogZoneMembershipAlreadyExistsError(
+                "Membership already exists for this member zone in another catalog zone."
+            )
+
         #
         # TODO: Probably remove this. we shouldn't allow users to define their own member node labels.
         if self.member_node_label:
