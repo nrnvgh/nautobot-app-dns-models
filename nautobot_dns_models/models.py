@@ -8,9 +8,12 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import IntegrityError, models, transaction
 from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
+from nautobot.core.models import BaseManager
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.extras.models import StatusField
 from nautobot.ipam.choices import IPAddressVersionChoices
+
+from nautobot_dns_models.querysets import CatalogZoneMembershipQuerySet
 
 CATALOG_ZONE_SCHEMA_VERSION = "2"
 CATALOG_ZONE_VERSION_RECORD_NAME = "version"
@@ -356,6 +359,7 @@ class CatalogZoneMembership(PrimaryModel):
         blank=True,
         help_text="Opaque immutable label for the member node in the catalog zone.",
     )
+    objects = BaseManager.from_queryset(CatalogZoneMembershipQuerySet)()
 
     class Meta:
         """Meta attributes for CatalogZoneMembership."""
@@ -423,6 +427,12 @@ class CatalogZoneMembership(PrimaryModel):
                 raise
 
         raise CatalogMemberNodeLabelGenerationError("Unable to generate a unique member node label.")
+
+    def delete(self, *args, **kwargs):
+        """Delete membership and remove derived PTR record."""
+        with transaction.atomic():
+            self._delete_member_ptr_record()
+            return super().delete(*args, **kwargs)
 
     def _get_integrity_error_constraint_name(self, exc):
         """Return a database constraint name when available."""

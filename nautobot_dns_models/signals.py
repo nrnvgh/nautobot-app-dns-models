@@ -1,6 +1,6 @@
 """Signals for nautobot_dns_models."""
 
-from django.db.models.signals import m2m_changed, pre_delete
+from django.db.models.signals import m2m_changed
 from django.dispatch import receiver
 
 from nautobot_dns_models.models import CatalogZoneMembership
@@ -55,9 +55,3 @@ def assign_member_node_labels_on_members_add(sender, instance, action, reverse, 
     # Skip Django's default bulk through-table insert because we've already
     # created all required through rows with validated_save().
     pk_set.clear()
-
-
-@receiver(pre_delete, sender=CatalogZoneMembership)
-def delete_member_ptr_record_on_membership_delete(sender, instance, **kwargs):  # pylint: disable=unused-argument
-    """Ensure derived catalog PTR records are removed with membership rows."""
-    instance._delete_member_ptr_record()
