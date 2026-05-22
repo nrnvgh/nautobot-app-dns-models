@@ -25,48 +25,66 @@ class RuleSetSelector:
         Returns:
             list: Ordered list of applicable ``DNSRule`` objects after applying
                 optional selection filtering and per-record-type scope precedence.
+                The result contains at most one rule per DNS record type. When
+                multiple scope levels are eligible for a record type, the most
+                specific matching scope is selected in this order:
+                ``location_tenant`` > ``location`` > ``tenant`` > ``global``.
         """
         if object_location is None and object_tenant is None:
-            queryset = DNSRule.objects.filter(
-                content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
+            # Fast path for global-only scope lookups
+            resolved_rules = self._resolve_global_scope_rules(content_type, selected_rule_ids)
+        else:
+            resolved_rules = self._resolve_scoped_rules(
+                content_type,
+                object_location,
+                object_tenant,
+                selected_rule_ids=selected_rule_ids,
             )
-            if selected_rule_ids is not None:
-                queryset = queryset.filter(pk__in=selected_rule_ids)
-            return list(queryset)
 
+        return sorted(resolved_rules, key=lambda rule: rule.record_type)
+
+    def _resolve_global_scope_rules(self, content_type, selected_rule_ids=None):
+        """Resolve global-only rules for objects without location and tenant scope."""
+        queryset = DNSRule.objects.filter(
+            content_type=content_type, location__isnull=True, tenant__isnull=True, enabled=True
+        )
+        if selected_rule_ids is not None:
+            queryset = queryset.filter(pk__in=selected_rule_ids)
+
+        return list(queryset)
+
+    def _resolve_scoped_rules(self, content_type, object_location, object_tenant, selected_rule_ids=None):
+        """Resolve scoped rules using per-record-type scope precedence."""
         base_query = DNSRule.objects.filter(content_type=content_type, enabled=True)
         if selected_rule_ids is not None:
             base_query = base_query.filter(pk__in=selected_rule_ids)
 
         location_conditions = django_models.Q(location=object_location) | django_models.Q(location__isnull=True)
         tenant_conditions = django_models.Q(tenant=object_tenant) | django_models.Q(tenant__isnull=True)
-        all_rules = list(base_query.filter(location_conditions & tenant_conditions))
-        rules_by_type = self._get_rules_by_type(all_rules, object_location, object_tenant)
 
-        final_rule_pks = []
+        rules_by_type = self._get_rules_by_type(list(base_query.filter(location_conditions & tenant_conditions)))
+
+        final_rules = []
         for rules in rules_by_type.values():
-            if rules["location_tenant"]:
-                final_rule_pks.extend([rule.pk for rule in rules["location_tenant"]])
-            elif rules["location"]:
-                final_rule_pks.extend([rule.pk for rule in rules["location"]])
-            elif rules["tenant"]:
-                final_rule_pks.extend([rule.pk for rule in rules["tenant"]])
-            elif rules["global"]:
-                final_rule_pks.extend([rule.pk for rule in rules["global"]])
+            # Select the first non-empty scope bucket by precedence.
+            final_rules.extend(rules["location_tenant"] or rules["location"] or rules["tenant"] or rules["global"])
 
-        final_rule_pk_set = set(final_rule_pks)
-        return [rule for rule in all_rules if rule.pk in final_rule_pk_set]
+        return final_rules
 
-    def _get_rules_by_type(self, all_rules, object_location, object_tenant):
+    def _get_rules_by_type(self, all_rules):
         """Get rules by type and scope."""
         rules_by_type = defaultdict(lambda: {"location_tenant": [], "location": [], "tenant": [], "global": []})
+
         for rule in all_rules:
             record_type = rule.record_type
-            if rule.location == object_location and rule.tenant == object_tenant:
+            has_location_scope = rule.location_id is not None
+            has_tenant_scope = rule.tenant_id is not None
+
+            if has_location_scope and has_tenant_scope:
                 rules_by_type[record_type]["location_tenant"].append(rule)
-            elif rule.location == object_location and rule.tenant is None:
+            elif has_location_scope:
                 rules_by_type[record_type]["location"].append(rule)
-            elif rule.location is None and rule.tenant == object_tenant:
+            elif has_tenant_scope:
                 rules_by_type[record_type]["tenant"].append(rule)
             else:
                 rules_by_type[record_type]["global"].append(rule)
