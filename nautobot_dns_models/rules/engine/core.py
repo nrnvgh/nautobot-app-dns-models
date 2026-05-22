@@ -50,19 +50,21 @@ class DNSRuleEngine:
         # Currently optimizing for consistency rather than maximizing ease of use for DNS rules.
         jinja_env = django_template_engines["jinja"].env
 
-        selected_execution_mode = ExecutionMode(execution_mode)
+        # Sanity-check in case the caller passes in an invalid value.
+        execution_mode = ExecutionMode(execution_mode)
+
         context = EngineContext(
             jinja_env=jinja_env,
             bulk_rename_update_batch_size=self.BULK_RENAME_UPDATE_BATCH_SIZE,
             bulk_create_batched_pipeline_size=self.BULK_CREATE_BATCHED_PIPELINE_SIZE,
             bulk_delete_batched_pipeline_size=self.BULK_DELETE_BATCHED_PIPELINE_SIZE,
-            execution_mode=selected_execution_mode,
+            execution_mode=execution_mode,
         )
 
         self._resolver = RuleResolver(cache, context, selected_rules=selected_rules)
         self._materializer = RecordMaterializer(cache, context)
 
-        if selected_execution_mode == ExecutionMode.FAST:
+        if execution_mode == ExecutionMode.FAST:
             delete_executor = FastDeleteExecutor()
             update_executor = FastUpdateExecutor()
         else:

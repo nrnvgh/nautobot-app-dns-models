@@ -16,3 +16,11 @@ class EngineContext:
     bulk_create_batched_pipeline_size: int
     bulk_delete_batched_pipeline_size: int
     execution_mode: ExecutionMode
+
+    def __post_init__(self):
+        """Sanity-check in case the caller passes in an invalid value."""
+        object.__setattr__(
+            self,
+            "execution_mode",
+            ExecutionMode(self.execution_mode),
+        )
