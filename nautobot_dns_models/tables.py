@@ -174,7 +174,6 @@ class CatalogZoneTable(BaseTable):
 
     pk = ToggleColumn()
     name = tables.Column(accessor="dns_zone__name", verbose_name="Catalog Zone", linkify=True)
-    dns_zone = tables.Column(verbose_name="Backing DNS Zone", linkify=True)
     dns_zone__dns_view = tables.Column(accessor="dns_zone__dns_view", verbose_name="DNS View", linkify=True)
     dns_zone__tenant = tables.Column(accessor="dns_zone__tenant", verbose_name="Tenant", linkify=True)
     actions = ButtonsColumn(
