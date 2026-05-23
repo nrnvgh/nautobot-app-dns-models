@@ -186,6 +186,31 @@ class TestDnsZone(ModelTestCases.BaseModelTestCase):
         dns_zone_model = DNSZone.objects.create(name="example.com")
         self.assertEqual(dns_zone_model.get_absolute_url(), f"/plugins/dns/dns-zones/{dns_zone_model.id}/")
 
+    def test_backing_catalog_zone_returns_wrapper_for_backing_zone(self):
+        """Verify backing_catalog_zone resolves wrapper when zone backs a catalog."""
+        backing_zone = DNSZone.objects.create(name="associated-backing.example.com")
+        catalog_zone = CatalogZone.objects.create(dns_zone=backing_zone)
+
+        self.assertEqual(backing_zone.backing_catalog_zone, catalog_zone)
+        self.assertIsNone(backing_zone.member_catalog_zone)
+
+    def test_member_catalog_zone_returns_membership_catalog_zone(self):
+        """Verify member_catalog_zone resolves wrapper when zone is a member."""
+        catalog_backing_zone = DNSZone.objects.create(name="associated-catalog.example.com")
+        member_zone = DNSZone.objects.create(name="associated-member.example.com")
+        catalog_zone = CatalogZone.objects.create(dns_zone=catalog_backing_zone)
+        CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+
+        self.assertEqual(member_zone.member_catalog_zone, catalog_zone)
+        self.assertIsNone(member_zone.backing_catalog_zone)
+
+    def test_catalog_zone_accessors_return_none_without_association(self):
+        """Verify both catalog accessors are null for standalone DNS zones."""
+        standalone_zone = DNSZone.objects.create(name="associated-standalone.example.com")
+
+        self.assertIsNone(standalone_zone.backing_catalog_zone)
+        self.assertIsNone(standalone_zone.member_catalog_zone)
+
 
 class CatalogZoneTestCase(TestCase):
     """Test the CatalogZone wrapper model."""

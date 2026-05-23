@@ -127,7 +127,7 @@ class DNSZoneTable(BaseTable):
 
     pk = ToggleColumn()
     name = tables.Column(linkify=True)
-    catalog_zone = tables.Column(linkify=True, verbose_name="Catalog Zone")
+    catalog_zone = tables.Column(accessor="member_catalog_zone", linkify=True, verbose_name="Catalog Zone")
     tenant = TenantColumn()
     dns_view = tables.Column(linkify=True)
     actions = ButtonsColumn(

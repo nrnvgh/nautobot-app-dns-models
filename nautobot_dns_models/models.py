@@ -247,6 +247,20 @@ class DNSZone(DNSModel):
         verbose_name = "DNS Zone"
         verbose_name_plural = "DNS Zones"
 
+    @property
+    def backing_catalog_zone(self):
+        """Return the catalog zone wrapper backed by this DNS zone, if any."""
+        try:
+            return self.catalog_zone
+        except CatalogZone.DoesNotExist:
+            return None
+
+    @property
+    def member_catalog_zone(self):
+        """Return the catalog zone this DNS zone is a member of, if any."""
+        membership = self.catalog_zone_memberships.select_related("catalog_zone").first()
+        return membership.catalog_zone if membership else None
+
 
 @extras_features(
     "custom_fields",
