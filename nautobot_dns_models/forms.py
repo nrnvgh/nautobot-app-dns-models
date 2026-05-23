@@ -275,7 +275,7 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
         queryset=models.CatalogZone.objects.all(),
         required=False,
         to_field_name="id",
-        label="Member of Catalog Zones",
+        label="Catalog Zone",
     )
     model = models.DNSZone
     # Define the fields above for ordering and widget purposes
@@ -335,10 +335,17 @@ class CatalogZoneFilterForm(NautobotFilterForm):
         label="Backing DNS Zone",
         query_params={"has_catalog_zone": True, "sort": "name"},
     )
+    member_zones = DynamicModelMultipleChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=False,
+        label="Member DNS Zones",
+        query_params={"has_catalog_zone": False, "sort": "name"},
+    )
     model = models.CatalogZone
     fields = [
         "q",
         "dns_zone",
+        "member_zones",
     ]
 
 

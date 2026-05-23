@@ -28,6 +28,7 @@ from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
     CatalogZone,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -398,6 +399,22 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertIn(non_backing_zone, self.filterset({"has_catalog_zone": "false"}, self.queryset).qs)
         self.assertNotIn(backing_zone, self.filterset({"has_catalog_zone": "false"}, self.queryset).qs)
 
+    def test_member_of_catalog_zones_isnull_filter(self):
+        """Filter DNS zones by whether catalog-zone membership is unset."""
+        catalog_backing_zone = DNSZone.objects.create(name="dnszone-filter-membership-catalog.example.com")
+        member_zone = DNSZone.objects.create(name="dnszone-filter-membership-member.example.com")
+        non_member_zone = DNSZone.objects.create(name="dnszone-filter-membership-none.example.com")
+        catalog_zone = CatalogZone.objects.create(dns_zone=catalog_backing_zone)
+        CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+
+        self.assertIn(non_member_zone, self.filterset({"member_of_catalog_zones__isnull": "true"}, self.queryset).qs)
+        self.assertNotIn(member_zone, self.filterset({"member_of_catalog_zones__isnull": "true"}, self.queryset).qs)
+        self.assertNotIn(catalog_backing_zone, self.filterset({"member_of_catalog_zones__isnull": "true"}, self.queryset).qs)
+
+        self.assertIn(member_zone, self.filterset({"member_of_catalog_zones__isnull": "false"}, self.queryset).qs)
+        self.assertNotIn(non_member_zone, self.filterset({"member_of_catalog_zones__isnull": "false"}, self.queryset).qs)
+        self.assertNotIn(catalog_backing_zone, self.filterset({"member_of_catalog_zones__isnull": "false"}, self.queryset).qs)
+
 
 class CatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
     """CatalogZone Filter Test Case."""
@@ -438,12 +455,20 @@ class CatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):
         self.assertEqual(dns_zone_queryset.count(), 3)
         self.assertNotIn(self.member_zone, dns_zone_queryset)
 
-    def test_members_filter_queryset_only_contains_non_catalog_zones(self):
-        """Advanced filter choices for members should include only non-catalog zones."""
+    def test_member_zones_filter_queryset_only_contains_non_catalog_zones(self):
+        """Advanced filter choices for member_zones should include only non-catalog zones."""
         filterset = self.filterset({}, self.queryset)
-        members_queryset = filterset.filters["members"].queryset
-        self.assertEqual(members_queryset.count(), 1)
-        self.assertNotIn(self.catalog_zone, members_queryset)
+        member_zones_queryset = filterset.filters["member_zones"].queryset
+        self.assertEqual(member_zones_queryset.count(), 1)
+        self.assertNotIn(self.catalog_zone, member_zones_queryset)
+
+    def test_member_zones_filter_matches_catalog_by_member_zone(self):
+        """member_zones filter should match catalog wrappers by selected member zone."""
+        catalog_zone = CatalogZone.objects.get(dns_zone__name="catalog-filter-one.example.com")
+        CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=self.member_zone)
+
+        filtered = self.filterset({"member_zones": [self.member_zone.id]}, self.queryset).qs
+        self.assertIn(catalog_zone, filtered)
 
 
 class NSRecordFilterTestCase(TestCase):

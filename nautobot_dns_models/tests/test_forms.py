@@ -157,6 +157,12 @@ class CatalogZoneFilterFormTestCase(TestCase):
         self.assertEqual(form.fields["dns_zone"].query_params.get("has_catalog_zone"), True)
         self.assertEqual(form.fields["dns_zone"].query_params.get("sort"), "name")
 
+    def test_member_zones_choices_only_include_non_catalog_zones(self):
+        """Member DNS Zones chooser should request only non-catalog zones."""
+        form = self.form_class()
+        self.assertEqual(form.fields["member_zones"].query_params.get("has_catalog_zone"), False)
+        self.assertEqual(form.fields["member_zones"].query_params.get("sort"), "name")
+
 
 class DNSRegistrarFormTestCase(TestCase):
     """Test DNSRegistrar forms."""

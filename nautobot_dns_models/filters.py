@@ -103,8 +103,9 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
         field_name="catalog_zone_memberships__catalog_zone",
         queryset=models.CatalogZone.objects.all(),
         to_field_name="id",
-        label="Member of Catalog Zones",
+        label="Catalog Zone",
     )
+    member_of_catalog_zones__isnull = django_filters.BooleanFilter(method="filter_member_of_catalog_zones_isnull")
 
     q = SearchFilter(
         filter_predicates={
@@ -137,6 +138,17 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
 
         return queryset
 
+    def filter_member_of_catalog_zones_isnull(self, queryset, name, value):  # pylint: disable=unused-argument
+        """Filter DNS zones by membership presence, excluding catalog backing zones when unset."""
+        if value is True:
+            return queryset.filter(catalog_zone_memberships__isnull=True, catalog_zone__isnull=True)
+
+        if value is False:
+            return queryset.filter(catalog_zone_memberships__isnull=False).distinct()
+
+        return queryset
+
+
     class Meta:
         """Meta attributes for filter."""
 
@@ -154,7 +166,7 @@ class CatalogZoneFilterSet(NautobotFilterSet):
         label="Backing DNS Zone",
         query_params={"has_catalog_zone": True, "sort": "name"},
     )
-    members = NaturalKeyOrPKMultipleChoiceFilter(
+    member_zones = NaturalKeyOrPKMultipleChoiceFilter(
         field_name="memberships__member_zone",
         queryset=models.DNSZone.objects.filter(catalog_zone__isnull=True),
         to_field_name="id",
