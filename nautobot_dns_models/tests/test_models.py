@@ -13,6 +13,7 @@ from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from nautobot_dns_models.models import (
     CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE,
     CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE,
+    CATALOG_ZONE_DEFAULT_NS_TARGET,
     AAAARecord,
     ARecord,
     CatalogMemberNodeLabelGenerationError,
@@ -229,6 +230,26 @@ class CatalogZoneTestCase(TestCase):
         self.assertEqual(version_records.count(), 1)
         self.assertEqual(version_records.first().text, catalog_zone.schema_version)
 
+    def test_create_catalog_zone_creates_canonical_apex_ns_record(self):
+        """Verify wrapper creation materializes canonical apex NS RRset."""
+        CatalogZone.objects.create(dns_zone=self.zone)
+
+        apex_ns_rrset = NSRecord.objects.filter(zone=self.zone, name="@")
+        self.assertEqual(apex_ns_rrset.count(), 1)
+        self.assertEqual(apex_ns_rrset.first().server, CATALOG_ZONE_DEFAULT_NS_TARGET)
+
+    def test_save_catalog_zone_repairs_noncanonical_apex_ns_rrset(self):
+        """Verify save() repairs duplicate/noncanonical apex NS RRset."""
+        catalog_zone = CatalogZone.objects.create(dns_zone=self.zone)
+        NSRecord.objects.create(zone=self.zone, name="@", server="ns1.example.net.")
+        NSRecord.objects.create(zone=self.zone, name="@", server="ns2.example.net.")
+
+        catalog_zone.save()
+
+        apex_ns_rrset = NSRecord.objects.filter(zone=self.zone, name="@")
+        self.assertEqual(apex_ns_rrset.count(), 1)
+        self.assertEqual(apex_ns_rrset.first().server, CATALOG_ZONE_DEFAULT_NS_TARGET)
+
     def test_one_wrapper_per_zone(self):
         """Verify a DNSZone cannot have multiple wrappers."""
         CatalogZone.objects.create(dns_zone=self.zone)
@@ -236,13 +257,19 @@ class CatalogZoneTestCase(TestCase):
             with transaction.atomic():
                 CatalogZone.objects.create(dns_zone=self.zone)
 
-    def test_delete_wrapper_deletes_backing_zone(self):
-        """Verify wrapper deletion removes the backing DNSZone."""
-        zone = DNSZone.objects.create(name="delete-catalog.example.com")
+    def test_delete_wrapper_cleans_up_backing_zone_and_control_records(self):
+        """Verify wrapper deletion removes backing zone and control records."""
+        zone = DNSZone.objects.create(name="delete-catalog-controls.example.com")
         catalog_zone = CatalogZone.objects.create(dns_zone=zone)
         zone_id = zone.id
+        self.assertTrue(TXTRecord.objects.filter(zone_id=zone_id, name="version").exists())
+        self.assertTrue(NSRecord.objects.filter(zone_id=zone_id, name="@").exists())
+
         catalog_zone.delete()
+
         self.assertFalse(DNSZone.objects.filter(id=zone_id).exists())
+        self.assertFalse(TXTRecord.objects.filter(zone_id=zone_id, name="version").exists())
+        self.assertFalse(NSRecord.objects.filter(zone_id=zone_id, name="@").exists())
 
     def test_zone_delete_is_protected_when_wrapped(self):
         """Verify backing DNSZone deletion is blocked by PROTECT."""

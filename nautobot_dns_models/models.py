@@ -16,6 +16,7 @@ from nautobot_dns_models.querysets import CatalogZoneMembershipManager
 
 CATALOG_ZONE_SCHEMA_VERSION = "2"
 CATALOG_ZONE_VERSION_RECORD_NAME = "version"
+CATALOG_ZONE_DEFAULT_NS_TARGET = "invalid."
 CATALOG_MEMBER_NODE_LABEL_MAX_GENERATION_ATTEMPTS = 10
 CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE = "dns_czm_unique_member_zone_per_catalog"
 CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE = "dns_czm_unique_member_node_label_per_catalog"
@@ -290,6 +291,7 @@ class CatalogZone(PrimaryModel):
         """Persist wrapper and reconcile required catalog control records."""
         with transaction.atomic():
             result = super().save(*args, **kwargs)
+            self._ensure_apex_ns_record()
             self._ensure_version_control_record()
             return result
 
@@ -298,6 +300,7 @@ class CatalogZone(PrimaryModel):
         with transaction.atomic():
             zone = self.dns_zone
             self._delete_version_control_record()
+            self._delete_apex_ns_record()
             super().delete(*args, **kwargs)
             zone.delete()
 
@@ -326,6 +329,26 @@ class CatalogZone(PrimaryModel):
         TXTRecord.objects.filter(
             zone_id=self.dns_zone_id,
             name=CATALOG_ZONE_VERSION_RECORD_NAME,
+        ).delete()
+
+    def _ensure_apex_ns_record(self):
+        """Ensure apex NS RRset is present and canonical for this catalog zone."""
+        apex_ns_rrset = NSRecord.objects.filter(zone=self.dns_zone, name="@")
+        if apex_ns_rrset.count() == 1 and apex_ns_rrset.first().server == CATALOG_ZONE_DEFAULT_NS_TARGET:
+            return
+
+        apex_ns_rrset.delete()
+        NSRecord(
+            zone=self.dns_zone,
+            name="@",
+            server=CATALOG_ZONE_DEFAULT_NS_TARGET,
+        ).validated_save()
+
+    def _delete_apex_ns_record(self):
+        """Delete the system-managed apex NS record from the backing zone."""
+        NSRecord.objects.filter(
+            zone_id=self.dns_zone_id,
+            name="@",
         ).delete()
 
 
