@@ -139,13 +139,6 @@ class CatalogZoneFormTestCase(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("This field is required.", form.errors["dns_zone"])
 
-    def test_members_field_uses_dns_zone_exclusion_query_param(self):
-        form = self.form_class(data={"dns_zone": self.zone_1.id})
-        self.assertEqual(form.fields["dns_zone"].query_params.get("sort"), "name")
-        self.assertIn("members", form.fields)
-        self.assertEqual(form.fields["members"].query_params.get("id__n"), "$dns_zone")
-        self.assertFalse(form.fields["members"].query_params.get("has_catalog_zone"))
-
 
 class CatalogZoneFilterFormTestCase(TestCase):
     """Test catalog zone filter form behavior."""

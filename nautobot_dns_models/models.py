@@ -282,14 +282,6 @@ class CatalogZone(PrimaryModel):
         verbose_name="DNS Zone",
     )
     description = models.TextField(help_text="Description of this catalog zone.", blank=True)
-    members = models.ManyToManyField(
-        to=DNSZone,
-        through="CatalogZoneMembership",
-        related_name="member_of_catalog_zones",
-        through_fields=("catalog_zone", "member_zone"),
-        blank=True,
-        help_text="Member DNS Zones included in this catalog zone.",
-    )
 
     class Meta:
         """Meta attributes for CatalogZone."""

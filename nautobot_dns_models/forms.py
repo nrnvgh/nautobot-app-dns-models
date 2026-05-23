@@ -296,12 +296,6 @@ class CatalogZoneForm(NautobotModelForm):
         label="Backing DNS Zone",
         query_params={"sort": "name"},
     )
-    members = DynamicModelMultipleChoiceField(
-        queryset=models.DNSZone.objects.all(),
-        required=False,
-        label="Member DNS Zones",
-        query_params={"id__n": "$dns_zone", "has_catalog_zone": False, "sort": "name"},
-    )
 
     class Meta:
         """Meta attributes."""

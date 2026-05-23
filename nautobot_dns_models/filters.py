@@ -100,7 +100,7 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
     has_catalog_zone = django_filters.BooleanFilter(method="filter_has_catalog_zone")
     eligible_for_catalog_zone = django_filters.UUIDFilter(method="filter_eligible_for_catalog_zone")
     member_of_catalog_zones = NaturalKeyOrPKMultipleChoiceFilter(
-        field_name="member_of_catalog_zones",
+        field_name="catalog_zone_memberships__catalog_zone",
         queryset=models.CatalogZone.objects.all(),
         to_field_name="id",
         label="Member of Catalog Zones",
@@ -121,7 +121,11 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
         if not catalog_zone:
             return queryset.none()
 
-        return queryset.exclude(pk=catalog_zone.dns_zone_id).exclude(catalog_zone__isnull=False)
+        return (
+            queryset.exclude(pk=catalog_zone.dns_zone_id)
+            .exclude(catalog_zone__isnull=False)
+            .exclude(catalog_zone_memberships__isnull=False)
+        )
 
     def filter_has_catalog_zone(self, queryset, name, value):  # pylint: disable=unused-argument
         """Filter DNS zones by whether they have an associated CatalogZone wrapper."""
@@ -151,7 +155,7 @@ class CatalogZoneFilterSet(NautobotFilterSet):
         query_params={"has_catalog_zone": True, "sort": "name"},
     )
     members = NaturalKeyOrPKMultipleChoiceFilter(
-        field_name="members",
+        field_name="memberships__member_zone",
         queryset=models.DNSZone.objects.filter(catalog_zone__isnull=True),
         to_field_name="id",
         label="Member DNS Zones",

@@ -1,49 +1,11 @@
 """QuerySets for nautobot_dns_models."""
 
-from django.db import IntegrityError, transaction
 from nautobot.core.models import BaseManager
 from nautobot.core.models.querysets import RestrictedQuerySet
 
 
 class CatalogZoneMembershipQuerySet(RestrictedQuerySet):
     """QuerySet preserving per-instance delete side effects."""
-
-    def bulk_create(
-        self,
-        objs,
-        batch_size=None,
-        ignore_conflicts=False,
-        update_conflicts=False,
-        update_fields=None,
-        unique_fields=None,
-    ):
-        """
-        Persist through-table rows via validated_save() to preserve side effects.
-
-        Django M2M add/set operations bulk_create through-table rows directly,
-        bypassing model save hooks. Route these inserts through validated_save()
-        so labels and derived PTR records are handled without signals.
-        """
-        if update_conflicts:
-            return super().bulk_create(
-                objs,
-                batch_size=batch_size,
-                ignore_conflicts=ignore_conflicts,
-                update_conflicts=update_conflicts,
-                update_fields=update_fields,
-                unique_fields=unique_fields,
-            )
-
-        created = []
-        with transaction.atomic():
-            for obj in objs:
-                try:
-                    obj.validated_save()
-                    created.append(obj)
-                except IntegrityError:
-                    if not ignore_conflicts:
-                        raise
-        return created
 
     def delete(self, *args, **kwargs):
         """Delete each membership row to ensure PTR cleanup occurs."""
@@ -60,4 +22,4 @@ class CatalogZoneMembershipQuerySet(RestrictedQuerySet):
 
 
 class CatalogZoneMembershipManager(BaseManager.from_queryset(CatalogZoneMembershipQuerySet)):
-    """Manager ensuring through-table bulk inserts run validated model saves."""
+    """Manager preserving queryset-level delete side effects."""
