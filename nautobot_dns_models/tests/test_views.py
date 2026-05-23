@@ -186,6 +186,16 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
         cls.bulk_edit_data = {"description": "Bulk edit views"}
 
+    def test_list_view_excludes_catalog_backing_zones(self):
+        """Verify DNS Zone table list omits zones that back catalog wrappers."""
+        self.add_permissions("nautobot_dns_models.view_dnszone")
+        backing_zone = DNSZone.objects.create(name="hidden-catalog-backing.example.com")
+        CatalogZone.objects.create(dns_zone=backing_zone)
+
+        response = self.client.get(self.get_list_url())
+        self.assertHttpStatus(response, 200)
+        self.assertNotContains(response, "hidden-catalog-backing.example.com")
+
 
 class CatalogZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
     """Test the CatalogZone views."""

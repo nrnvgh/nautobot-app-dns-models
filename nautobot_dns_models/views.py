@@ -224,7 +224,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     filterset_form_class = DNSZoneFilterForm
     serializer_class = DNSZoneSerializer
     lookup_field = "pk"
-    queryset = DNSZone.objects.all()
+    queryset = DNSZone.objects.filter(catalog_zone__isnull=True)
     table_class = DNSZoneTable
 
     object_detail_content = ObjectDetailContent(
