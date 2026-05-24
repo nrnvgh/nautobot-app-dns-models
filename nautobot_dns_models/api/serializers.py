@@ -70,6 +70,7 @@ class DNSZoneSerializer(NautobotModelSerializer):
 class CatalogZoneSerializer(NautobotModelSerializer):
     """CatalogZone Serializer."""
 
+    id = serializers.UUIDField(required=False)
     url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:catalogzone-detail")
     name = serializers.CharField()
     filename = serializers.CharField()
@@ -101,7 +102,7 @@ class CatalogZoneSerializer(NautobotModelSerializer):
 
         model = models.CatalogZone
         exclude = ("dns_zone",)
-        read_only_fields = ("id", "created", "last_updated")
+        read_only_fields = ("created", "last_updated")
 
     def validate(self, attrs):
         """Capture curated payload and remove proxy attrs before model validation."""
@@ -116,6 +117,8 @@ class CatalogZoneSerializer(NautobotModelSerializer):
     def create(self, validated_data):
         """Create wrapper + backing DNS zone from curated payload."""
         payload = validated_data.pop("_wrapper_payload", {})
+        if validated_data.get("id"):
+            payload["id"] = validated_data.pop("id")
         return models.CatalogZone.create_with_backing_zone_payload(**payload)
 
     def update(self, instance, validated_data):

@@ -410,6 +410,7 @@ class CatalogZone(PrimaryModel):
     def create_with_backing_zone_payload(
         cls,
         *,
+        id=None,
         name,
         filename,
         dns_view,
@@ -437,7 +438,7 @@ class CatalogZone(PrimaryModel):
                 soa_minimum=soa_minimum,
             )
             zone.validated_save()
-            catalog_zone = cls(dns_zone=zone, description=description)
+            catalog_zone = cls(id=id, dns_zone=zone, description=description)
             catalog_zone.validated_save()
             return catalog_zone
 
