@@ -94,7 +94,7 @@ class DNSRegistrationViewSet(NautobotModelViewSet):
 class DNSZoneViewSet(NautobotModelViewSet):
     """DNSZone API ViewSet."""
 
-    queryset = DNSZone.objects.all()
+    queryset = DNSZone.objects.filter(catalog_zone__isnull=True)
     serializer_class = DNSZoneSerializer
     filterset_class = DNSZoneFilterSet
 
@@ -105,10 +105,10 @@ class CatalogZoneViewSet(NautobotModelViewSet):
     """CatalogZone API ViewSet."""
 
     #
-    # Nautobot doesn't currently optimize nested paths for API calls
-    # (ref: the comment in nautobot/core/api/views.py:ModelViewSetMixin.get_queryset), so this
-    # prevents N+1 for /catalog-zones/.
-    queryset = CatalogZone.objects.select_related("dns_zone__dns_view", "dns_zone__tenant").order_by("dns_zone__name")
+    # Nautobot doesn't currently optimize nested paths for API calls (ref: the comment)
+    # in nautobot/core/api/views.py:ModelViewSetMixin.get_queryset), so this prevents
+    # N+1 queries for /catalog-zones/.
+    queryset = CatalogZone.objects.select_related("dns_zone__dns_view", "dns_zone__tenant")
     serializer_class = CatalogZoneSerializer
     filterset_class = CatalogZoneFilterSet
 

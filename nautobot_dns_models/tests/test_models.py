@@ -9,11 +9,16 @@ from django.db.models.deletion import ProtectedError
 from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
+from nautobot.tenancy.models import Tenant
 
 from nautobot_dns_models.models import (
     CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE,
     CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE,
     CATALOG_ZONE_DEFAULT_NS_TARGET,
+    CATALOG_ZONE_DEFAULT_SOA_MNAME,
+    CATALOG_ZONE_DEFAULT_SOA_RNAME,
+    CATALOG_ZONE_DEFAULT_SOA_SERIAL,
+    CATALOG_ZONE_DEFAULT_TTL,
     AAAARecord,
     ARecord,
     CatalogMemberNodeLabelGenerationError,
@@ -31,6 +36,7 @@ from nautobot_dns_models.models import (
     SRVRecord,
     TXTRecord,
     dns_wire_label_length,
+    get_default_view_pk,
 )
 
 
@@ -218,12 +224,95 @@ class CatalogZoneTestCase(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.zone = DNSZone.objects.create(name="catalog.example.com")
+        default_view_pk = get_default_view_pk()
+        cls.default_view = DNSView.objects.get(pk=default_view_pk)
+        cls.tenant = Tenant.objects.create(name="Catalog Tenant")
 
     def test_catalog_zone_properties(self):
-        """Verify read-only schema version and string rendering."""
-        catalog_zone = CatalogZone.objects.create(dns_zone=self.zone)
+        """Verify read-only proxy properties map to backing DNS zone values."""
+        catalog_zone = CatalogZone.create_with_backing_zone_payload(
+            name="catalog-proxy.example.com",
+            filename="db.catalog-proxy.example.com",
+            dns_view=self.default_view,
+            tenant=self.tenant,
+            soa_refresh=5555,
+            soa_retry=6666,
+            soa_expire=7777,
+            soa_minimum=8888,
+        )
+        backing_zone = catalog_zone.dns_zone
+
         self.assertEqual(catalog_zone.schema_version, "2")
-        self.assertEqual(str(catalog_zone), self.zone.name)
+        self.assertEqual(str(catalog_zone), backing_zone.name)
+        self.assertEqual(catalog_zone.name, backing_zone.name)
+        self.assertEqual(catalog_zone.dns_view, backing_zone.dns_view)
+        self.assertEqual(catalog_zone.filename, backing_zone.filename)
+        self.assertEqual(catalog_zone.tenant, backing_zone.tenant)
+        self.assertEqual(catalog_zone.soa_refresh, backing_zone.soa_refresh)
+        self.assertEqual(catalog_zone.soa_retry, backing_zone.soa_retry)
+        self.assertEqual(catalog_zone.soa_expire, backing_zone.soa_expire)
+        self.assertEqual(catalog_zone.soa_minimum, backing_zone.soa_minimum)
+
+    def test_create_catalog_zone_auto_creates_backing_zone_from_payload(self):
+        """Verify classmethod create path builds backing zone from curated payload."""
+        catalog_zone = CatalogZone.create_with_backing_zone_payload(
+            name="catalog-autocreate.example.com",
+            filename="catalog-autocreate.example.com.zone",
+            dns_view=self.default_view,
+            soa_refresh=86400,
+            soa_retry=7200,
+            soa_expire=3600000,
+            soa_minimum=3600,
+        )
+
+        self.assertIsNotNone(catalog_zone.dns_zone_id)
+        self.assertEqual(catalog_zone.dns_zone.name, "catalog-autocreate.example.com")
+        self.assertEqual(catalog_zone.dns_zone.filename, "catalog-autocreate.example.com.zone")
+        self.assertEqual(catalog_zone.dns_zone.ttl, CATALOG_ZONE_DEFAULT_TTL)
+        self.assertEqual(catalog_zone.dns_zone.soa_mname, CATALOG_ZONE_DEFAULT_SOA_MNAME)
+        self.assertEqual(catalog_zone.dns_zone.soa_rname, CATALOG_ZONE_DEFAULT_SOA_RNAME)
+        self.assertEqual(catalog_zone.dns_zone.soa_serial, CATALOG_ZONE_DEFAULT_SOA_SERIAL)
+        self.assertTrue(TXTRecord.objects.filter(zone=catalog_zone.dns_zone, name="version").exists())
+        self.assertTrue(NSRecord.objects.filter(zone=catalog_zone.dns_zone, name="@").exists())
+
+    def test_create_catalog_zone_without_backing_zone_fails_validation(self):
+        """Verify wrapper requires backing zone when bypassing classmethod path."""
+        with self.assertRaises(ValidationError):
+            CatalogZone().full_clean()
+
+    def test_update_backing_zone_payload_updates_curated_fields(self):
+        """Verify model update helper mutates curated backing DNS zone fields."""
+        catalog_zone = CatalogZone.create_with_backing_zone_payload(
+            name="catalog-update.example.com",
+            filename="catalog-update.example.com.zone",
+            dns_view=self.default_view,
+            soa_refresh=86400,
+            soa_retry=7200,
+            soa_expire=3600000,
+            soa_minimum=3600,
+        )
+        catalog_zone.update_backing_zone_payload(
+            name="catalog-update-new.example.com",
+            filename="catalog-update-new.example.com.zone",
+            dns_view=self.default_view,
+            soa_refresh=1111,
+            soa_retry=2222,
+            soa_expire=3333,
+            soa_minimum=4444,
+            description="updated",
+        )
+        catalog_zone.refresh_from_db()
+        self.assertEqual(catalog_zone.dns_zone.name, "catalog-update-new.example.com")
+        self.assertEqual(catalog_zone.dns_zone.filename, "catalog-update-new.example.com.zone")
+        self.assertEqual(catalog_zone.dns_zone.ttl, CATALOG_ZONE_DEFAULT_TTL)
+        self.assertEqual(catalog_zone.dns_zone.soa_mname, CATALOG_ZONE_DEFAULT_SOA_MNAME)
+        self.assertEqual(catalog_zone.dns_zone.soa_rname, CATALOG_ZONE_DEFAULT_SOA_RNAME)
+        self.assertEqual(catalog_zone.dns_zone.soa_serial, CATALOG_ZONE_DEFAULT_SOA_SERIAL)
+        self.assertEqual(catalog_zone.dns_zone.soa_refresh, 1111)
+        self.assertEqual(catalog_zone.dns_zone.soa_retry, 2222)
+        self.assertEqual(catalog_zone.dns_zone.soa_expire, 3333)
+        self.assertEqual(catalog_zone.dns_zone.soa_minimum, 4444)
+        self.assertEqual(catalog_zone.description, "updated")
 
     def test_create_catalog_zone_creates_version_control_record(self):
         """Verify wrapper creation materializes version TXT control record."""
@@ -295,6 +384,19 @@ class CatalogZoneTestCase(TestCase):
         self.assertFalse(DNSZone.objects.filter(id=zone_id).exists())
         self.assertFalse(TXTRecord.objects.filter(zone_id=zone_id, name="version").exists())
         self.assertFalse(NSRecord.objects.filter(zone_id=zone_id, name="@").exists())
+
+    def test_delete_wrapper_with_memberships_is_protected(self):
+        """Verify wrapper deletion is blocked while catalog memberships exist."""
+        zone = DNSZone.objects.create(name="delete-catalog-with-members.example.com")
+        catalog_zone = CatalogZone.objects.create(dns_zone=zone)
+        member_zone = DNSZone.objects.create(name="delete-catalog-member.example.com")
+        CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+
+        with self.assertRaises(ProtectedError):
+            catalog_zone.delete()
+
+        self.assertTrue(CatalogZone.objects.filter(id=catalog_zone.id).exists())
+        self.assertTrue(DNSZone.objects.filter(id=zone.id).exists())
 
     def test_zone_delete_is_protected_when_wrapped(self):
         """Verify backing DNSZone deletion is blocked by PROTECT."""
@@ -526,7 +628,9 @@ class CatalogZoneMembershipWorkflowTestCase(TestCase):
 
     def test_create_assigns_member_node_label(self):
         """Verify create() assigns a generated member-node label."""
-        membership = CatalogZoneMembership.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone_1)
+        membership = CatalogZoneMembership.objects.create(
+            catalog_zone=self.catalog_zone, member_zone=self.member_zone_1
+        )
         self.assertTrue(membership.member_node_label)
         self.assertEqual(len(membership.member_node_label), 26)
         self.assertTrue(

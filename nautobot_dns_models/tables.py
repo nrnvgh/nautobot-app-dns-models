@@ -209,19 +209,19 @@ class CatalogZoneMembershipTable(BaseTable):
     pk = ToggleColumn()
     catalog_zone = tables.Column(linkify=True)
     member_zone = tables.Column(verbose_name="Name", linkify=True)
-    member_node_label = tables.Column(verbose_name="Member Node Label")
-    member_zone__dns_view = tables.Column(accessor="member_zone__dns_view", linkify=True, verbose_name="View")
-    member_zone__ttl = tables.Column(accessor="member_zone__ttl", verbose_name="TTL")
-    member_zone__filename = tables.Column(accessor="member_zone__filename", verbose_name="Filename")
-    member_zone__description = tables.Column(accessor="member_zone__description", verbose_name="Description")
-    member_zone__soa_mname = tables.Column(accessor="member_zone__soa_mname", verbose_name="SOA MNAME")
-    member_zone__soa_rname = tables.EmailColumn(accessor="member_zone__soa_rname", verbose_name="SOA RNAME")
-    member_zone__soa_refresh = tables.Column(accessor="member_zone__soa_refresh", verbose_name="SOA Refresh")
-    member_zone__soa_retry = tables.Column(accessor="member_zone__soa_retry", verbose_name="SOA Retry")
-    member_zone__soa_expire = tables.Column(accessor="member_zone__soa_expire", verbose_name="SOA Expire")
-    member_zone__soa_serial = tables.Column(accessor="member_zone__soa_serial", verbose_name="SOA Serial")
-    member_zone__soa_minimum = tables.Column(accessor="member_zone__soa_minimum", verbose_name="SOA Minimum")
-    member_zone__tenant = TenantColumn(accessor="member_zone__tenant", verbose_name="Tenant")
+    # member_node_label = tables.Column(verbose_name="Member Node Label")
+    # member_zone__dns_view = tables.Column(accessor="member_zone__dns_view", linkify=True, verbose_name="View")
+    # member_zone__ttl = tables.Column(accessor="member_zone__ttl", verbose_name="TTL")
+    # member_zone__filename = tables.Column(accessor="member_zone__filename", verbose_name="Filename")
+    # member_zone__description = tables.Column(accessor="member_zone__description", verbose_name="Description")
+    # member_zone__soa_mname = tables.Column(accessor="member_zone__soa_mname", verbose_name="SOA MNAME")
+    # member_zone__soa_rname = tables.EmailColumn(accessor="member_zone__soa_rname", verbose_name="SOA RNAME")
+    # member_zone__soa_refresh = tables.Column(accessor="member_zone__soa_refresh", verbose_name="SOA Refresh")
+    # member_zone__soa_retry = tables.Column(accessor="member_zone__soa_retry", verbose_name="SOA Retry")
+    # member_zone__soa_expire = tables.Column(accessor="member_zone__soa_expire", verbose_name="SOA Expire")
+    # member_zone__soa_serial = tables.Column(accessor="member_zone__soa_serial", verbose_name="SOA Serial")
+    # member_zone__soa_minimum = tables.Column(accessor="member_zone__soa_minimum", verbose_name="SOA Minimum")
+    # member_zone__tenant = TenantColumn(accessor="member_zone__tenant", verbose_name="Tenant")
     actions = ButtonsColumn(
         models.CatalogZoneMembership,
         buttons=("edit", "delete"),
@@ -235,31 +235,52 @@ class CatalogZoneMembershipTable(BaseTable):
             "pk",
             "catalog_zone",
             "member_zone",
-            "member_node_label",
-            "member_zone__dns_view",
-            "member_zone__ttl",
-            "member_zone__filename",
-            "member_zone__description",
-            "member_zone__soa_mname",
-            "member_zone__soa_rname",
-            "member_zone__soa_refresh",
-            "member_zone__soa_retry",
-            "member_zone__soa_expire",
-            "member_zone__soa_serial",
-            "member_zone__soa_minimum",
-            "member_zone__tenant",
+            # "member_node_label",
+            # "member_zone__dns_view",
+            # "member_zone__ttl",
+            # "member_zone__filename",
+            # "member_zone__description",
+            # "member_zone__soa_mname",
+            # "member_zone__soa_rname",
+            # "member_zone__soa_refresh",
+            # "member_zone__soa_retry",
+            # "member_zone__soa_expire",
+            # "member_zone__soa_serial",
+            # "member_zone__soa_minimum",
+            # "member_zone__tenant",
             "actions",
         )
 
         default_columns = (
             "pk",
             "member_zone",
-            "member_zone__dns_view",
-            "member_zone__ttl",
-            "member_zone__filename",
-            "member_zone__soa_expire",
-            "member_zone__soa_rname",
-            "member_zone__soa_serial",
+            # "member_zone__dns_view",
+            # "member_zone__ttl",
+            # "member_zone__filename",
+            # "member_zone__soa_expire",
+            # "member_zone__soa_rname",
+            # "member_zone__soa_serial",
+            "actions",
+        )
+
+
+class CatalogZoneMembershipPanelTable(CatalogZoneMembershipTable):
+    """Table for member-zone panel on CatalogZone detail view."""
+
+    # Remove this column entirely so it cannot be added from the panel column chooser.
+    catalog_zone = None
+
+    class Meta(CatalogZoneMembershipTable.Meta):
+        """Meta attributes."""
+
+        fields = (
+            "pk",
+            "member_zone",
+            "actions",
+        )
+        default_columns = (
+            "pk",
+            "member_zone",
             "actions",
         )
 

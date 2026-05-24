@@ -106,6 +106,7 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
+    CatalogZoneMembershipPanelTable,
     CatalogZoneMembershipTable,
     CatalogZoneTable,
     CNAMERecordTable,
@@ -411,13 +412,51 @@ class CatalogZoneUIViewSet(views.NautobotUIViewSet):
             ObjectFieldsPanel(weight=100, section=SectionChoices.LEFT_HALF, fields="__all__"),
             ObjectsTablePanel(
                 weight=100,
-                section=SectionChoices.RIGHT_HALF,
+                section=SectionChoices.LEFT_HALF,
                 table_filter="catalog_zone",
-                table_class=CatalogZoneMembershipTable,
-                table_title="Zones",
+                table_class=CatalogZoneMembershipPanelTable,
+                table_title="Member Zones",
                 include_columns=["member_zone", "actions"],
-                exclude_columns=["catalog_zone"],
                 order_by_fields=["member_zone__name"],
+            ),
+            ObjectsTablePanel(
+                weight=200,
+                section=SectionChoices.RIGHT_HALF,
+                table_filter="zone__catalog_zone",
+                table_class=NSRecordTable,
+                table_title="NS Records",
+                exclude_columns=["zone"],
+                max_display_count=5,
+                # In principle, other than the one required by RFC 9432, these shouldn't
+                # be added to catalog zones, so disable the add button. This won't prevent
+                # it being done elsewhere in the UI, but it removes one easy path to doing so.
+                add_button_route=None,
+            ),
+            ObjectsTablePanel(
+                weight=500,
+                section=SectionChoices.RIGHT_HALF,
+                table_filter="zone__catalog_zone",
+                table_class=PTRRecordTable,
+                table_title="PTR Records",
+                exclude_columns=["zone"],
+                max_display_count=5,
+                # Other than records derived from catalog zone membership, PTR records shouldn't be
+                # added to catalog zones. As with "NS Records" and "TXT Records", this won't prevent it being done elsewhere
+                # in the UI.
+                add_button_route=None,
+            ),
+            ObjectsTablePanel(
+                weight=600,
+                section=SectionChoices.RIGHT_HALF,
+                table_filter="zone__catalog_zone",
+                table_class=TXTRecordTable,
+                table_title="TXT Records",
+                exclude_columns=["zone"],
+                max_display_count=5,
+                # Other than records managed by the catalog zone system, TXT records shouldn't be
+                # added to catalog zones. As with "NS Records" and "PTR Records", this won't prevent
+                # it being done elsewhere in the UI.
+                add_button_route=None,
             ),
         ],
     )

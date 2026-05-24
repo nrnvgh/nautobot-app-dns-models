@@ -5,7 +5,16 @@ from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
 from nautobot_dns_models import forms
-from nautobot_dns_models.models import CatalogZone, DNSRegistrar, DNSView, DNSZone
+from nautobot_dns_models.models import (
+    CATALOG_ZONE_DEFAULT_SOA_MNAME,
+    CATALOG_ZONE_DEFAULT_SOA_RNAME,
+    CATALOG_ZONE_DEFAULT_SOA_SERIAL,
+    CATALOG_ZONE_DEFAULT_TTL,
+    CatalogZone,
+    DNSRegistrar,
+    DNSView,
+    DNSZone,
+)
 
 
 class DNSViewFormTestCase(TestCase):
@@ -125,19 +134,114 @@ class CatalogZoneFormTestCase(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.zone_1 = DNSZone.objects.create(name="catalog-form-one.example.com")
-        cls.zone_2 = DNSZone.objects.create(name="catalog-form-two.example.com")
+        cls.default_view = DNSView.objects.get(name="Default")
 
     def test_specifying_required_fields_success(self):
-        form = self.form_class(data={"dns_zone": self.zone_1.id})
+        form = self.form_class(
+            data={
+                "name": "catalog-form-create.example.com",
+                "filename": "catalog-form-create.example.com.zone",
+                "dns_view": self.default_view.pk,
+                "soa_refresh": 86400,
+                "soa_retry": 7200,
+                "soa_expire": 3600000,
+                "soa_minimum": 3600,
+            }
+        )
         self.assertTrue(form.is_valid())
         catalog_zone = form.save()
         self.assertIsInstance(catalog_zone, CatalogZone)
+        self.assertEqual(catalog_zone.dns_zone.name, "catalog-form-create.example.com")
+        self.assertEqual(catalog_zone.dns_zone.filename, "catalog-form-create.example.com.zone")
+        self.assertEqual(catalog_zone.dns_zone.soa_refresh, 86400)
+        self.assertEqual(catalog_zone.dns_zone.soa_retry, 7200)
+        self.assertEqual(catalog_zone.dns_zone.soa_expire, 3600000)
+        self.assertEqual(catalog_zone.dns_zone.soa_minimum, 3600)
 
-    def test_dns_zone_is_required(self):
+    def test_name_is_required(self):
         form = self.form_class(data={})
         self.assertFalse(form.is_valid())
-        self.assertIn("This field is required.", form.errors["dns_zone"])
+        self.assertIn("This field is required.", form.errors["name"])
+        self.assertIn("This field is required.", form.errors["filename"])
+        self.assertIn("This field is required.", form.errors["dns_view"])
+
+    def test_dns_zone_field_not_exposed(self):
+        form = self.form_class()
+        self.assertNotIn("dns_zone", form.fields)
+
+    def test_dns_view_defaults_like_dnszone_form(self):
+        form = self.form_class()
+        resolved_initial = form.get_initial_for_field(form.fields["dns_view"], "dns_view")
+        self.assertEqual(resolved_initial, self.default_view.pk)
+
+    def test_system_managed_fields_are_visible_immutable_with_constant_defaults(self):
+        form = self.form_class()
+        self.assertIn("ttl", form.fields)
+        self.assertIn("soa_mname", form.fields)
+        self.assertIn("soa_rname", form.fields)
+        self.assertIn("soa_serial", form.fields)
+        self.assertTrue(form.fields["ttl"].disabled)
+        self.assertTrue(form.fields["soa_mname"].disabled)
+        self.assertTrue(form.fields["soa_rname"].disabled)
+        self.assertTrue(form.fields["soa_serial"].disabled)
+        self.assertEqual(form.fields["ttl"].initial, CATALOG_ZONE_DEFAULT_TTL)
+        self.assertEqual(form.fields["soa_mname"].initial, CATALOG_ZONE_DEFAULT_SOA_MNAME)
+        self.assertEqual(form.fields["soa_rname"].initial, CATALOG_ZONE_DEFAULT_SOA_RNAME)
+        self.assertEqual(form.fields["soa_serial"].initial, CATALOG_ZONE_DEFAULT_SOA_SERIAL)
+
+    def test_system_managed_fields_show_backing_zone_db_values_on_edit(self):
+        zone = DNSZone.objects.create(
+            name="catalog-form-legacy-values.example.com",
+            dns_view=self.default_view,
+            filename="catalog-form-legacy-values.example.com.zone",
+            ttl=900,
+            soa_mname="ns9.example.com.",
+            soa_rname="admin@example.com",
+            soa_refresh=86400,
+            soa_retry=7200,
+            soa_expire=3600000,
+            soa_serial=42,
+            soa_minimum=3600,
+        )
+        catalog_zone = CatalogZone.objects.create(dns_zone=zone)
+        form = self.form_class(instance=catalog_zone)
+        self.assertEqual(form.fields["ttl"].initial, 900)
+        self.assertEqual(form.fields["soa_mname"].initial, "ns9.example.com.")
+        self.assertEqual(form.fields["soa_rname"].initial, "admin@example.com")
+        self.assertEqual(form.fields["soa_serial"].initial, 42)
+
+    def test_edit_updates_backing_zone_soa_fields(self):
+        catalog_zone = CatalogZone.create_with_backing_zone_payload(
+            name="catalog-form-edit.example.com",
+            filename="catalog-form-edit.example.com.zone",
+            dns_view=self.default_view,
+            soa_refresh=86400,
+            soa_retry=7200,
+            soa_expire=3600000,
+            soa_minimum=3600,
+        )
+        form = self.form_class(
+            instance=catalog_zone,
+            data={
+                "name": "catalog-form-edit-updated.example.com",
+                "filename": "catalog-form-edit-updated.example.com.zone",
+                "dns_view": self.default_view.pk,
+                "soa_refresh": 4000,
+                "soa_retry": 5000,
+                "soa_expire": 6000,
+                "soa_minimum": 7000,
+                "description": "updated",
+            },
+        )
+        self.assertTrue(form.is_valid())
+        updated = form.save()
+        updated.refresh_from_db()
+        self.assertEqual(updated.dns_zone.name, "catalog-form-edit-updated.example.com")
+        self.assertEqual(updated.dns_zone.filename, "catalog-form-edit-updated.example.com.zone")
+        self.assertEqual(updated.dns_zone.soa_refresh, 4000)
+        self.assertEqual(updated.dns_zone.soa_retry, 5000)
+        self.assertEqual(updated.dns_zone.soa_expire, 6000)
+        self.assertEqual(updated.dns_zone.soa_minimum, 7000)
 
 
 class CatalogZoneFilterFormTestCase(TestCase):

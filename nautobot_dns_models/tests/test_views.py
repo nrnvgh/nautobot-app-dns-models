@@ -204,6 +204,7 @@ class CatalogZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
     @classmethod
     def setUpTestData(cls):
+        default_view = DNSView.objects.get(name="Default")
         zone_1 = DNSZone.objects.create(name="catalog-view-one.example.com")
         zone_2 = DNSZone.objects.create(name="catalog-view-two.example.com")
         zone_3 = DNSZone.objects.create(name="catalog-view-three.example.com")
@@ -214,7 +215,13 @@ class CatalogZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         CatalogZone.objects.create(dns_zone=zone_3)
 
         cls.form_data = {
-            "dns_zone": cls.create_zone.id,
+            "name": "catalog-view-create-new.example.com",
+            "filename": "catalog-view-create-new.example.com.zone",
+            "dns_view": default_view.id,
+            "soa_refresh": 86400,
+            "soa_retry": 7200,
+            "soa_expire": 3600000,
+            "soa_minimum": 3600,
         }
 
         cls.csv_data = (
@@ -223,6 +230,19 @@ class CatalogZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         cls.bulk_edit_data = {"dns_zone": cls.create_zone.id}
+
+    def assertInstanceEqual(self, instance, data, exclude=None, api=False):
+        """Normalize proxy-backed fields so base helper compares like-for-like values."""
+        normalized_data = dict(data)
+
+        # form_data stores DNS view as submitted POST UUID/PK, while CatalogZone.dns_view is a
+        # model proxy property that returns a DNSView object from the backing DNSZone.
+        # Convert expected value to a DNSView object so the shared assertion helper can compare
+        # semantically equivalent values instead of object-vs-UUID representations.
+        if normalized_data.get("dns_view"):
+            normalized_data["dns_view"] = DNSView.objects.get(pk=normalized_data["dns_view"])
+
+        super().assertInstanceEqual(instance, normalized_data, exclude=exclude, api=api)
 
     def test_add_member_zone_button_redirect_loads_add_form(self):
         """Verify add-member button route loads the membership add form."""

@@ -1,10 +1,11 @@
 """Unit tests for nautobot_dns_models."""
 
 from datetime import date
+from unittest import skip
 
 from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
-from django.test import override_settings
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from nautobot.apps.api import get_serializer_for_model
 from nautobot.apps.testing import APIViewTestCases
@@ -17,6 +18,8 @@ from rest_framework.relations import ManyRelatedField
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZone,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -499,6 +502,193 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         zone = _create_zone(name="helper-default.example")
 
         self.assertEqual(zone.dns_view, expected_default_view)
+
+    def test_list_excludes_catalog_backing_zones(self):
+        """DNSZone API list should not return zones that back catalog wrappers."""
+        self.add_permissions("nautobot_dns_models.view_dnszone")
+        backing_zone = _create_zone(name="catalog-backing-hidden.example")
+        CatalogZone.objects.create(dns_zone=backing_zone)
+
+        response = self.client.get(self._get_list_url(), **self.header)
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        results = response.data if isinstance(response.data, list) else response.data.get("results", [])
+        names = [item["name"] for item in results]
+        self.assertNotIn("catalog-backing-hidden.example", names)
+
+
+class CatalogZoneAPITestCase(APIViewTestCases.APIViewTestCase):
+    """Test the Nautobot CatalogZone API."""
+
+    model = CatalogZone
+    view_namespace = "plugins-api:nautobot_dns_models"
+    bulk_update_data = {
+        "description": "Example bulk description",
+    }
+    brief_fields = [
+        "name",
+        "filename",
+    ]
+    _wrapper_payload_fields = (
+        "name",
+        "filename",
+        "dns_view",
+        "tenant",
+        "soa_refresh",
+        "soa_retry",
+        "soa_expire",
+        "soa_minimum",
+        "description",
+    )
+
+    @classmethod
+    def setUpTestData(cls):
+        dns_view = DNSView.objects.get(name="Default")
+        CatalogZone.create_with_backing_zone_payload(
+            name="catalog-api-one.example",
+            filename="catalog-api-one.example.zone",
+            dns_view=dns_view,
+            soa_refresh=3600,
+            soa_retry=600,
+            soa_expire=3600000,
+            soa_minimum=3600,
+            description="Catalog API one",
+        )
+        CatalogZone.create_with_backing_zone_payload(
+            name="catalog-api-two.example",
+            filename="catalog-api-two.example.zone",
+            dns_view=dns_view,
+            soa_refresh=3600,
+            soa_retry=600,
+            soa_expire=3600000,
+            soa_minimum=3600,
+            description="Catalog API two",
+        )
+        CatalogZone.create_with_backing_zone_payload(
+            name="catalog-api-three.example",
+            filename="catalog-api-three.example.zone",
+            dns_view=dns_view,
+            soa_refresh=3600,
+            soa_retry=600,
+            soa_expire=3600000,
+            soa_minimum=3600,
+            description="Catalog API three",
+        )
+
+        cls.create_data = [
+            {
+                "name": "catalog-api-four.example",
+                "filename": "catalog-api-four.example.zone",
+                "dns_view": dns_view.id,
+                "soa_refresh": 3600,
+                "soa_retry": 600,
+                "soa_expire": 3600000,
+                "soa_minimum": 3600,
+                "description": "Catalog API four",
+            },
+            {
+                "name": "catalog-api-five.example",
+                "filename": "catalog-api-five.example.zone",
+                "dns_view": dns_view.id,
+                "soa_refresh": 7200,
+                "soa_retry": 1200,
+                "soa_expire": 3600000,
+                "soa_minimum": 3600,
+                "description": "Catalog API five",
+            },
+            {
+                "name": "catalog-api-six.example",
+                "filename": "catalog-api-six.example.zone",
+                "dns_view": dns_view.id,
+                "soa_refresh": 10800,
+                "soa_retry": 1800,
+                "soa_expire": 3600000,
+                "soa_minimum": 3600,
+                "description": "Catalog API six",
+            },
+        ]
+
+    # CatalogZone exposes several backing DNSZone attributes via read-only proxy properties.
+    # The generic API assertion helper compares submitted payload values directly to model
+    # attributes, so normalize proxy-backed values (for example dns_view UUID -> object).
+    def assertInstanceEqual(self, instance, data, exclude=None, api=False):
+        """Normalize proxy-backed fields for generic API test helper comparisons."""
+        normalized_data = dict(data)
+        if normalized_data.get("dns_view"):
+            normalized_data["dns_view"] = DNSView.objects.get(pk=normalized_data["dns_view"])
+
+        super().assertInstanceEqual(instance, normalized_data, exclude=exclude, api=api)
+
+    # Nautobot REST API docs note that only direct model attributes are validated for sorting:
+    # https://docs.nautobot.com/projects/core/en/stable/user-guide/platform-functionality/rest-api/overview/#sorting
+    # CatalogZone ordering relies on wrapped DNSZone attributes, so inherited generic sort tests
+    # are not applicable here.
+    @skip("Nested/wrapped sort keys are not supported by generic API sorting tests.")
+    def test_list_objects_ascending_ordered(self):
+        """Skip inherited sort contract for wrapped proxy attributes."""
+        pass
+
+    @skip("Nested/wrapped sort keys are not supported by generic API sorting tests.")
+    def test_list_objects_descending_ordered(self):
+        """Skip inherited sort contract for wrapped proxy attributes."""
+        pass
+
+    def test_catalog_zone_serializer_excludes_dns_zone(self):
+        """CatalogZone API serializer should not expose system-managed backing relation."""
+        serializer_class = get_serializer_for_model(CatalogZone)
+        serializer = serializer_class(context={"request": None})
+        self.assertNotIn("dns_zone", serializer.fields)
+
+    def test_delete_catalog_zone_with_members_fails(self):
+        """CatalogZone API delete should fail when memberships exist."""
+        self.add_permissions(
+            "nautobot_dns_models.view_catalogzone",
+            "nautobot_dns_models.delete_catalogzone",
+            "nautobot_dns_models.view_dnszone",
+        )
+        backing_zone = _create_zone(name="catalog-delete-members.example")
+        catalog_zone = CatalogZone.objects.create(dns_zone=backing_zone)
+        member_zone = _create_zone(name="catalog-delete-member-zone.example")
+        CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+
+        response = self.client.delete(self._get_detail_url(catalog_zone), **self.header)
+
+        self.assertIn(response.status_code, (status.HTTP_400_BAD_REQUEST, status.HTTP_409_CONFLICT))
+        self.assertTrue(CatalogZone.objects.filter(id=catalog_zone.id).exists())
+        self.assertTrue(DNSZone.objects.filter(id=backing_zone.id).exists())
+
+    def test_delete_catalog_zone_without_members_succeeds_with_control_records_present(self):
+        """CatalogZone API delete should succeed when no memberships exist."""
+        self.add_permissions(
+            "nautobot_dns_models.view_catalogzone",
+            "nautobot_dns_models.delete_catalogzone",
+            "nautobot_dns_models.view_dnszone",
+        )
+        backing_zone = _create_zone(name="catalog-delete-clean.example")
+        catalog_zone = CatalogZone.objects.create(dns_zone=backing_zone)
+        self.assertTrue(NSRecord.objects.filter(zone=backing_zone, name="@").exists())
+        self.assertTrue(TXTRecord.objects.filter(zone=backing_zone, name="version").exists())
+
+        response = self.client.delete(self._get_detail_url(catalog_zone), **self.header)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(NSRecord.objects.filter(zone_id=backing_zone.id, name="@").exists())
+        self.assertFalse(TXTRecord.objects.filter(zone_id=backing_zone.id, name="version").exists())
+
+    def test_delete_catalog_zone_removes_backing_dns_zone(self):
+        """CatalogZone API delete should remove the backing DNSZone."""
+        self.add_permissions(
+            "nautobot_dns_models.view_catalogzone",
+            "nautobot_dns_models.delete_catalogzone",
+            "nautobot_dns_models.view_dnszone",
+        )
+        backing_zone = _create_zone(name="catalog-delete-backing-zone.example")
+        catalog_zone = CatalogZone.objects.create(dns_zone=backing_zone)
+        backing_zone_id = backing_zone.id
+
+        response = self.client.delete(self._get_detail_url(catalog_zone), **self.header)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(DNSZone.objects.filter(id=backing_zone_id).exists())
 
 
 class NSRecordAPITestCase(APIViewTestCases.APIViewTestCase):

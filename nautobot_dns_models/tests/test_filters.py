@@ -409,11 +409,17 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
 
         self.assertIn(non_member_zone, self.filterset({"member_of_catalog_zones__isnull": "true"}, self.queryset).qs)
         self.assertNotIn(member_zone, self.filterset({"member_of_catalog_zones__isnull": "true"}, self.queryset).qs)
-        self.assertNotIn(catalog_backing_zone, self.filterset({"member_of_catalog_zones__isnull": "true"}, self.queryset).qs)
+        self.assertNotIn(
+            catalog_backing_zone, self.filterset({"member_of_catalog_zones__isnull": "true"}, self.queryset).qs
+        )
 
         self.assertIn(member_zone, self.filterset({"member_of_catalog_zones__isnull": "false"}, self.queryset).qs)
-        self.assertNotIn(non_member_zone, self.filterset({"member_of_catalog_zones__isnull": "false"}, self.queryset).qs)
-        self.assertNotIn(catalog_backing_zone, self.filterset({"member_of_catalog_zones__isnull": "false"}, self.queryset).qs)
+        self.assertNotIn(
+            non_member_zone, self.filterset({"member_of_catalog_zones__isnull": "false"}, self.queryset).qs
+        )
+        self.assertNotIn(
+            catalog_backing_zone, self.filterset({"member_of_catalog_zones__isnull": "false"}, self.queryset).qs
+        )
 
 
 class CatalogZoneFilterTestCase(FilterTestCases.FilterTestCase):

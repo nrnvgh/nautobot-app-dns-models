@@ -17,6 +17,10 @@ from nautobot_dns_models.querysets import CatalogZoneMembershipManager
 CATALOG_ZONE_SCHEMA_VERSION = "2"
 CATALOG_ZONE_VERSION_RECORD_NAME = "version"
 CATALOG_ZONE_DEFAULT_NS_TARGET = "invalid."
+CATALOG_ZONE_DEFAULT_TTL = 3600
+CATALOG_ZONE_DEFAULT_SOA_MNAME = "ns1.invalid."
+CATALOG_ZONE_DEFAULT_SOA_RNAME = "admin@invalid.local"
+CATALOG_ZONE_DEFAULT_SOA_SERIAL = 0
 CATALOG_MEMBER_NODE_LABEL_MAX_GENERATION_ATTEMPTS = 10
 CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_ZONE_UNIQUE = "dns_czm_unique_member_zone_per_catalog"
 CATALOG_MEMBERSHIP_CONSTRAINT_MEMBER_NODE_LABEL_UNIQUE = "dns_czm_unique_member_node_label_per_catalog"
@@ -289,17 +293,62 @@ class CatalogZone(PrimaryModel):
         verbose_name = "Catalog Zone"
         verbose_name_plural = "Catalog Zones"
 
+    @property
+    def name(self):
+        """Proxy wrapper name to backing DNS zone."""
+        return self.dns_zone.name if self.dns_zone_id else None
+
+    @property
+    def dns_view(self):
+        """Proxy DNS view to backing DNS zone."""
+        return self.dns_zone.dns_view if self.dns_zone_id else None
+
+    @property
+    def filename(self):
+        """Proxy filename to backing DNS zone."""
+        return self.dns_zone.filename if self.dns_zone_id else None
+
+    @property
+    def tenant(self):
+        """Proxy tenant to backing DNS zone."""
+        return self.dns_zone.tenant if self.dns_zone_id else None
+
+    @property
+    def soa_refresh(self):
+        """Proxy SOA refresh to backing DNS zone."""
+        return self.dns_zone.soa_refresh if self.dns_zone_id else None
+
+    @property
+    def soa_retry(self):
+        """Proxy SOA retry to backing DNS zone."""
+        return self.dns_zone.soa_retry if self.dns_zone_id else None
+
+    @property
+    def soa_expire(self):
+        """Proxy SOA expire to backing DNS zone."""
+        return self.dns_zone.soa_expire if self.dns_zone_id else None
+
+    @property
+    def soa_minimum(self):
+        """Proxy SOA minimum to backing DNS zone."""
+        return self.dns_zone.soa_minimum if self.dns_zone_id else None
+
     def __str__(self):
         """Stringify instance."""
         return str(self.dns_zone)
 
+    def clean(self):
+        """Validate wrapper creation invariants."""
+        super().clean()
+        if self.dns_zone_id is None and not getattr(self, "_allow_missing_backing_zone", False):
+            raise ValidationError("CatalogZone requires a backing DNS zone.")
+
     def save(self, *args, **kwargs):
         """Persist wrapper and reconcile required catalog control records."""
         with transaction.atomic():
-            result = super().save(*args, **kwargs)
+            super().save(*args, **kwargs)
             self._ensure_apex_ns_record()
             self._ensure_version_control_record()
-            return result
 
     def delete(self, *args, **kwargs):
         """Delete wrapper and its backing DNSZone in one transaction."""
@@ -356,6 +405,86 @@ class CatalogZone(PrimaryModel):
             zone_id=self.dns_zone_id,
             name="@",
         ).delete()
+
+    @classmethod
+    def create_with_backing_zone_payload(
+        cls,
+        *,
+        name,
+        filename,
+        dns_view,
+        tenant=None,
+        soa_refresh,
+        soa_retry,
+        soa_expire,
+        soa_minimum,
+        description="",
+    ):
+        """Create catalog wrapper and backing DNS zone from curated payload."""
+        with transaction.atomic():
+            zone = DNSZone(
+                name=name,
+                dns_view=dns_view,
+                tenant=tenant,
+                ttl=CATALOG_ZONE_DEFAULT_TTL,
+                filename=filename,
+                soa_mname=CATALOG_ZONE_DEFAULT_SOA_MNAME,
+                soa_rname=CATALOG_ZONE_DEFAULT_SOA_RNAME,
+                soa_refresh=soa_refresh,
+                soa_retry=soa_retry,
+                soa_expire=soa_expire,
+                soa_serial=CATALOG_ZONE_DEFAULT_SOA_SERIAL,
+                soa_minimum=soa_minimum,
+            )
+            zone.validated_save()
+            catalog_zone = cls(dns_zone=zone, description=description)
+            catalog_zone.validated_save()
+            return catalog_zone
+
+    def update_backing_zone_payload(
+        self,
+        *,
+        name,
+        filename,
+        dns_view,
+        tenant=None,
+        soa_refresh,
+        soa_retry,
+        soa_expire,
+        soa_minimum,
+        description=None,
+    ):
+        """Update curated backing DNS zone fields via wrapper workflow."""
+        with transaction.atomic():
+            zone = self.dns_zone
+            zone.name = name
+            zone.dns_view = dns_view
+            zone.tenant = tenant
+            zone.ttl = CATALOG_ZONE_DEFAULT_TTL
+            zone.filename = filename
+            zone.soa_mname = CATALOG_ZONE_DEFAULT_SOA_MNAME
+            zone.soa_rname = CATALOG_ZONE_DEFAULT_SOA_RNAME
+            zone.soa_refresh = soa_refresh
+            zone.soa_retry = soa_retry
+            zone.soa_expire = soa_expire
+            zone.soa_serial = CATALOG_ZONE_DEFAULT_SOA_SERIAL
+            zone.soa_minimum = soa_minimum
+            zone.validated_save()
+
+            # Always save the wrapper during edit workflows so audit/object-change
+            # events reflect the CatalogZone update action, even when only backing
+            # DNSZone-proxied fields changed. Not only does this quell an test
+            # error in test_edit_object_with_permission(), it also makes a degree
+            # of sense. This model is, in large part, a proxy for the backing
+            # DNSZone, so if attributes of the backing zone change, the wrapping
+            # model should reflect the updated mtime.
+            if description is not None and self.description != description:
+                self.description = description
+
+            super().save()
+
+            self._ensure_apex_ns_record()
+            self._ensure_version_control_record()
 
 
 @extras_features(
@@ -472,17 +601,16 @@ class CatalogZoneMembership(PrimaryModel):
         """Save membership atomically and create derived PTR record on create."""
         is_create = self._state.adding
         with transaction.atomic():
-            result = super().save(*args, **kwargs)
+            super().save(*args, **kwargs)
             if is_create:
                 self._create_member_ptr_record()
-
-            return result
 
     def _create_member_ptr_record(self):
         """Create RFC 9432 member PTR record in the catalog backing DNS zone."""
         ptr_name = f"{self.member_node_label}.zones"
         # RFC 9432 §4.1 states that if different member-node labels point to the same PTR target
-        # (same member zone), the catalog is broken; per §5.1 broken catalogs MUST NOT be processed.
+        # (same member zone), the catalog is broken and MUST NOT be processed, so prevent that
+        # from happening.
         conflicting_ptr_exists = (
             PTRRecord.objects.filter(
                 zone=self.catalog_zone.dns_zone,

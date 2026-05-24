@@ -2,6 +2,7 @@
 
 from drf_spectacular.utils import extend_schema_field
 from nautobot.apps.api import NautobotModelSerializer, ValidatedModelSerializer
+from nautobot.tenancy.models import Tenant
 from rest_framework import serializers
 
 from nautobot_dns_models import models
@@ -69,11 +70,69 @@ class DNSZoneSerializer(NautobotModelSerializer):
 class CatalogZoneSerializer(NautobotModelSerializer):
     """CatalogZone Serializer."""
 
+    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:catalogzone-detail")
+    name = serializers.CharField()
+    filename = serializers.CharField()
+    dns_view = serializers.PrimaryKeyRelatedField(queryset=models.DNSView.objects.all())
+    tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all(), required=False, allow_null=True)
+    soa_refresh = serializers.IntegerField(min_value=300, max_value=2147483647)
+    soa_retry = serializers.IntegerField(min_value=300, max_value=2147483647)
+    soa_expire = serializers.IntegerField(min_value=300, max_value=2147483647)
+    soa_minimum = serializers.IntegerField(min_value=300, max_value=2147483647)
+    # These API inputs represent backing DNSZone attributes, not concrete writable fields on
+    # CatalogZone itself. validate() removes them from attrs and stores them under
+    # "_wrapper_payload" so NautobotModelSerializer doesn't try model-level assignment/validation
+    # against CatalogZone proxy properties (for example "name"). create() and update() then
+    # consume that payload via CatalogZone orchestration methods to write the backing DNSZone.
+    _wrapper_payload_fields = (
+        "name",
+        "filename",
+        "dns_view",
+        "tenant",
+        "soa_refresh",
+        "soa_retry",
+        "soa_expire",
+        "soa_minimum",
+        "description",
+    )
+
     class Meta:
         """Meta attributes."""
 
         model = models.CatalogZone
-        fields = "__all__"
+        exclude = ("dns_zone",)
+        read_only_fields = ("id", "created", "last_updated")
+
+    def validate(self, attrs):
+        """Capture curated payload and remove proxy attrs before model validation."""
+        wrapper_payload = {}
+        for field_name in self._wrapper_payload_fields:
+            if field_name in attrs:
+                wrapper_payload[field_name] = attrs.pop(field_name)
+
+        attrs["_wrapper_payload"] = wrapper_payload
+        return attrs
+
+    def create(self, validated_data):
+        """Create wrapper + backing DNS zone from curated payload."""
+        payload = validated_data.pop("_wrapper_payload", {})
+        return models.CatalogZone.create_with_backing_zone_payload(**payload)
+
+    def update(self, instance, validated_data):
+        """Update curated backing DNS zone payload through wrapper model."""
+        payload = validated_data.pop("_wrapper_payload", {})
+        instance.update_backing_zone_payload(
+            name=payload.get("name", instance.name),
+            filename=payload.get("filename", instance.dns_zone.filename),
+            dns_view=payload.get("dns_view", instance.dns_view),
+            tenant=payload.get("tenant", instance.tenant),
+            soa_refresh=payload.get("soa_refresh", instance.soa_refresh),
+            soa_retry=payload.get("soa_retry", instance.soa_retry),
+            soa_expire=payload.get("soa_expire", instance.soa_expire),
+            soa_minimum=payload.get("soa_minimum", instance.soa_minimum),
+            description=payload.get("description", instance.description),
+        )
+        return instance
 
 
 class CatalogZoneMembershipSerializer(NautobotModelSerializer):

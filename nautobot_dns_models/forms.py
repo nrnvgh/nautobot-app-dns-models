@@ -287,21 +287,132 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
     ]
 
 
-class CatalogZoneForm(NautobotModelForm):
+# TODO: determine if we should be setting default timer (retry, expire, etc) values for new catalog zones
+class CatalogZoneForm(NautobotModelForm, TenancyForm):
     """CatalogZone creation/edit form."""
 
-    dns_zone = DynamicModelChoiceField(
-        queryset=models.DNSZone.objects.all(),
+    name = forms.CharField(required=True)
+    ttl = forms.IntegerField(
+        required=False,
+        disabled=True,
+        label="TTL",
+        initial=models.CATALOG_ZONE_DEFAULT_TTL,
+        help_text="Immutable for catalog zones. This value is system-managed.",
+    )
+    filename = forms.CharField(required=True)
+    dns_view = DynamicModelChoiceField(
+        queryset=models.DNSView.objects.all(),
         required=True,
-        label="Backing DNS Zone",
-        query_params={"sort": "name"},
+        initial=models.DNSZone._meta.get_field("dns_view").default,
+    )
+    soa_mname = forms.CharField(
+        required=False,
+        disabled=True,
+        label="SOA MNAME",
+        initial=models.CATALOG_ZONE_DEFAULT_SOA_MNAME,
+        help_text="Immutable for catalog zones. This value is system-managed.",
+    )
+    soa_rname = forms.EmailField(
+        required=False,
+        disabled=True,
+        label="SOA RNAME",
+        initial=models.CATALOG_ZONE_DEFAULT_SOA_RNAME,
+        help_text="Immutable for catalog zones. This value is system-managed.",
+    )
+    soa_refresh = forms.IntegerField(required=True, min_value=300, max_value=2147483647, label="SOA Refresh")
+    soa_retry = forms.IntegerField(required=True, min_value=300, max_value=2147483647, label="SOA Retry")
+    soa_expire = forms.IntegerField(required=True, min_value=300, max_value=2147483647, label="SOA Expire")
+    soa_serial = forms.IntegerField(
+        required=False,
+        disabled=True,
+        label="SOA Serial",
+        initial=models.CATALOG_ZONE_DEFAULT_SOA_SERIAL,
+        help_text="Immutable for catalog zones. This value is system-managed.",
+    )
+    soa_minimum = forms.IntegerField(required=True, min_value=300, max_value=2147483647, label="SOA Minimum")
+    field_order = (
+        "name",
+        "dns_view",
+        "ttl",
+        "filename",
+        "description",
+        "soa_mname",
+        "soa_rname",
+        "soa_refresh",
+        "soa_retry",
+        "soa_expire",
+        "soa_serial",
+        "soa_minimum",
+        "tenant",
+        "tags",
     )
 
     class Meta:
         """Meta attributes."""
 
         model = models.CatalogZone
+        # Backing DNS zone is system-managed, so exclude it from the form.
         fields = "__all__"
+        exclude = ("dns_zone",)  # pylint: disable=modelform-uses-exclude
+
+    def __init__(self, *args, **kwargs):
+        """Populate curated backing-zone fields when editing."""
+        super().__init__(*args, **kwargs)
+
+        # Keep wrapper form help text aligned with DNSZone for writable shared fields.
+        dns_zone_field_names = {field.name for field in models.DNSZone._meta.fields}
+        for field_name, form_field in self.fields.items():
+            if form_field.disabled or field_name not in dns_zone_field_names:
+                continue
+
+            form_field.help_text = models.DNSZone._meta.get_field(field_name).help_text
+
+        if self.instance and self.instance.pk and self.instance.dns_zone_id:
+            zone = self.instance.dns_zone
+            self.fields["name"].initial = zone.name
+            self.fields["ttl"].initial = zone.ttl
+            self.fields["filename"].initial = zone.filename
+            self.fields["dns_view"].initial = zone.dns_view
+            self.fields["soa_mname"].initial = zone.soa_mname
+            self.fields["soa_rname"].initial = zone.soa_rname
+            self.fields["tenant"].initial = zone.tenant
+            self.fields["soa_refresh"].initial = zone.soa_refresh
+            self.fields["soa_retry"].initial = zone.soa_retry
+            self.fields["soa_expire"].initial = zone.soa_expire
+            self.fields["soa_serial"].initial = zone.soa_serial
+            self.fields["soa_minimum"].initial = zone.soa_minimum
+
+    def clean(self):
+        """Allow wrapper create validation before backing zone exists."""
+        cleaned_data = super().clean()
+        if self.instance._state.adding:  # pylint: disable=protected-access
+            self.instance._allow_missing_backing_zone = True  # pylint: disable=protected-access
+
+        return cleaned_data
+
+    def save(self, commit=True):
+        """Persist catalog wrapper via model-owned backing-zone orchestration."""
+        if not commit:
+            raise ValueError("CatalogZoneForm requires commit=True.")
+
+        instance = super().save(commit=False)
+        payload = {
+            "name": self.cleaned_data["name"],
+            "filename": self.cleaned_data["filename"],
+            "dns_view": self.cleaned_data["dns_view"],
+            "tenant": self.cleaned_data.get("tenant"),
+            "soa_refresh": self.cleaned_data["soa_refresh"],
+            "soa_retry": self.cleaned_data["soa_retry"],
+            "soa_expire": self.cleaned_data["soa_expire"],
+            "soa_minimum": self.cleaned_data["soa_minimum"],
+            "description": self.cleaned_data.get("description", ""),
+        }
+
+        if not instance._state.adding:  # pylint: disable=protected-access
+            instance.update_backing_zone_payload(**payload)
+            return instance
+
+        return models.CatalogZone.create_with_backing_zone_payload(**payload)
 
 
 class CatalogZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):

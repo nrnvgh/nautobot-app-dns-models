@@ -148,7 +148,6 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
 
         return queryset
 
-
     class Meta:
         """Meta attributes for filter."""
 
@@ -214,7 +213,12 @@ class DNSRecordFilterSet(NautobotFilterSet):
         to_field_name="name",
         label="Zone (name or ID)",
     )
-
+    zone__catalog_zone = NaturalKeyOrPKMultipleChoiceFilter(
+        field_name="zone__catalog_zone",
+        queryset=models.CatalogZone.objects.all(),
+        to_field_name="id",
+        label="Catalog Zone",
+    )
     ttl = django_filters.NumberFilter(method="filter_ttl", label="TTL")
     ttl__ne = django_filters.NumberFilter(method="filter_ttl_ne")
     ttl__gte = django_filters.NumberFilter(method="filter_ttl", lookup_expr="gte")
