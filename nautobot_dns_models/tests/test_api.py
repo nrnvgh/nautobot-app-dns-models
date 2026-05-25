@@ -506,14 +506,39 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
     def test_list_excludes_catalog_backing_zones(self):
         """DNSZone API list should not return zones that back catalog wrappers."""
         self.add_permissions("nautobot_dns_models.view_dnszone")
-        backing_zone = _create_zone(name="catalog-backing-hidden.example")
-        CatalogZone.objects.create(dns_zone=backing_zone)
+        catalog_zone = CatalogZone.create_with_backing_zone_payload(
+            name="catalog-backing-hidden.example",
+            filename="catalog-backing-hidden.example.zone",
+            dns_view=DNSView.objects.get(name="Default"),
+            soa_refresh=3600,
+            soa_retry=600,
+            soa_expire=3600000,
+            soa_minimum=3600,
+            description="Backing zone hidden from DNSZone API list.",
+        )
 
         response = self.client.get(self._get_list_url(), **self.header)
         self.assertHttpStatus(response, status.HTTP_200_OK)
         results = response.data if isinstance(response.data, list) else response.data.get("results", [])
         names = [item["name"] for item in results]
-        self.assertNotIn("catalog-backing-hidden.example", names)
+        self.assertNotIn(catalog_zone.name, names)
+
+    def test_retrieve_excludes_catalog_backing_zones(self):
+        """DNSZone API detail lookup should not expose zones that back catalog wrappers."""
+        self.add_permissions("nautobot_dns_models.view_dnszone")
+        catalog_zone = CatalogZone.create_with_backing_zone_payload(
+            name="catalog-backing-detail-hidden.example",
+            filename="catalog-backing-detail-hidden.example.zone",
+            dns_view=DNSView.objects.get(name="Default"),
+            soa_refresh=3600,
+            soa_retry=600,
+            soa_expire=3600000,
+            soa_minimum=3600,
+            description="Backing zone hidden from DNSZone API detail.",
+        )
+
+        response = self.client.get(self._get_detail_url(catalog_zone.dns_zone), **self.header)
+        self.assertHttpStatus(response, status.HTTP_404_NOT_FOUND)
 
 
 class CatalogZoneAPITestCase(APIViewTestCases.APIViewTestCase):
