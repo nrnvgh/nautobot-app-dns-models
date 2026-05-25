@@ -1,12 +1,13 @@
 """GraphQL implementation for the DNS models."""
 
 import graphene
-from nautobot.core.graphql.types import OptimizedNautobotObjectType
+from nautobot.apps.graphql import OptimizedNautobotObjectType
 
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
     CNAMERecordFilterSet,
+    DNSZoneFilterSet,
     MXRecordFilterSet,
     NSRecordFilterSet,
     PTRRecordFilterSet,
@@ -18,6 +19,7 @@ from nautobot_dns_models.models import (
     ARecord,
     CNAMERecord,
     DNSRecord,
+    DNSZone,
     MXRecord,
     NSRecord,
     PTRRecord,
@@ -35,6 +37,27 @@ class DNSRecordType(OptimizedNautobotObjectType):
         """Metadata for the CNAMERecord."""
 
         model = DNSRecord
+
+
+class GraphQLDNSZoneFilterSet(DNSZoneFilterSet):
+    """FilterSet used only by DNSZone GraphQL list queries."""
+
+    def __init__(self, data=None, queryset=None, *, request=None, prefix=None):
+        """Initialize with backing catalog zones excluded from candidate queryset."""
+        if queryset is not None:
+            queryset = queryset.filter(catalog_zone__isnull=True)
+        super().__init__(data=data, queryset=queryset, request=request, prefix=prefix)
+
+
+class DNSZoneType(OptimizedNautobotObjectType):
+    """Graphql Type Object for the DNSZone model."""
+
+    class Meta:
+        """Metadata for the DNSZone."""
+
+        model = DNSZone
+        filterset_class = GraphQLDNSZoneFilterSet
+        exclude = ["catalog_zone"]
 
 
 class NSRecordType(DNSRecordType):
@@ -118,6 +141,7 @@ class SRVRecordType(DNSRecordType):
 
 
 graphql_types = [
+    DNSZoneType,
     NSRecordType,
     ARecordType,
     AAAARecordType,

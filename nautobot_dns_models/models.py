@@ -175,7 +175,6 @@ def get_default_view_pk():
     "custom_links",
     "custom_validators",
     "export_templates",
-    "graphql",
     "relationships",
     "webhooks",
 )
