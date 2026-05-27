@@ -876,8 +876,8 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(rules[0], global_rule)
 
     def test_get_applicable_rules_no_location_gets_global(self):
-        """Test that objects without location only get global rules."""
-        # Use VirtualMachine which currently has no location extraction
+        """Test that objects resolving to no location only get global rules."""
+        # Use a VirtualMachine whose cluster.location resolves to None.
         cluster_type = ClusterType.objects.create(name="test-cluster-type")
         cluster = Cluster.objects.create(name="test-cluster", cluster_type=cluster_type)
         vm = VirtualMachine.objects.create(
@@ -1154,16 +1154,16 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
         self.assertEqual(len(rules), 1)
         self.assertEqual(rules[0].name, global_rule.name)
 
-        # Test 2: Device with tenant but no location → should get global rule
+        # Test 2: Device keeps tenant but moves to a location with no matching location-scoped rule.
         device_tenant_only = Device.objects.create(
             name="test-device-tenant-only",
             device_type=self.device_type,
-            location=self.location,  # Has location for creation, will clear tenant
+            location=self.location,
             tenant=self.tenant,
             role=self.device_role,
             status=Status.objects.get_for_model(Device).first(),
         )
-        # Simulate device with tenant but in different location (no location-scoped rules)
+        # Move to a different location where no location-scoped rule applies.
         device_tenant_only.location = Location.objects.create(
             name="Different Location",
             location_type=self.location_type,
