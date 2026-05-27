@@ -21,11 +21,12 @@ class BaseRuleEngineMixin:
         super().setUpTestData()
 
         def ensure_status(model_class, default_name):
-            status = Status.objects.get_for_model(model_class).first()
+            content_type = ContentType.objects.get_for_model(model_class)
+            status = Status.objects.filter(name=default_name, content_types=content_type).first()
             if status is not None:
                 return status
             status, _ = Status.objects.get_or_create(name=default_name)
-            status.content_types.add(ContentType.objects.get_for_model(model_class))
+            status.content_types.add(content_type)
             return status
 
         # Create location infrastructure
