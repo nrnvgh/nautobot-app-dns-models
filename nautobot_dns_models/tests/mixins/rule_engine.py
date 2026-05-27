@@ -18,6 +18,7 @@ class BaseRuleEngineMixin:
     @classmethod
     def setUpTestData(cls):  # pylint: disable=invalid-name
         """Set up comprehensive shared test data for all test cases."""
+        super().setUpTestData()
 
         def ensure_status(model_class, default_name):
             status = Status.objects.get_for_model(model_class).first()
@@ -137,6 +138,7 @@ class BaseRuleEngineMixin:
 
     def setUp(self):  # pylint: disable=invalid-name
         """Set up test data."""
+        super().setUp()
         self.engine = DNSRuleEngine()
 
     def _calc_desired_record_data(self, rule, obj):
