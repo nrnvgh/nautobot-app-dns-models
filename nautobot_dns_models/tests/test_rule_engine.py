@@ -8,6 +8,7 @@ Categories:
 # pylint: disable=too-many-lines
 
 import itertools
+from types import SimpleNamespace
 import uuid
 from unittest import skip
 from unittest.mock import Mock, PropertyMock, patch
@@ -685,7 +686,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
             patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
         ):
-            module_property.return_value = Mock(tenant=None)
+            module_property.return_value = SimpleNamespace(tenant=None)
             parent_property.return_value = self.device
             location = self._get_object_location(module_interface)
 
@@ -707,7 +708,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
             patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
         ):
-            module_property.return_value = Mock(tenant=None)
+            module_property.return_value = SimpleNamespace(tenant=None)
             parent_property.return_value = self.device
             tenant = self._get_object_tenant(module_interface)
 
@@ -726,7 +727,10 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
             patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
         ):
-            module_property.return_value = Mock(tenant=None, parent_module=Mock(tenant=None, parent_module=None))
+            module_property.return_value = SimpleNamespace(
+                tenant=None,
+                parent_module=SimpleNamespace(tenant=None, parent_module=None),
+            )
             parent_property.return_value = self.device
             location = self._get_object_location(nested_module_interface)
 
@@ -748,7 +752,10 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
             patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
         ):
-            module_property.return_value = Mock(tenant=None, parent_module=Mock(tenant=None, parent_module=None))
+            module_property.return_value = SimpleNamespace(
+                tenant=None,
+                parent_module=SimpleNamespace(tenant=None, parent_module=None),
+            )
             parent_property.return_value = self.device
             tenant = self._get_object_tenant(nested_module_interface)
 
@@ -772,7 +779,7 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
             patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
         ):
-            module_property.return_value = Mock(tenant=module_tenant)
+            module_property.return_value = SimpleNamespace(tenant=module_tenant)
             parent_property.return_value = self.device
             tenant = self._get_object_tenant(child_interface)
 
@@ -792,8 +799,8 @@ class RuleResolutionTestCase(BaseRuleEngineMixin, TestCase):
             patch.object(Interface, "module", new_callable=PropertyMock) as module_property,
             patch.object(Interface, "parent", new_callable=PropertyMock) as parent_property,
         ):
-            module_property.return_value = Mock(tenant=None)
-            parent_property.return_value = Mock()
+            module_property.return_value = SimpleNamespace(tenant=None)
+            parent_property.return_value = object()
             location = self._get_object_location(child_interface)
             tenant = self._get_object_tenant(child_interface)
 
