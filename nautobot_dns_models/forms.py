@@ -10,6 +10,7 @@ from nautobot.apps.forms import (
     NautobotFilterForm,
     NautobotModelForm,
     StaticSelect2,
+    StaticSelect2Multiple,
     TagsBulkEditFormMixin,
 )
 
@@ -22,6 +23,7 @@ from nautobot.tenancy.forms import TenancyFilterForm, TenancyForm
 from nautobot.tenancy.models import Tenant
 
 from nautobot_dns_models import models
+from nautobot_dns_models.choices import DNSZoneTypeChoices
 
 EXPIRATION_DATE_INPUT_FORMATS = ("%Y-%m-%d",)
 
@@ -246,6 +248,19 @@ class DNSZoneForm(NautobotModelForm, TenancyForm):
 
         model = models.DNSZone
         fields = "__all__"
+        widgets = {"zone_type": StaticSelect2()}
+
+    def __init__(self, *args, **kwargs):
+        """Disable fields the model forbids setting for the instance being edited."""
+        super().__init__(*args, **kwargs)
+
+        if self.instance.present_in_database:
+            self.fields["zone_type"].disabled = True
+            self.fields["zone_type"].help_text = "Zone type cannot be changed after creation."
+
+            if self.instance.zone_type == DNSZoneTypeChoices.TYPE_CATALOG:
+                self.fields["auto_create_ptr"].disabled = True
+                self.fields["auto_create_ptr"].help_text = "Catalog zones cannot enable automatic PTR creation."
 
 
 class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
@@ -278,6 +293,12 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
         help_text="Search within Name, Filename, SOA MNAME, and SOA RNAME.",
     )
     name = forms.CharField(required=False, label="Name")
+    zone_type = forms.MultipleChoiceField(
+        required=False,
+        choices=DNSZoneTypeChoices,
+        widget=StaticSelect2Multiple(),
+        label="Zone Type",
+    )
     enabled = forms.NullBooleanField(
         required=False,
         widget=StaticSelect2(choices=BOOLEAN_WITH_BLANK_CHOICES),
@@ -288,6 +309,7 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
     fields = [
         "q",
         "name",
+        "zone_type",
         "enabled",
         "filename",
     ]

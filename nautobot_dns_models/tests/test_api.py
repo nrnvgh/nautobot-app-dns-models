@@ -17,6 +17,7 @@ from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from rest_framework import status
 from rest_framework.relations import ManyRelatedField
 
+from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
@@ -32,9 +33,10 @@ from nautobot_dns_models.models import (
     SRVRecord,
     TXTRecord,
 )
+from nautobot_dns_models.system_writes import system_write
 
 
-def _create_zone(name, dns_view=None):
+def _create_zone(name, dns_view=None, **kwargs):
     zone_data = {
         "name": name,
         "filename": f"{name}.zone",
@@ -43,6 +45,7 @@ def _create_zone(name, dns_view=None):
     }
     if dns_view is not None:
         zone_data["dns_view"] = dns_view
+    zone_data.update(kwargs)
 
     return DNSZone.objects.create(
         **zone_data,
@@ -454,6 +457,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         "soa_mname",
         "soa_rname",
     ]
+    choices_fields = ["zone_type"]
 
     @classmethod
     def setUpTestData(cls):
@@ -542,6 +546,67 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         zone = _create_zone(name="helper-default.example")
 
         self.assertEqual(zone.dns_view, expected_default_view)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_create_defaults_to_primary_zone_type(self):
+        """Omitting zone_type on create yields a primary zone."""
+        self.add_permissions("nautobot_dns_models.add_dnszone")
+        response = self.client.post(
+            self._get_list_url(),
+            {
+                "name": "api-default-type.example",
+                "dns_view": DNSView.objects.get(name="Default").id,
+                "filename": "api-default-type.zone",
+                "soa_mname": "ns1.api-default-type.example",
+                "soa_rname": "admin@api-default-type.example",
+            },
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["zone_type"], DNSZoneTypeChoices.TYPE_PRIMARY)
+        self.assertEqual(
+            DNSZone.objects.get(name="api-default-type.example").zone_type,
+            DNSZoneTypeChoices.TYPE_PRIMARY,
+        )
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_create_rejects_auto_create_ptr_on_catalog_zone(self):
+        """The API refuses auto_create_ptr on a catalog zone rather than silently dropping it."""
+        self.add_permissions("nautobot_dns_models.add_dnszone")
+        response = self.client.post(
+            self._get_list_url(),
+            {
+                "name": "api-catalog-ptr.example",
+                "dns_view": DNSView.objects.get(name="Default").id,
+                "filename": "api-catalog-ptr.zone",
+                "soa_mname": "ns1.api-catalog-ptr.example",
+                "soa_rname": "admin@api-catalog-ptr.example",
+                "zone_type": DNSZoneTypeChoices.TYPE_CATALOG,
+                "auto_create_ptr": True,
+            },
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("cannot enable automatic PTR creation", str(response.data["auto_create_ptr"]))
+        self.assertFalse(DNSZone.objects.filter(name="api-catalog-ptr.example").exists())
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_patch_rejects_zone_type_change(self):
+        """The API refuses to change zone_type on an existing zone."""
+        self.add_permissions("nautobot_dns_models.change_dnszone")
+        zone = _create_zone(name="api-immutable.example")
+        response = self.client.patch(
+            self._get_detail_url(zone),
+            {"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("cannot be changed after creation", str(response.data["zone_type"]))
+        zone.refresh_from_db()
+        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_PRIMARY)
 
 
 class NSRecordAPITestCase(APIViewTestCases.APIViewTestCase):
@@ -871,6 +936,36 @@ class TXTRecordAPITestCase(APIViewTestCases.APIViewTestCase):
                 "zone": dns_zone.id,
             },
         ]
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_create_in_catalog_zone_rejected(self):
+        """The REST API refuses a record a user may not create in a catalog zone."""
+        self.add_permissions("nautobot_dns_models.add_txtrecord")
+        catalog_zone = _create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        response = self.client.post(
+            self._get_list_url(),
+            {"name": "version", "text": "2", "zone": catalog_zone.id},
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("system-managed", str(response.data["zone"]))
+        self.assertFalse(TXTRecord.objects.filter(zone=catalog_zone).exists())
+
+    def test_delete_in_catalog_zone_rejected(self):
+        """The REST API refuses to delete a system-managed catalog record."""
+        self.add_permissions("nautobot_dns_models.delete_txtrecord")
+        catalog_zone = _create_zone("catalog-delete.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        # Written by hand only because catalog zone creation does not yet auto-create the version
+        # TXT. Replace with a lookup of the auto-created record once that lands.
+        with system_write():
+            record = TXTRecord(name="version", text="2", zone=catalog_zone, _ttl=0)
+            record.validated_save()
+
+        response = self.client.delete(self._get_detail_url(record), **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_409_CONFLICT)
+        self.assertTrue(TXTRecord.objects.filter(pk=record.pk).exists())
 
 
 class PTRRecordAPITestCase(APIViewTestCases.APIViewTestCase):
