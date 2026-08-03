@@ -10,6 +10,7 @@ from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from netutils.ip import ipaddress_address
 
+from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
@@ -165,6 +166,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         dns_view = DNSView.objects.get(name="Default")
         cls.form_data = {
             "name": "Test 1",
+            "zone_type": DNSZoneTypeChoices.TYPE_PRIMARY,
             "dns_view": dns_view.id,
             "ttl": 3600,
             "description": "Initial model",

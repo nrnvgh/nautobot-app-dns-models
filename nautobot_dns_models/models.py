@@ -1,14 +1,19 @@
 """Models for Nautobot DNS Models."""
 
 from constance import config as constance_config
+from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, validate_email
 from django.db import models
-from nautobot.apps.models import BaseModel, PrimaryModel, extras_features
+from django.db.models import ProtectedError, Q
+from nautobot.apps.models import BaseManager, BaseModel, PrimaryModel, RestrictedQuerySet, extras_features
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
 from nautobot.extras.models import StatusField
 from nautobot.ipam.choices import IPAddressVersionChoices
 from netutils.ip import ipaddress_address
+
+from nautobot_dns_models.choices import DNSZoneTypeChoices
+from nautobot_dns_models.system_writes import system_write, system_write_in_progress
 
 # Reverse-DNS roots per RFC 1035 §3.5 and RFC 3596 §2.5
 RESERVED_ROOTS = {"in-addr.arpa", "ip6.arpa", "arpa"}
@@ -18,6 +23,25 @@ RESERVED_ROOTS = {"in-addr.arpa", "ip6.arpa", "arpa"}
 # RFC 1035 §3.3.13 defines SOA fields as 32-bit values, explicitly unsigned for SERIAL and MINIMUM;
 # RFC 1982 §7 specifies SERIAL's uint32 range and arithmetic.
 UINT32_MAX = 2**32 - 1
+
+SYSTEM_MANAGED_DELETE_ERROR = "System-managed records cannot be deleted directly."
+
+# Record models users may create in a zone, keyed by zone type: True for every model, False for
+# none, or a frozenset of the specific models permitted. A zone type absent from this map permits
+# nothing. A catalog zone (RFC 9432) holds only the records this app maintains; it gains an
+# NSRecord-only frozenset once apex records can be stored.
+ZONE_TYPE_USER_RECORDS = {
+    DNSZoneTypeChoices.TYPE_PRIMARY: True,
+    DNSZoneTypeChoices.TYPE_CATALOG: False,
+}
+
+
+def zone_type_allows(zone_type, record_model):
+    """Return whether users may manage `record_model` records in a zone of `zone_type`."""
+    allowed = ZONE_TYPE_USER_RECORDS.get(zone_type, False)
+    if isinstance(allowed, bool):
+        return allowed
+    return record_model in allowed
 
 
 def dns_wire_label_length(label):
@@ -106,6 +130,40 @@ def create_auto_ptr_record(record):
         return
 
     PTRRecord(name=relative_name, ptrdname=forward_fqdn, zone=reverse_zone).validated_save()
+
+
+def dns_record_models():
+    """Return every concrete DNSRecord subclass registered with Django.
+
+    Discovered rather than hand-listed so that adding a record model cannot silently leave gaps,
+    such as a catalog zone that stays undeletable because its records were never purged.
+    """
+    return [model for model in apps.get_models() if issubclass(model, DNSRecord)]
+
+
+def purge_system_managed_records(zones):
+    """Delete every record belonging to a catalog zone in `zones`, ahead of deleting the zones.
+
+    `DNSRecord.zone` is PROTECT and catalog records refuse user deletes, so a catalog zone would
+    otherwise be permanently undeletable. This cannot be a `pre_delete` receiver: Django raises
+    ProtectedError while collecting related objects, which happens before any `pre_delete` is sent.
+    """
+    catalog_zone_pks = [zone.pk for zone in zones if zone.zone_type == DNSZoneTypeChoices.TYPE_CATALOG]
+    if not catalog_zone_pks:
+        return
+
+    with system_write():
+        for record_model in dns_record_models():
+            record_model.objects.filter(zone_id__in=catalog_zone_pks).delete()
+
+
+class DNSZoneQuerySet(RestrictedQuerySet):
+    """QuerySet for DNSZone."""
+
+    def delete(self):
+        """Clear system-managed records first, so bulk zone deletion is not blocked by PROTECT."""
+        purge_system_managed_records(self)
+        return super().delete()
 
 
 class DNSModel(PrimaryModel):
@@ -247,6 +305,13 @@ class DNSZone(DNSModel):
     """Model for DNS SOA Records. An SOA Record defines a DNS Zone."""
 
     name = models.CharField(max_length=200, help_text="FQDN of the Zone, w/ TLD. e.g example.com")
+    zone_type = models.CharField(
+        max_length=50,
+        choices=DNSZoneTypeChoices,
+        default=DNSZoneTypeChoices.TYPE_PRIMARY,
+        help_text="Type of the Zone, determining which records it may contain. Cannot be changed after creation.",
+        verbose_name="Zone Type",
+    )
     dns_view = ForeignKeyWithAutoRelatedName(
         DNSView,
         on_delete=models.PROTECT,
@@ -317,9 +382,19 @@ class DNSZone(DNSModel):
         verbose_name="Auto-create PTR Records",
     )
 
+    objects = BaseManager.from_queryset(DNSZoneQuerySet)()
+
     class Meta:
         """Meta attributes for DNSZone."""
 
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(zone_type=DNSZoneTypeChoices.TYPE_CATALOG) | Q(auto_create_ptr=False),
+                name="catalog_zone_no_auto_create_ptr",
+                violation_error_message="Catalog zones cannot enable automatic PTR creation.",
+                violation_error_code="catalog_zone_auto_create_ptr",
+            ),
+        ]
         unique_together = [["name", "dns_view"]]
         verbose_name = "DNS Zone"
         verbose_name_plural = "DNS Zones"
@@ -329,7 +404,7 @@ class DNSZone(DNSModel):
         return f"{self.name} ({self.dns_view})"
 
     def clean(self):
-        """Normalize plain DNS-style RNAME mailboxes to email form."""
+        """Normalize the SOA RNAME, keep zone_type immutable, and bar catalog zones from auto-creating PTRs."""
         super().clean()
 
         invalid_rname_message = (
@@ -351,10 +426,36 @@ class DNSZone(DNSModel):
         # that do not immediately save it.
         self.soa_rname = normalized_soa_rname
 
+        if self.present_in_database:
+            stored_zone_type = DNSZone.objects.filter(pk=self.pk).values_list("zone_type", flat=True).first()
+            if stored_zone_type is not None and stored_zone_type != self.zone_type:
+                raise ValidationError(
+                    {
+                        "zone_type": (
+                            "Zone type cannot be changed after creation. "
+                            "Delete this zone and recreate it with the desired type."
+                        )
+                    }
+                )
+
+        # A catalog zone permits no A/AAAA records, so the flag could never fire; reject it rather than
+        # silently coercing, so API callers learn the value was refused.
+        if self.zone_type == DNSZoneTypeChoices.TYPE_CATALOG and self.auto_create_ptr:
+            raise ValidationError({"auto_create_ptr": "Catalog zones cannot enable automatic PTR creation."})
+
+    def delete(self, *args, **kwargs):
+        """Clear system-managed records first, so a catalog zone is not held open by its own records."""
+        purge_system_managed_records([self])
+        return super().delete(*args, **kwargs)
+
     def save(self, *args, **kwargs):
         """Normalize the RNAME before saving through the ORM."""
         self.soa_rname = normalize_soa_rname(self.soa_rname)
         return super().save(*args, **kwargs)
+
+    def supports_record_type(self, record_model):
+        """Return whether a user may create `record_model` records in this zone."""
+        return zone_type_allows(self.zone_type, record_model)
 
     @classmethod
     def find_reverse_zone_for_ptrdname(cls, ptrdname, dns_view=None):
@@ -456,6 +557,30 @@ class DNSViewPrefixAssignment(BaseModel):
         return f"{self.dns_view}: {self.prefix}"
 
 
+class DNSRecordQuerySet(RestrictedQuerySet):
+    """QuerySet shared by every concrete DNSRecord subclass."""
+
+    def delete(self):
+        """Refuse to delete system-managed records.
+
+        Overridden here as well as on the model because Nautobot's bulk delete job calls
+        `QuerySet.delete()` directly and never reaches `Model.delete()`. Neither guard can be a
+        `pre_delete` receiver: that signal fires inside the collector's atomic block, so raising
+        from it leaves the request transaction unusable and the caller sees a 500 instead of the
+        error.
+        """
+        if not system_write_in_progress():
+            # A zone type absent from the registry allows nothing, so leaving it out of this list
+            # correctly protects its records.
+            permitted_zone_types = [
+                zone_type for zone_type in ZONE_TYPE_USER_RECORDS if zone_type_allows(zone_type, self.model)
+            ]
+            protected = self.exclude(zone__zone_type__in=permitted_zone_types)
+            if protected.exists():
+                raise ProtectedError(SYSTEM_MANAGED_DELETE_ERROR, list(protected[:50]))
+        return super().delete()
+
+
 class DNSRecord(DNSModel):
     """Primary Dns Record model for plugin."""
 
@@ -470,6 +595,8 @@ class DNSRecord(DNSModel):
     )
     description = models.TextField(help_text="Description of the Record.", blank=True)
     comment = models.CharField(max_length=200, help_text="Comment for the Record.", blank=True)
+
+    objects = BaseManager.from_queryset(DNSRecordQuerySet)()
 
     def clean(self):
         """
@@ -494,6 +621,13 @@ class DNSRecord(DNSModel):
 
         self._validate_total_wire_length_if_enabled()
         self._enforce_cname_exclusivity_if_enabled()
+        self._enforce_zone_type_allows_record()
+
+    def delete(self, *args, **kwargs):
+        """Refuse to delete a system-managed record."""
+        if not system_write_in_progress() and not self.zone.supports_record_type(type(self)):
+            raise ProtectedError(SYSTEM_MANAGED_DELETE_ERROR, [self])
+        return super().delete(*args, **kwargs)
 
     def _validate_total_wire_length_if_enabled(self) -> None:
         """Validate full DNS name (record + zone) total wire-format length if wire-format validation is enabled."""
@@ -530,6 +664,20 @@ class DNSRecord(DNSModel):
         else:
             if CNAMERecord.objects.filter(name=self.name, zone_id=self.zone_id).exists():
                 raise ValidationError({"name": "Record cannot co-exist with a CNAME of the same name in this zone."})
+
+    def _enforce_zone_type_allows_record(self) -> None:
+        """Reject a user write of a record type the zone's type does not make available to users."""
+        if system_write_in_progress() or self.zone.supports_record_type(type(self)):  # pylint: disable=no-member
+            return
+
+        zone_type_label = self.zone.get_zone_type_display().lower()  # pylint: disable=no-member
+        if ZONE_TYPE_USER_RECORDS.get(self.zone.zone_type, False) is False:  # pylint: disable=no-member
+            message = (
+                f"Records in a {zone_type_label} zone are system-managed and cannot be created or edited directly."
+            )
+        else:
+            message = f"{self._meta.verbose_name_plural} are not permitted in a {zone_type_label} zone."
+        raise ValidationError({"zone": message})
 
     class Meta:
         """Meta attributes for DnsRecord."""

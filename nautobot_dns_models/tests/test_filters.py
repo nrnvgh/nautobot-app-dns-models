@@ -8,6 +8,7 @@ from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from nautobot.tenancy.models import Tenant, TenantGroup
 
+from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
@@ -362,6 +363,16 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
             soa_expire=1209200,
             soa_minimum=7200,
         )
+        # Named so it stays out of the "Test"/"zone" search assertions below.
+        DNSZone.objects.create(
+            name="Catalog One",
+            filename="catalog1.conf",
+            zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+            tenant=cls.tenant2,
+            description="Catalog one",
+            soa_mname="ns1.catalog.example",
+            soa_rname="admin.catalog.example",
+        )
 
     def test_single_name(self):
         """Test using Q search with name of DNSZone."""
@@ -371,12 +382,21 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
     def test_name(self):
         """Test using Q search with name of DNSZone."""
         params = {"name__in": "Test"}
-        self.assertEqual(self.filterset(params, self.queryset).qs.count(), 3)
+        self.assertEqual(self.filterset(params, self.queryset).qs.count(), 4)
 
     def test_name_invalid(self):
         """Test using invalid Q search for DNSZone."""
         params = {"name": "wrong-name"}
         self.assertEqual(self.filterset(params, self.queryset).qs.count(), 0)
+
+    def test_zone_type(self):
+        """Test filtering by zone_type.
+
+        zone_type is not covered by generic_filter_tests because those require at least three
+        distinct values and only two zone types exist.
+        """
+        self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_CATALOG]}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_PRIMARY]}, self.queryset).qs.count(), 3)
 
     def test_search(self):
         """Test filtering by Q search value."""

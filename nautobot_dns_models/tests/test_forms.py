@@ -5,6 +5,7 @@ from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
 from nautobot_dns_models import forms
+from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import DNSRegistrar, DNSView, DNSZone
 
 
@@ -37,8 +38,12 @@ class DNSViewFormTestCase(TestCase):
         self.assertIn("This field is required.", form.errors["name"])
 
 
-class DNSZoneTest(TestCase):
+class DNSZoneFormTestCase(TestCase):
     """Test DNSZone forms."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.dns_view = DNSView.objects.get(name="Default")
 
     def test_specifying_all_fields_success(self):
         registrar = DNSRegistrar.objects.create(
@@ -47,50 +52,25 @@ class DNSZoneTest(TestCase):
             account_number="ACC-100",
         )
         form = forms.DNSZoneForm(
-            data={
-                "name": "Development",
-                "dns_view": DNSView.objects.get(name="Default").id,
-                "dns_registrar": registrar.id,
-                "description": "Development Testing",
-                "ttl": 1010101,
-                "filename": "development.zone",
-                "expiration_date": "2026-12-31",
-                "auto_renewal": True,
-                "registry_locked": True,
-                "transfer_locked": True,
-                "privacy_enabled": True,
-                "website_forwarding_enabled": True,
-                "renewal_term_months": 24,
-                "dnssec_enabled": True,
-                "soa_mname": "ns1.example.com",
-                "soa_rname": "admin@example.com",
-                "soa_refresh": 10800,
-                "soa_retry": 3600,
-                "soa_expire": 604800,
-                "soa_serial": 202,
-                "soa_minimum": 3600,
-            }
+            data=self._zone_data(
+                dns_registrar=registrar.id,
+                description="Development Testing",
+                expiration_date="2026-12-31",
+                auto_renewal=True,
+                registry_locked=True,
+                transfer_locked=True,
+                privacy_enabled=True,
+                website_forwarding_enabled=True,
+                renewal_term_months=24,
+                dnssec_enabled=True,
+            )
         )
-        self.assertTrue(form.is_valid())
+        self.assertTrue(form.is_valid(), form.errors)
         self.assertTrue(form.save())
 
     def test_specifying_only_required_success(self):
-        form = forms.DNSZoneForm(
-            data={
-                "name": "Development",
-                "dns_view": DNSView.objects.get(name="Default").id,
-                "ttl": 1010101,
-                "filename": "development.zone",
-                "soa_mname": "ns1.example.com",
-                "soa_rname": "admin@example.com",
-                "soa_refresh": 10800,
-                "soa_retry": 3600,
-                "soa_expire": 604800,
-                "soa_serial": 202,
-                "soa_minimum": 3600,
-            }
-        )
-        self.assertTrue(form.is_valid())
+        form = forms.DNSZoneForm(data=self._zone_data())
+        self.assertTrue(form.is_valid(), form.errors)
         self.assertTrue(form.save())
 
     def test_soa_rname_accepts_value_without_at_sign(self):
@@ -120,23 +100,67 @@ class DNSZoneTest(TestCase):
         self.assertIn("This field is required.", form.errors["name"])
 
     def test_expiration_date_accepts_date_picker_value(self):
+        form = forms.DNSZoneForm(data=self._zone_data(expiration_date="2026-12-31"))
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_can_create_catalog_zone(self):
+        form = forms.DNSZoneForm(data=self._zone_data(zone_type=DNSZoneTypeChoices.TYPE_CATALOG))
+        self.assertTrue(form.is_valid(), form.errors)
+        zone = form.save()
+        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_CATALOG)
+
+    def test_rejects_auto_create_ptr_on_catalog_zone(self):
+        form = forms.DNSZoneForm(data=self._zone_data(zone_type=DNSZoneTypeChoices.TYPE_CATALOG, auto_create_ptr=True))
+        self.assertFalse(form.is_valid())
+        self.assertIn("cannot enable automatic PTR creation", str(form.errors["auto_create_ptr"]))
+
+    def test_zone_type_is_disabled_when_editing(self):
+        zone = DNSZone.objects.create(name="existing.example")
+        form = forms.DNSZoneForm(instance=zone)
+        self.assertTrue(form.fields["zone_type"].disabled)
+
+    def test_zone_type_is_enabled_when_creating(self):
+        form = forms.DNSZoneForm()
+        self.assertFalse(form.fields["zone_type"].disabled)
+
+    def test_submitted_zone_type_is_ignored_when_editing(self):
+        """A disabled field falls back to the instance value, so an attempted change is a no-op rather than an error."""
+        zone = DNSZone.objects.create(name="existing.example")
         form = forms.DNSZoneForm(
-            data={
-                "name": "Development",
-                "dns_view": DNSView.objects.get(name="Default").id,
-                "ttl": 1010101,
-                "filename": "development.zone",
-                "expiration_date": "2026-12-31",
-                "soa_mname": "ns1.example.com",
-                "soa_rname": "admin@example.com",
-                "soa_refresh": 10800,
-                "soa_retry": 3600,
-                "soa_expire": 604800,
-                "soa_serial": 202,
-                "soa_minimum": 3600,
-            }
+            instance=zone,
+            data=self._zone_data(name=zone.name, zone_type=DNSZoneTypeChoices.TYPE_CATALOG),
         )
-        self.assertTrue(form.is_valid())
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.save().zone_type, DNSZoneTypeChoices.TYPE_PRIMARY)
+
+    def test_auto_create_ptr_is_disabled_when_editing_catalog_zone(self):
+        zone = DNSZone.objects.create(name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        form = forms.DNSZoneForm(instance=zone)
+        self.assertTrue(form.fields["auto_create_ptr"].disabled)
+
+    def test_auto_create_ptr_is_enabled_when_editing_primary_zone(self):
+        zone = DNSZone.objects.create(name="primary.example")
+        form = forms.DNSZoneForm(instance=zone)
+        self.assertFalse(form.fields["auto_create_ptr"].disabled)
+
+    def _zone_data(self, **overrides):
+        """Return a valid DNSZoneForm payload, with any supplied overrides applied."""
+        data = {
+            "name": "Development",
+            "zone_type": DNSZoneTypeChoices.TYPE_PRIMARY,
+            "dns_view": self.dns_view.id,
+            "ttl": 1010101,
+            "filename": "development.zone",
+            "soa_mname": "ns1.example.com",
+            "soa_rname": "admin@example.com",
+            "soa_refresh": 10800,
+            "soa_retry": 3600,
+            "soa_expire": 604800,
+            "soa_serial": 202,
+            "soa_minimum": 3600,
+        }
+        data.update(overrides)
+        return data
 
 
 class DNSRegistrarFormTestCase(TestCase):
