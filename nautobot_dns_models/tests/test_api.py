@@ -33,7 +33,6 @@ from nautobot_dns_models.models import (
     SRVRecord,
     TXTRecord,
 )
-from nautobot_dns_models.system_writes import system_write
 
 
 def _create_zone(name, dns_view=None, **kwargs):
@@ -980,23 +979,19 @@ class TXTRecordAPITestCase(APIViewTestCases.APIViewTestCase):
         catalog_zone = _create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         response = self.client.post(
             self._get_list_url(),
-            {"name": "version", "text": "2", "zone": catalog_zone.id},
+            {"name": "note", "text": "added by hand", "zone": catalog_zone.id},
             format="json",
             **self.header,
         )
         self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
         self.assertIn("system-managed", str(response.data["zone"]))
-        self.assertFalse(TXTRecord.objects.filter(zone=catalog_zone).exists())
+        self.assertFalse(TXTRecord.objects.filter(name="note", zone=catalog_zone).exists())
 
     def test_delete_in_catalog_zone_rejected(self):
         """The REST API refuses to delete a system-managed catalog record."""
         self.add_permissions("nautobot_dns_models.delete_txtrecord")
         catalog_zone = _create_zone("catalog-delete.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        # Written by hand only because catalog zone creation does not yet auto-create the version
-        # TXT. Replace with a lookup of the auto-created record once that lands.
-        with system_write():
-            record = TXTRecord(name="version", text="2", zone=catalog_zone, _ttl=0)
-            record.validated_save()
+        record = TXTRecord.objects.get(name="version", zone=catalog_zone)
 
         response = self.client.delete(self._get_detail_url(record), **self.header)
 

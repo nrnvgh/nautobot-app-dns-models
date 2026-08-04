@@ -4,7 +4,7 @@ from constance import config as constance_config
 from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, validate_email
-from django.db import models
+from django.db import models, transaction
 from django.db.models import ProtectedError, Q
 from nautobot.apps.models import BaseManager, BaseModel, PrimaryModel, RestrictedQuerySet, extras_features
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
@@ -139,6 +139,27 @@ def dns_record_models():
     such as a catalog zone that stays undeletable because its records were never purged.
     """
     return [model for model in apps.get_models() if issubclass(model, DNSRecord)]
+
+
+def ensure_catalog_zone_records(zone):
+    """Write the records RFC 9432 requires in `zone`, and drop any that no longer belong.
+
+    §4.2.1 has every catalog zone carry `version.$CATZ 0 IN TXT "2"`, naming the schema version;
+    2 is the only version the RFC defines, 1 having come from an earlier draft. §4.1 notes that
+    TTLs in a catalog zone carry no meaning, and the RFC sets them to zero throughout.
+
+    Idempotent, so running it on every save of an existing zone repairs a catalog whose records
+    were lost, rather than only populating a brand-new one. Does nothing for other zone types.
+    """
+    if zone.zone_type != DNSZoneTypeChoices.TYPE_CATALOG:
+        return
+
+    with system_write():
+        version_records = TXTRecord.objects.filter(name="version", zone=zone)
+        # Per RFC 9432 §4.2.1, a second RR in the version RRset makes the whole catalog broken.
+        version_records.exclude(text="2").delete()
+        if not version_records.filter(text="2").exists():
+            TXTRecord(name="version", text="2", zone=zone, _ttl=0).validated_save()
 
 
 def purge_system_managed_records(zones):
@@ -449,9 +470,16 @@ class DNSZone(DNSModel):
         return super().delete(*args, **kwargs)
 
     def save(self, *args, **kwargs):
-        """Normalize the RNAME before saving through the ORM."""
+        """Normalize the RNAME, then write the records this zone's type requires, repairing them if lost.
+
+        Atomic because a catalog zone missing its version record is broken (RFC 9432 §4.2.1) and
+        loses its catalog meaning altogether (§5.1), so a zone whose required records cannot be
+        written should not be left behind at all.
+        """
         self.soa_rname = normalize_soa_rname(self.soa_rname)
-        return super().save(*args, **kwargs)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            ensure_catalog_zone_records(self)
 
     def supports_record_type(self, record_model):
         """Return whether a user may create `record_model` records in this zone."""
