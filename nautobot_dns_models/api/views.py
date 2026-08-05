@@ -5,6 +5,7 @@ from nautobot.apps.api import NautobotModelViewSet
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
+    CatalogZoneMemberSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -20,6 +21,7 @@ from nautobot_dns_models.api.serializers import (
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
+    CatalogZoneMemberFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -35,6 +37,7 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZoneMember,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -91,6 +94,16 @@ class DNSZoneViewSet(NautobotModelViewSet):
     queryset = DNSZone.objects.all()
     serializer_class = DNSZoneSerializer
     filterset_class = DNSZoneFilterSet
+
+    lookup_field = "pk"
+
+
+class CatalogZoneMemberViewSet(NautobotModelViewSet):
+    """CatalogZoneMember API ViewSet."""
+
+    queryset = CatalogZoneMember.objects.all()
+    serializer_class = CatalogZoneMemberSerializer
+    filterset_class = CatalogZoneMemberFilterSet
 
     lookup_field = "pk"
 

@@ -1,8 +1,13 @@
 """Test RFC 9432 catalog zone behavior."""
 
+import re
+
 from django.core.exceptions import ValidationError
 from django.db.models import ProtectedError
+from django.test import override_settings
+from django.urls import reverse
 from nautobot.apps.testing import TestCase
+from nautobot.core.testing.utils import extract_page_body
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import (
@@ -48,11 +53,21 @@ class CatalogZoneRecordGatingTest(TestCase):
             with self.subTest(record_model=record_model.__name__):
                 self.assertTrue(self.primary_zone.supports_record_type(record_model))
 
+    def test_primary_zone_supports_user_records(self):
+        """A primary zone is the ordinary case: users manage its records directly."""
+        self.assertTrue(self.primary_zone.supports_user_records())
+        self.assertFalse(self.primary_zone.is_catalog_zone)
+
     def test_catalog_zone_supports_no_record_type(self):
         """A catalog zone offers no user-creatable record type, so it renders no add affordances."""
         for record_model in dns_record_models():
             with self.subTest(record_model=record_model.__name__):
                 self.assertFalse(self.catalog_zone.supports_record_type(record_model))
+
+    def test_catalog_zone_holds_only_system_managed_records(self):
+        """A catalog maintains its own records and is identified as a catalog zone."""
+        self.assertFalse(self.catalog_zone.supports_user_records())
+        self.assertTrue(self.catalog_zone.is_catalog_zone)
 
     def test_record_fixtures_cover_every_record_model(self):
         """The hand-built fixtures below must keep pace with the record models discovered at runtime."""
@@ -65,6 +80,8 @@ class CatalogZoneRecordGatingTest(TestCase):
         """A zone type missing from the registry denies everything rather than defaulting to open."""
         zone = DNSZone(name="future.example", zone_type="future")
         self.assertFalse(zone.supports_record_type(ARecord))
+        self.assertFalse(zone.supports_user_records())
+        self.assertFalse(zone.is_catalog_zone)
 
     def test_rejects_user_created_record_in_catalog_zone(self):
         """Validation refuses every record type a user could try to add to a catalog zone."""
@@ -197,22 +214,19 @@ class CatalogZoneVersionRecordTest(TestCase):
 
 
 class CatalogMemberLabelTest(TestCase):
-    """Tests for the BIND-compatible member label generator."""
+    """Tests for the opaque catalog member label generator."""
 
-    def test_matches_the_labels_bind_documents(self):
-        """The two worked examples ISC publishes for catzhash.py, which pin the algorithm exactly."""
-        self.assertEqual(catalog_member_label("domain.example"), "5960775ba382e7a4e09263fc06e7c00569b6a05c")
-        self.assertEqual(catalog_member_label("example.com"), "c5e4b4da1e5a620ddaa3635e55c3732a5b49c7f4")
+    def test_is_a_single_dns_safe_label(self):
+        """Unpadded lowercase base32 of a UUID is 26 characters from [a-z2-7], inside RFC 1035 §3.1."""
+        label = catalog_member_label()
+        self.assertEqual(len(label), 26)
+        self.assertRegex(label, r"^[a-z2-7]+$")
+        self.assertNotIn("=", label)
+        self.assertNotIn(".", label)
 
-    def test_ignores_case_and_a_trailing_dot(self):
-        """A zone name differing only in case or absolute form is the same name, so it hashes the same."""
-        expected = catalog_member_label("example.com")
-        self.assertEqual(catalog_member_label("Example.COM"), expected)
-        self.assertEqual(catalog_member_label("example.com."), expected)
-
-    def test_fits_within_a_dns_label(self):
-        """A SHA-1 hex digest is 40 characters, comfortably inside the 63-byte limit of RFC 1035 §3.1."""
-        self.assertEqual(len(catalog_member_label("example.com")), 40)
+    def test_each_call_mints_a_new_identity(self):
+        """A blank-label re-enrollment must not silently resume prior consumer state."""
+        self.assertNotEqual(catalog_member_label(), catalog_member_label())
 
 
 class CatalogZoneMemberTest(TestCase):
@@ -223,15 +237,17 @@ class CatalogZoneMemberTest(TestCase):
         cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.member_zone = create_zone("member.example")
 
-    def test_label_is_generated_from_the_member_zone_name(self):
-        """Leaving the label blank adopts the BIND convention rather than demanding operator input."""
+    def test_label_is_generated_when_left_blank(self):
+        """Leaving the label blank mints an opaque identity rather than demanding operator input."""
         membership = self._membership()
-        self.assertEqual(membership.member_label, catalog_member_label("member.example"))
+        self.assertEqual(len(membership.member_label), 26)
+        self.assertRegex(membership.member_label, r"^[a-z2-7]+$")
 
     def test_label_is_generated_without_validation(self):
         """An ORM caller that skips full_clean() still gets a label, since save() cannot store a blank one."""
         membership = CatalogZoneMember.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone)
-        self.assertEqual(membership.member_label, catalog_member_label("member.example"))
+        self.assertEqual(len(membership.member_label), 26)
+        self.assertRegex(membership.member_label, r"^[a-z2-7]+$")
 
     def test_supplied_label_is_kept(self):
         """RFC 9432 §4.1 lets a producer pick any unique label, so an operator's choice stands."""
@@ -414,9 +430,7 @@ class CatalogMemberRecordSyncTest(TestCase):
 
         self.catalog_zone.save()
 
-        self.assertEqual(
-            PTRRecord.objects.get(zone=self.catalog_zone).name, f"{membership.member_label}.zones"
-        )
+        self.assertEqual(PTRRecord.objects.get(zone=self.catalog_zone).name, f"{membership.member_label}.zones")
 
     def test_saving_the_catalog_zone_drops_a_second_rr_for_one_member(self):
         """A repeated owner name makes BIND 9.18.3 and later refuse the catalog, so the extra RR goes."""
@@ -439,3 +453,159 @@ class CatalogMemberRecordSyncTest(TestCase):
         membership = CatalogZoneMember(**fields)
         membership.validated_save()
         return membership
+
+
+@override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+class ZoneDetailViewByZoneTypeTest(TestCase):
+    """Tests for the panels and buttons a zone's detail page offers, which vary by zone type."""
+
+    RECORD_PANELS = frozenset(
+        {
+            "A RECORDS",
+            "AAAA RECORDS",
+            "CNAME RECORDS",
+            "MX RECORDS",
+            "NS RECORDS",
+            "PTR RECORDS",
+            "SRV RECORDS",
+            "TXT RECORDS",
+        }
+    )
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = create_zone("member.example")
+        cls.membership = CatalogZoneMember(catalog_zone=cls.catalog_zone, member_zone=cls.member_zone)
+        cls.membership.validated_save()
+        cls.member_zone_record = TXTRecord(name="txt", text="a user record", zone=cls.member_zone)
+        cls.member_zone_record.validated_save()
+
+    def test_primary_zone_offers_every_record_panel(self):
+        """Gating the record panels must leave an ordinary zone exactly as it was."""
+        self.assertLessEqual(self.RECORD_PANELS, self._panels(self.member_zone))
+
+    def test_catalog_zone_keeps_only_the_record_panel_it_has_records_for(self):
+        """No record type is user-creatable in a catalog zone, but its version TXT is still worth showing."""
+        self.assertEqual(self.RECORD_PANELS & self._panels(self.catalog_zone), {"TXT RECORDS"})
+
+    def test_catalog_zone_shows_the_version_record(self):
+        """The record the renderer will serve, rather than a restatement of the schema version."""
+        self.assertIn("version", self._detail(self.catalog_zone))
+
+    def test_catalog_zone_offers_no_write_controls_for_the_version_record(self):
+        """Every write the selection and action columns start is one the model refuses."""
+        self.assertNotIn(self._edit_url(TXTRecord.objects.get(zone=self.catalog_zone)), self._detail(self.catalog_zone))
+
+    def test_primary_zone_keeps_write_controls_for_its_records(self):
+        """CatalogVersionTXTPanel is catalog-only; an ordinary zone's TXT records stay editable."""
+        self.add_permissions("nautobot_dns_models.change_txtrecord")
+        self.assertIn(self._edit_url(self.member_zone_record), self._detail(self.member_zone))
+
+    def test_catalog_zone_offers_no_add_button_for_records(self):
+        """A panel supplies its own Add button, which the hidden Add Records menu would otherwise not cover."""
+        self.add_permissions("nautobot_dns_models.add_txtrecord")
+        self.assertNotIn(self._add_url(), self._detail(self.catalog_zone))
+
+    def test_primary_zone_keeps_the_add_button_on_its_record_panels(self):
+        """Suppressing the catalog's Add button must not reach the panels an ordinary zone shares."""
+        self.add_permissions("nautobot_dns_models.add_txtrecord")
+        self.assertIn(self._add_url(), self._detail(self.member_zone))
+
+    def _add_url(self):
+        """Return the add link a record panel's header carries when it offers one."""
+        return reverse("plugins:nautobot_dns_models:txtrecord_add")
+
+    def _edit_url(self, record):
+        """Return the edit link a record's row carries in a table that offers write controls."""
+        return reverse("plugins:nautobot_dns_models:txtrecord_edit", args=(record.pk,))
+
+    def test_catalog_zone_hides_the_add_records_menu(self):
+        """With no children left to offer, the dropdown itself must not draw."""
+        self.add_permissions("nautobot_dns_models.change_dnszone", "nautobot_dns_models.add_arecord")
+        self.assertNotIn("Add Records", self._detail(self.catalog_zone))
+
+    def test_primary_zone_keeps_the_add_records_menu(self):
+        """The gating must not cost an ordinary zone its add affordances."""
+        self.add_permissions("nautobot_dns_models.change_dnszone", "nautobot_dns_models.add_arecord")
+        self.assertIn("Add Records", self._detail(self.member_zone))
+
+    def test_catalog_zone_lists_its_members(self):
+        """The membership is the operator-facing object, so the catalog leads with it."""
+        self.assertIn("MEMBER PTR RECORDS", self._panels(self.catalog_zone))
+        self.assertIn(self.membership.member_label, self._detail(self.catalog_zone))
+
+    def test_primary_zone_has_no_member_zones_panel(self):
+        """Only a zone that publishes members has anything to list here."""
+        self.assertNotIn("MEMBER PTR RECORDS", self._panels(self.member_zone))
+
+    def test_catalog_zone_has_no_record_statistics(self):
+        """The counts are of record types a zone without user records cannot hold."""
+        self.assertNotIn("RECORDS STATISTICS", self._panels(self.catalog_zone))
+
+    def test_primary_zone_keeps_record_statistics(self):
+        """Gating that panel by capability must leave it standing where the counts mean something."""
+        self.assertIn("RECORDS STATISTICS", self._panels(self.member_zone))
+
+    def test_member_zone_names_the_catalog_it_belongs_to(self):
+        """The membership is reachable from the member's own page, not just the catalog's."""
+        content = self._detail(self.member_zone)
+        self.assertInHTML("<td>Catalog Zone</td>", content, 1)
+        self.assertIn(self.catalog_zone.name, content)
+
+    def test_catalog_zone_omits_the_catalog_field(self):
+        """A zone that cannot belong to a catalog has no enrollment row to show."""
+        self.assertInHTML("<td>Catalog Zone</td>", self._detail(self.catalog_zone), 0)
+
+    def _detail(self, zone):
+        """Return the rendered body of `zone`'s detail page."""
+        response = self.client.get(reverse("plugins:nautobot_dns_models:dnszone", args=(zone.pk,)))
+        self.assertHttpStatus(response, 200)
+        return extract_page_body(response.content.decode(response.charset))
+
+    def _panels(self, zone):
+        """Return the panel headings on `zone`'s detail page, upper-cased since Nautobot's own casing varies.
+
+        Headings rather than raw page text: a hidden panel's title survives elsewhere in the markup, in
+        the table configuration drawer and the navigation menu, so a substring search sees it either way.
+        """
+        return {label.upper() for label in re.findall(r"<strong>([^<]*)</strong>", self._detail(zone))}
+
+
+@override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+class ZoneListViewByZoneTypeTest(TestCase):
+    """Tests for list-view row actions that depend on zone type."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("list-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.primary_zone = create_zone("list-primary.example")
+        cls.add_member_path = reverse("plugins:nautobot_dns_models:catalogzonemember_add")
+
+    def test_catalog_zone_offers_add_member_zone(self):
+        """A catalog row should deep-link into membership create with the catalog preselected."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        content = self._list()
+        self.assertIn(f"{self.add_member_path}?catalog_zone={self.catalog_zone.pk}", content)
+        self.assertIn("Add member zone", content)
+
+    def test_primary_zone_offers_no_add_member_zone(self):
+        """Primary zones are not catalogs, so the action must not appear on their rows."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        self.assertNotIn(f"{self.add_member_path}?catalog_zone={self.primary_zone.pk}", self._list())
+
+    def test_add_member_zone_requires_permission(self):
+        """Without add permission the action stays hidden even on a catalog row."""
+        self.assertNotIn(f"{self.add_member_path}?catalog_zone={self.catalog_zone.pk}", self._list())
+
+    def _list(self):
+        """Return the rendered rows of the DNS zone list page.
+
+        The first response defers the table to an HTMX follow-up, so an ordinary GET returns the page
+        around an empty table and would let a row action test pass without ever rendering a row.
+        """
+        response = self.client.get(reverse("plugins:nautobot_dns_models:dnszone_list"), headers={"HX-Request": "true"})
+        self.assertHttpStatus(response, 200)
+        content = extract_page_body(response.content.decode(response.charset))
+        self.assertIn(self.catalog_zone.name, content)
+        return content

@@ -21,6 +21,7 @@ from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZoneMember,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -606,6 +607,96 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         self.assertIn("cannot be changed after creation", str(response.data["zone_type"]))
         zone.refresh_from_db()
         self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_PRIMARY)
+
+
+class CatalogZoneMemberAPITestCase(APIViewTestCases.APIViewTestCase):
+    """Test the Nautobot CatalogZoneMember API."""
+
+    model = CatalogZoneMember
+    view_namespace = "plugins-api:nautobot_dns_models"
+    brief_fields = [
+        "catalog_zone",
+        "member_zone",
+        "member_label",
+    ]
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zones = [
+            _create_zone(name=f"catalog-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+            for index in range(2)
+        ]
+        # One per membership, since a zone may belong to only one catalog without `coo`.
+        member_zones = [_create_zone(name=f"member-{index}.example") for index in range(6)]
+
+        for member_zone in member_zones[:3]:
+            CatalogZoneMember.objects.create(catalog_zone=cls.catalog_zones[0], member_zone=member_zone)
+
+        cls.create_data = [
+            {"catalog_zone": cls.catalog_zones[1].pk, "member_zone": member_zone.pk} for member_zone in member_zones[3:]
+        ]
+
+        # `member_zone` is unique per membership and `member_label` is fixed, leaving the catalog.
+        cls.bulk_update_data = {"catalog_zone": cls.catalog_zones[1].pk}
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_omitted_member_label_is_generated(self):
+        """The API mints a label like every other path, rather than making the caller invent one."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        response = self.client.post(
+            self._get_list_url(),
+            data=self.create_data[0],
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_201_CREATED)
+        self.assertRegex(response.data["member_label"], r"^[a-z2-7]{26}$")
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_duplicate_member_label_rejected(self):
+        """The serializer drops DRF's uniqueness validators, leaving `full_clean()` to enforce the constraint."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        existing = self._get_queryset().first()
+        response = self.client.post(
+            self._get_list_url(),
+            data={
+                "catalog_zone": existing.catalog_zone.pk,
+                "member_zone": self.create_data[0]["member_zone"],
+                "member_label": existing.member_label,
+            },
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("This label is already used by another member of the catalog zone.", str(response.data))
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_duplicate_member_zone_rejected(self):
+        """Without `coo`, a zone belongs to one catalog, which is the other constraint DRF is no longer checking."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        existing = self._get_queryset().first()
+        response = self.client.post(
+            self._get_list_url(),
+            data={"catalog_zone": self.catalog_zones[1].pk, "member_zone": existing.member_zone.pk},
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("This zone already belongs to a catalog zone.", str(response.data))
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_member_label_cannot_be_changed(self):
+        """A consumer reads a new label as a removal and re-addition, discarding the member's state."""
+        self.add_permissions("nautobot_dns_models.change_catalogzonemember")
+        membership = self._get_queryset().first()
+        response = self.client.patch(
+            self._get_detail_url(membership),
+            data={"member_label": "rewritten"},
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("The member label cannot be changed", str(response.data["member_label"]))
 
 
 class NSRecordAPITestCase(APIViewTestCases.APIViewTestCase):
