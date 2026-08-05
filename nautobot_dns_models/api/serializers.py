@@ -67,6 +67,21 @@ class DNSZoneSerializer(NautobotModelSerializer):
         fields = "__all__"
 
 
+class CatalogZoneMemberSerializer(NautobotModelSerializer):
+    """CatalogZoneMember Serializer."""
+
+    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:catalogzonemember-detail")
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.CatalogZoneMember
+        fields = "__all__"
+        # Omit the UniqueTogetherValidator for (catalog_zone, member_label), which would make member_label
+        # required. full_clean() validates the same constraint.
+        validators = []
+
+
 class DNSRecordSerializer(NautobotModelSerializer):
     """DNSRecord Serializer."""
 

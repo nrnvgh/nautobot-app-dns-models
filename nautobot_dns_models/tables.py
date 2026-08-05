@@ -6,6 +6,16 @@ from nautobot.tenancy.tables import TenantColumn
 
 from nautobot_dns_models import models
 
+DNSZONE_BUTTONS = """
+{% if record.is_catalog_zone and perms.nautobot_dns_models.add_catalogzonemember %}
+    <li>
+        <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_add' %}?catalog_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
+            <span class="mdi mdi-plus-thick me-4" aria-hidden="true"></span>Add member zone
+        </a>
+    </li>
+{% endif %}
+"""
+
 
 class DNSRecordTable(BaseTable):  # pylint: disable=nb-no-model-found
     """Base table for DNS records list view."""
@@ -134,6 +144,7 @@ class DNSZoneTable(BaseTable):
     actions = ButtonsColumn(
         models.DNSZone,
         buttons=("changelog", "edit", "delete"),
+        prepend_template=DNSZONE_BUTTONS,
     )
 
     class Meta(BaseTable.Meta):
@@ -172,6 +183,77 @@ class DNSZoneTable(BaseTable):
             "soa_rname",
             "actions",
         )
+
+
+class CatalogZoneMemberTable(BaseTable):
+    """Table for Catalog Zone Member list view."""
+
+    pk = ToggleColumn()
+    catalog_zone = tables.Column(linkify=True)
+    member_zone = tables.Column(linkify=True)
+    actions = ButtonsColumn(
+        models.CatalogZoneMember,
+        buttons=("changelog", "edit", "delete"),
+    )
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.CatalogZoneMember
+        fields = (
+            "pk",
+            "catalog_zone",
+            "member_zone",
+            "member_label",
+            "actions",
+        )
+
+        default_columns = (
+            "pk",
+            "catalog_zone",
+            "member_zone",
+            "member_label",
+            "actions",
+        )
+
+
+class CatalogMemberPTRTable(BaseTable):  # pylint: disable=nb-sub-class-name
+    """Membership rows presented as the PTR records a catalog zone publishes for them.
+
+    `Meta.model` stays `CatalogZoneMember` so edit/delete act on the membership, while the columns
+    mirror the derived PTR (`<label>.zones` → member zone name). Named apart from
+    `CatalogZoneMemberTable`, which is the ordinary membership list.
+    """
+
+    name = tables.Column(accessor="member_label", empty_values=(), verbose_name="Name")
+    ptrdname = tables.Column(accessor="member_zone", linkify=True, verbose_name="Ptrdname")
+    actions = ButtonsColumn(
+        models.CatalogZoneMember,
+        buttons=("changelog", "edit", "delete"),
+    )
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.CatalogZoneMember
+        fields = (
+            "name",
+            "ptrdname",
+            "actions",
+        )
+        default_columns = (
+            "name",
+            "ptrdname",
+            "actions",
+        )
+
+    def render_name(self, record):
+        """RFC 9432 §4.1 owner name relative to the catalog apex."""
+        return f"{record.member_label}.zones"
+
+    def render_ptrdname(self, record):
+        """Render the member zone name."""
+        return record.member_zone.name
 
 
 class NSRecordTable(DNSRecordTable):

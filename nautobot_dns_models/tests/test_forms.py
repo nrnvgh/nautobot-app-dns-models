@@ -4,7 +4,7 @@ from django.test import TestCase
 from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
-from nautobot_dns_models import forms
+from nautobot_dns_models import forms, models
 from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import DNSRegistrar, DNSView, DNSZone
 
@@ -161,6 +161,83 @@ class DNSZoneFormTestCase(TestCase):
         }
         data.update(overrides)
         return data
+
+
+class CatalogZoneMemberFormTestCase(TestCase):
+    """Test CatalogZoneMember forms."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = DNSZone.objects.create(name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = DNSZone.objects.create(name="member.example")
+
+    def test_specifying_only_required_success(self):
+        """The model mints the opaque member label; the form never asks for one."""
+        form = forms.CatalogZoneMemberForm(
+            data={"catalog_zone": self.catalog_zone.pk, "member_zone": self.member_zone.pk}
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(len(form.save().member_label), 26)
+
+    def test_member_label_is_not_on_the_form(self):
+        """Create and edit both omit the label; a chosen value is an API concern."""
+        self.assertNotIn("member_label", forms.CatalogZoneMemberForm().fields)
+        self.assertNotIn("member_label", forms.CatalogZoneMemberForm(instance=self._membership()).fields)
+
+    def test_submitted_member_label_is_ignored(self):
+        """Extra POST data cannot smuggle a label past the form's declared fields."""
+        form = forms.CatalogZoneMemberForm(
+            data={
+                "catalog_zone": self.catalog_zone.pk,
+                "member_zone": self.member_zone.pk,
+                "member_label": "chosen",
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertNotEqual(form.save().member_label, "chosen")
+
+    def test_rejects_a_non_catalog_zone_as_the_catalog(self):
+        """The picker only offers catalog zones, and the model enforces that against a hand-built POST."""
+        form = forms.CatalogZoneMemberForm(
+            data={"catalog_zone": self.member_zone.pk, "member_zone": self.catalog_zone.pk}
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("Members can only be added to a catalog zone.", str(form.errors["catalog_zone"]))
+
+    def test_editing_preserves_the_stored_member_label(self):
+        """Moving a membership between catalogs must not remint the consumer-facing identity."""
+        membership = self._membership()
+        other_catalog = models.DNSZone.objects.create(
+            name="other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG
+        )
+        form = forms.CatalogZoneMemberForm(
+            instance=membership,
+            data={
+                "catalog_zone": other_catalog.pk,
+                "member_zone": self.member_zone.pk,
+                "member_label": "rewritten",
+            },
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.save().member_label, membership.member_label)
+
+    def test_creating_offers_only_unenrolled_member_zones(self):
+        """Without `coo`, a zone belongs to one catalog, so an enrolled zone could only fail validation."""
+        self.assertEqual(self._member_zone_availability(forms.CatalogZoneMemberForm()), '["true"]')
+
+    def test_editing_keeps_the_current_member_zone_selectable(self):
+        """Every enrolled zone is filtered out of the picker, and this membership's own is one of them."""
+        membership = self._membership()
+        form = forms.CatalogZoneMemberForm(instance=membership)
+        self.assertEqual(self._member_zone_availability(form), f'["{membership.pk}"]')
+
+    def _member_zone_availability(self, form):
+        """Return the availability query parameter the member zone picker sends."""
+        return form.fields["member_zone"].widget.attrs["data-query-param-available_for_catalog_membership"]
+
+    def _membership(self):
+        """Create and return a membership joining the fixture zones."""
+        return models.CatalogZoneMember.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone)
 
 
 class DNSRegistrarFormTestCase(TestCase):

@@ -24,6 +24,12 @@ menu_items = (
                         permissions=["nautobot_dns_models.view_dnszone"],
                     ),
                     NavMenuItem(
+                        link="plugins:nautobot_dns_models:catalogzonemember_list",
+                        name="Catalog Zone Members",
+                        weight=150,
+                        permissions=["nautobot_dns_models.view_catalogzonemember"],
+                    ),
+                    NavMenuItem(
                         link="plugins:nautobot_dns_models:dnsview_list",
                         name="DNS Views",
                         weight=200,

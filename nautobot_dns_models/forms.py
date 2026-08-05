@@ -272,6 +272,11 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         fields = "__all__"
         widgets = {"zone_type": StaticSelect2()}
 
+    class Media:
+        """Load create-time zone_type -> auto_create_ptr toggling."""
+
+        js = ("nautobot_dns_models/js/dns_zone_form.js",)
+
     def __init__(self, *args, **kwargs):
         """Disable fields the model forbids setting for the instance being edited."""
         super().__init__(*args, **kwargs)
@@ -389,6 +394,108 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
         "zone_type",
         "enabled",
         "filename",
+    ]
+
+
+class CatalogZoneMemberForm(NautobotModelForm):
+    """CatalogZoneMember creation/edit form.
+
+    The member label is system-assigned on create and immutable afterward, so it is omitted from
+    the UI.
+    """
+
+    catalog_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        query_params={
+            "zone_type": DNSZoneTypeChoices.TYPE_CATALOG,
+            "same_dns_view_as": "$member_zone",
+        },
+        label="Catalog Zone",
+    )
+    member_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        # Catalogs are not offered as members: RFC 9432 never defines nesting, and consumer
+        # support for it is the exception rather than the rule, so the model rejects it outright.
+        # `$catalog_zone` only yields a PK, so same_dns_view_as maps that zone to its view.
+        query_params={
+            "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
+            "same_dns_view_as": "$catalog_zone",
+        },
+        label="Member Zone",
+    )
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.CatalogZoneMember
+        # Not `__all__`: `member_label` is system-assigned on create and immutable afterward, so the
+        # form has nothing to offer for it.
+        fields = ["catalog_zone", "member_zone"]  # pylint: disable=nb-use-fields-all
+
+    def __init__(self, *args, **kwargs):
+        """Hide already-enrolled zones from the picker."""
+        super().__init__(*args, **kwargs)
+
+        editing = self.instance.present_in_database
+        # Set here rather than declared above because `add_query_param` appends: declaring the create-time
+        # value would leave the edit-time one as a second entry the filter has to disambiguate.
+        # Passing the membership's PK keeps its own member_zone selectable while other enrolled zones stay hidden.
+        self.fields["member_zone"].widget.add_query_param(
+            "available_for_catalog_membership", str(self.instance.pk) if editing else "true"
+        )
+
+
+class CatalogZoneMemberBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
+    """CatalogZoneMember bulk edit form.
+
+    Only the catalog is editable in bulk: `member_zone` is unique per membership and `member_label` is
+    fixed once the membership exists.
+    """
+
+    pk = forms.ModelMultipleChoiceField(
+        queryset=models.CatalogZoneMember.objects.all(), widget=forms.MultipleHiddenInput
+    )
+    catalog_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+        required=False,
+        label="Catalog Zone",
+    )
+
+    class Meta:
+        """Meta attributes."""
+
+        nullable_fields = []
+
+
+class CatalogZoneMemberFilterForm(NautobotFilterForm):
+    """Filter form for CatalogZoneMember searches."""
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        help_text="Search within Catalog Zone, Member Zone, and Member Label.",
+    )
+    catalog_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+        required=False,
+        label="Catalog Zone",
+    )
+    member_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        query_params={"same_dns_view_as": "$catalog_zone"},
+        required=False,
+        label="Member Zone",
+    )
+    member_label = forms.CharField(required=False, label="Member Label")
+    model = models.CatalogZoneMember
+    # Define the fields above for ordering and widget purposes
+    fields = [
+        "q",
+        "catalog_zone",
+        "member_zone",
+        "member_label",
     ]
 
 

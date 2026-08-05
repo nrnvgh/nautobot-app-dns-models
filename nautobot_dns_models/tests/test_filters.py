@@ -1,5 +1,9 @@
 """Test DNSZone Filter."""
 
+# One suite per filterset, which puts this module over pylint's 1000-line default. Splitting it would
+# separate the DNSZone catalog filters from the CatalogZoneMember suite that exercises the same feature.
+# pylint: disable=too-many-lines
+
 from datetime import date
 
 from django.contrib.contenttypes.models import ContentType
@@ -12,6 +16,7 @@ from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
+    CatalogZoneMemberFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -27,6 +32,7 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZoneMember,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -398,6 +404,42 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_CATALOG]}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_PRIMARY]}, self.queryset).qs.count(), 3)
 
+    def test_same_dns_view_as(self):
+        """Restrict to zones that share another zone's DNS view, for the membership form picker."""
+        other_view = DNSView.objects.create(name="Other")
+        reference = DNSZone.objects.create(
+            name="Reference Zone",
+            filename="reference.conf",
+            dns_view=other_view,
+            soa_mname="ns1.reference.example",
+            soa_rname="admin@reference.example",
+        )
+        peer = DNSZone.objects.create(
+            name="Peer Zone",
+            filename="peer.conf",
+            dns_view=other_view,
+            soa_mname="ns1.peer.example",
+            soa_rname="admin@peer.example",
+        )
+
+        qs = self.filterset({"same_dns_view_as": reference.pk}, self.queryset).qs
+        self.assertCountEqual(list(qs), [peer, reference])
+
+    def test_available_for_catalog_membership(self):
+        """Hide enrolled member zones on create; keep the current member selectable when editing."""
+        catalog = DNSZone.objects.get(name="Catalog One")
+        enrolled = DNSZone.objects.get(name="Test One")
+        free = DNSZone.objects.get(name="Test Two")
+        membership = CatalogZoneMember.objects.create(catalog_zone=catalog, member_zone=enrolled)
+
+        create_qs = self.filterset({"available_for_catalog_membership": "true"}, self.queryset).qs
+        self.assertNotIn(enrolled, create_qs)
+        self.assertIn(free, create_qs)
+
+        edit_qs = self.filterset({"available_for_catalog_membership": str(membership.pk)}, self.queryset).qs
+        self.assertIn(enrolled, edit_qs)
+        self.assertIn(free, edit_qs)
+
     def test_search(self):
         """Test filtering by Q search value."""
         self.assertEqual(self.filterset({"q": "Test One"}, self.queryset).qs.count(), 1)
@@ -409,6 +451,42 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         """enabled filter should match only zones with the given enabled value."""
         self.assertEqual(self.filterset({"enabled": "true"}, self.queryset).qs.count(), 2)
         self.assertEqual(self.filterset({"enabled": "false"}, self.queryset).qs.count(), 1)
+
+
+class CatalogZoneMemberFilterTestCase(FilterTestCases.FilterTestCase):
+    """CatalogZoneMember Filter Test Case."""
+
+    queryset = CatalogZoneMember.objects.all()
+    filterset = CatalogZoneMemberFilterSet
+
+    generic_filter_tests = [
+        ["catalog_zone"],
+        ["member_zone"],
+        ["member_label"],
+    ]
+
+    @classmethod
+    def setUpTestData(cls):
+        """Setup test data for CatalogZoneMember Model."""
+        cls.catalog_zones = [
+            DNSZone.objects.create(name=f"catalog-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+            for index in range(3)
+        ]
+        # One per membership, since a zone may belong to only one catalog without `coo`.
+        member_zones = [DNSZone.objects.create(name=f"member-{index}.example") for index in range(3)]
+
+        for index, (catalog_zone, member_zone) in enumerate(zip(cls.catalog_zones, member_zones)):
+            CatalogZoneMember.objects.create(
+                catalog_zone=catalog_zone, member_zone=member_zone, member_label=f"label{index}"
+            )
+
+    def test_search(self):
+        """q search should match catalog zone name, member zone name, and member label."""
+        self.assertEqual(self.filterset({"q": "catalog-0.example"}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"q": "member-1.example"}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"q": "label2"}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"q": "label"}, self.queryset).qs.count(), 3)
+        self.assertEqual(self.filterset({"q": "does-not-exist"}, self.queryset).qs.count(), 0)
 
 
 class NSRecordFilterTestCase(TestCase):
