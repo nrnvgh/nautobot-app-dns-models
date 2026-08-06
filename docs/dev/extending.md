@@ -139,6 +139,7 @@ erDiagram
 
     DNSZone ||--o{ CatalogZoneMember: "catalog_zone"
     DNSZone ||--o| CatalogZoneMember: "member_zone"
+    DNSZone ||..o| NSRecord: "auto-creates apex NS (when zone_type is catalog)"
     DNSZone ||..o| TXTRecord: "auto-creates version (when zone_type is catalog)"
     CatalogZoneMember ||..|| PTRRecord: "publishes as member (system-managed)"
 

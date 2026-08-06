@@ -159,12 +159,11 @@ class ZoneRecordsTablePanel(ObjectsTablePanel):
         return zone is not None and zone.supports_record_type(self.table_class.Meta.model)
 
 
-class CatalogVersionTXTPanel(ZoneRecordsTablePanel):
-    """The catalog zone's system-managed version TXT, listed without write controls."""
+class CatalogSystemRecordsPanel(ZoneRecordsTablePanel):
+    """One type of the catalog zone's system-managed records, listed without write controls."""
 
     def __init__(self, **kwargs):
         """Disable Add/Edit controls the parent panel would otherwise keep."""
-        kwargs.setdefault("table_class", TXTRecordTable)
         kwargs.setdefault("add_button_route", None)
         kwargs.setdefault("exclude_columns", ["zone", "actions"])
         super().__init__(**kwargs)
@@ -367,7 +366,13 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 include_columns=["dns_registrar", "status", "expiration_date", "auto_renewal", "actions"],
                 max_display_count=1,
             ),
+            # should_render methods in the two NS panels ensure only one is visible at a time
             ZoneRecordsTablePanel(
+                weight=300,
+                section=SectionChoices.LEFT_HALF,
+                table_class=NSRecordTable,
+            ),
+            CatalogSystemRecordsPanel(
                 weight=300,
                 section=SectionChoices.LEFT_HALF,
                 table_class=NSRecordTable,
@@ -431,9 +436,10 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 section=SectionChoices.RIGHT_HALF,
                 table_class=TXTRecordTable,
             ),
-            CatalogVersionTXTPanel(
+            CatalogSystemRecordsPanel(
                 weight=700,
                 section=SectionChoices.RIGHT_HALF,
+                table_class=TXTRecordTable,
             ),
         ],
         extra_buttons=[

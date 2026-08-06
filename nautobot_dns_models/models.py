@@ -34,6 +34,16 @@ UINT32_MAX = 2**32 - 1
 
 SYSTEM_MANAGED_DELETE_ERROR = "System-managed records cannot be deleted directly."
 
+# Owner name standing for the zone apex, following the master-file convention of RFC 1035 §5.1.
+# Stored rather than left empty because `DNSRecord.name` is not blank.
+APEX_RECORD_NAME = "@"
+
+# RFC 9432 §4 requires an NS RRset in a catalog zone so that it is a syntactically valid zone, and
+# recommends a single RR naming "invalid.". Consumers never resolve it, so the value is pinned here
+# rather than offered as a choice. Stored without the trailing dot the RFC writes: a name server is
+# an absolute domain name here, so master-file syntax is the renderer's to add.
+CATALOG_APEX_NS_SERVER = "invalid"
+
 # Record models users may create in a zone, keyed by zone type: True for every model, False for
 # none, or a frozenset of the specific models permitted. A zone type absent from this map permits
 # nothing. A catalog zone (RFC 9432) holds only the records this app maintains; it gains an
@@ -183,8 +193,21 @@ def ensure_catalog_zone_records(zone):
         return
 
     with system_write():
+        _ensure_apex_ns_record(zone)
         _ensure_version_record(zone)
         _ensure_member_records(zone)
+
+
+def _ensure_apex_ns_record(zone):
+    """Hold the apex NS RRset RFC 9432 §4 requires at the single `invalid.` RR it recommends.
+
+    Without it the zone a renderer builds from these records has no NS RRset, which is not a valid
+    DNS zone and which an authoritative server will refuse to load.
+    """
+    ns_records = NSRecord.objects.filter(zone=zone)
+    ns_records.exclude(name=APEX_RECORD_NAME, server=CATALOG_APEX_NS_SERVER).delete()
+    if not ns_records.exists():
+        NSRecord(name=APEX_RECORD_NAME, server=CATALOG_APEX_NS_SERVER, zone=zone, _ttl=0).validated_save()
 
 
 def _ensure_version_record(zone):
@@ -891,7 +914,8 @@ class DNSRecord(DNSModel):
         if validation_level != "wire-format":
             return
 
-        record_label_list = [] if self.name == "" else self.name.split(".")
+        # An apex record contributes no labels of its own; the name is the zone's.
+        record_label_list = [] if self.name in ("", APEX_RECORD_NAME) else self.name.split(".")
         zone_label_list = self.zone.name.split(".")
 
         wire_length = 0

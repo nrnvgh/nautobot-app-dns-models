@@ -44,14 +44,15 @@ email form as follows:
 
     Every record in a catalog zone is system-managed, so no record type can be created, edited, or deleted there by hand. Saving a catalog zone writes the records the RFC requires, and repairs them if they have drifted:
 
+    - one NS at the zone apex, naming `invalid`, the single RR [RFC 9432 §4](https://datatracker.ietf.org/doc/html/rfc9432#section-4) recommends for the NS RRset a zone must have to be valid
     - `version` TXT, holding `2`, the only schema version RFC 9432 defines
     - one PTR per member, at `<member_label>.zones`, pointing at the member zone name
+
+    Because `DNSRecord.name` does not accept a blank value, the apex NS is named `@`, which denotes the zone origin per [RFC 1035 §5.1](https://datatracker.ietf.org/doc/html/rfc1035#section-5.1). Its `server` omits the trailing dot the RFC writes, leaving zone file syntax to whoever renders the zone.
 
     The TTL on all of these records is set to 0. Per [RFC 9432 §4.1](https://datatracker.ietf.org/doc/html/rfc9432#section-4.1), the TTL field has no meaning for records in a catalog zone and should be ignored.
 
     Zones are enrolled through [Catalog Zone Member](catalogzonemember.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one.
-
-    Two records that appear in a rendered catalog zone are not stored here: the apex NS, for which [RFC 9432 §4](https://datatracker.ietf.org/doc/html/rfc9432#section-4) recommends a single `NS invalid.`, and the SOA, which is assembled from this model's SOA fields as it is for any other zone. Whoever renders the zone file supplies both.
 
 +++ 1.2.0 "DNS label length rules"
 

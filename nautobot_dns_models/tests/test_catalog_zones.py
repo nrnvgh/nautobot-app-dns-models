@@ -11,6 +11,8 @@ from nautobot.core.testing.utils import extract_page_body
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import (
+    APEX_RECORD_NAME,
+    CATALOG_APEX_NS_SERVER,
     AAAARecord,
     ARecord,
     CatalogZoneMember,
@@ -165,6 +167,48 @@ class CatalogZoneRecordGatingTest(TestCase):
             SRVRecord(name="_sip._tcp", target="sip.example.", port=5060, zone=zone),
             TXTRecord(name="txt", text="value", zone=zone),
         ]
+
+
+class CatalogZoneApexNSRecordTest(TestCase):
+    """Tests for the apex NS RRset RFC 9432 §4 requires in every catalog zone."""
+
+    def test_creating_catalog_zone_writes_the_apex_ns_record(self):
+        """A new catalog zone carries `$CATZ 0 IN NS invalid.`, the RRset that makes it a valid zone."""
+        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        record = NSRecord.objects.get(zone=zone)
+        self.assertEqual(record.name, APEX_RECORD_NAME)
+        self.assertEqual(record.server, CATALOG_APEX_NS_SERVER)
+        self.assertEqual(record.ttl, 0)
+
+    def test_resaving_catalog_zone_does_not_duplicate_the_apex_ns_record(self):
+        """The RRset holds the single RR the RFC recommends, so editing a zone adds none."""
+        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone.description = "Edited"
+        zone.save()
+        self.assertEqual(NSRecord.objects.filter(zone=zone).count(), 1)
+
+    def test_saving_catalog_zone_restores_a_missing_apex_ns_record(self):
+        """Saving repairs a catalog zone left without an NS RRset, which a server would refuse to load."""
+        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        with system_write():
+            NSRecord.objects.filter(zone=zone).delete()
+
+        zone.save()
+
+        self.assertEqual(NSRecord.objects.get(zone=zone).server, CATALOG_APEX_NS_SERVER)
+
+    def test_saving_catalog_zone_drops_a_foreign_ns_record(self):
+        """An NS naming anything else is removed, since the app owns this RRset outright."""
+        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        with system_write():
+            NSRecord(name="sub", server="ns1.example.", zone=zone, _ttl=0).validated_save()
+
+        zone.save()
+
+        self.assertEqual(
+            [(record.name, record.server) for record in NSRecord.objects.filter(zone=zone)],
+            [(APEX_RECORD_NAME, CATALOG_APEX_NS_SERVER)],
+        )
 
 
 class CatalogZoneVersionRecordTest(TestCase):
@@ -485,20 +529,28 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
         """Gating the record panels must leave an ordinary zone exactly as it was."""
         self.assertLessEqual(self.RECORD_PANELS, self._panels(self.member_zone))
 
-    def test_catalog_zone_keeps_only_the_record_panel_it_has_records_for(self):
-        """No record type is user-creatable in a catalog zone, but its version TXT is still worth showing."""
-        self.assertEqual(self.RECORD_PANELS & self._panels(self.catalog_zone), {"TXT RECORDS"})
+    def test_catalog_zone_keeps_only_the_record_panels_it_has_records_for(self):
+        """No record type is user-creatable in a catalog zone, but the records it holds are worth showing."""
+        self.assertEqual(self.RECORD_PANELS & self._panels(self.catalog_zone), {"NS RECORDS", "TXT RECORDS"})
 
     def test_catalog_zone_shows_the_version_record(self):
         """The record the renderer will serve, rather than a restatement of the schema version."""
         self.assertIn("version", self._detail(self.catalog_zone))
 
+    def test_catalog_zone_shows_the_apex_ns_record(self):
+        """The NS RRset is part of what a renderer serves, so the page accounts for it."""
+        self.assertIn(CATALOG_APEX_NS_SERVER, self._detail(self.catalog_zone))
+
     def test_catalog_zone_offers_no_write_controls_for_the_version_record(self):
         """Every write the selection and action columns start is one the model refuses."""
         self.assertNotIn(self._edit_url(TXTRecord.objects.get(zone=self.catalog_zone)), self._detail(self.catalog_zone))
 
+    def test_catalog_zone_offers_no_write_controls_for_the_apex_ns_record(self):
+        """The apex NS is as system-managed as the version TXT, so it is listed the same way."""
+        self.assertNotIn(self._edit_url(NSRecord.objects.get(zone=self.catalog_zone)), self._detail(self.catalog_zone))
+
     def test_primary_zone_keeps_write_controls_for_its_records(self):
-        """CatalogVersionTXTPanel is catalog-only; an ordinary zone's TXT records stay editable."""
+        """CatalogSystemRecordsPanel is catalog-only; an ordinary zone's TXT records stay editable."""
         self.add_permissions("nautobot_dns_models.change_txtrecord")
         self.assertIn(self._edit_url(self.member_zone_record), self._detail(self.member_zone))
 
