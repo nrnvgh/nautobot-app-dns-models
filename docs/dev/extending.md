@@ -51,6 +51,7 @@ erDiagram
 
     DNSZone {
         charfield name UK
+        charfield zone_type
         DNSView dns_view FK
         boolean enabled
         integer ttl
@@ -65,6 +66,12 @@ erDiagram
         integer soa_minimum
         tenancy_TenantModel tenant FK
         boolean auto_create_ptr
+    }
+
+    CatalogZoneMember {
+        DNSZone catalog_zone FK
+        DNSZone member_zone FK
+        charfield member_label
     }
 
     DNSRecord {
@@ -127,6 +134,11 @@ erDiagram
     DNSZone ||--o{ DNSRecord: "contains"
     DNSZone }o--|| DNSView: "belongs to"
     DNSZone }o--o| tenancy_TenantModel: "belongs to"
+
+    DNSZone ||--o{ CatalogZoneMember: "catalog_zone"
+    DNSZone ||--o| CatalogZoneMember: "member_zone"
+    DNSZone ||..o| TXTRecord: "auto-creates version (when zone_type is catalog)"
+    CatalogZoneMember ||..|| PTRRecord: "publishes as member (system-managed)"
 
     DNSView ||--o{ DNSViewPrefixAssignment: "assigns"
     ipam_PrefixModel ||--o{ DNSViewPrefixAssignment: "assigned via"
