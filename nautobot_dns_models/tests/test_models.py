@@ -964,7 +964,8 @@ class DNSZoneTypeTest(TestCase):
 
     def test_rejects_zone_type_change(self):
         """Changing zone_type on an existing zone is rejected."""
-        zone = DNSZone.objects.create(name="immutable.example")
+        zone = self._make_zone("immutable.example")
+        zone.validated_save()
         zone.zone_type = DNSZoneTypeChoices.TYPE_CATALOG
         with self.assertRaises(ValidationError) as context:
             zone.full_clean()
