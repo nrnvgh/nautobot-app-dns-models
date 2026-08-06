@@ -75,19 +75,12 @@ class DNSZoneFormTestCase(TestCase):
 
     def test_soa_rname_accepts_value_without_at_sign(self):
         form = forms.DNSZoneForm(
-            data={
-                "name": "Catalog",
-                "dns_view": DNSView.objects.get(name="Default").id,
-                "ttl": 3600,
-                "filename": "catalog.zone",
-                "soa_mname": "invalid.",
-                "soa_rname": "invalid.",
-                "soa_refresh": 10800,
-                "soa_retry": 3600,
-                "soa_expire": 604800,
-                "soa_serial": 202,
-                "soa_minimum": 3600,
-            }
+            data=self._zone_data(
+                name="Catalog",
+                filename="catalog.zone",
+                soa_mname="invalid.",
+                soa_rname="invalid.",
+            )
         )
 
         self.assertTrue(form.is_valid(), form.errors)

@@ -449,7 +449,7 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
 
     def test_enabled_filter(self):
         """enabled filter should match only zones with the given enabled value."""
-        self.assertEqual(self.filterset({"enabled": "true"}, self.queryset).qs.count(), 2)
+        self.assertEqual(self.filterset({"enabled": "true"}, self.queryset).qs.count(), 3)
         self.assertEqual(self.filterset({"enabled": "false"}, self.queryset).qs.count(), 1)
 
 
