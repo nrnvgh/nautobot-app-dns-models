@@ -768,8 +768,8 @@ class CatalogZoneMember(PrimaryModel):
         if self.catalog_zone_id and self.catalog_zone.zone_type != DNSZoneTypeChoices.TYPE_CATALOG:  # pylint: disable=no-member
             raise ValidationError({"catalog_zone": "Members can only be added to a catalog zone."})
 
-        # Nesting catalogs is not a thing in RFC 9432: a consumer configures a member as an ordinary
-        # zone, so enrolling one catalog in another would not make its members known.
+        # While RFC 9432 says nothing about nesting, consumer support for it is the exception. Not supported
+        # at this time.
         if self.member_zone_id and self.member_zone.zone_type == DNSZoneTypeChoices.TYPE_CATALOG:  # pylint: disable=no-member
             raise ValidationError({"member_zone": "A catalog zone cannot be a member of another catalog zone."})
 
