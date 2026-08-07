@@ -136,6 +136,96 @@ class DNSZoneFormTestCase(TestCase):
         form = forms.DNSZoneForm(instance=zone)
         self.assertFalse(form.fields["auto_create_ptr"].disabled)
 
+    def test_can_enroll_a_new_zone_in_a_catalog(self):
+        """Enrolling at creation saves the operator a second trip through Catalog Zone Members."""
+        catalog_zone = self._catalog_zone()
+        form = forms.DNSZoneForm(data=self._zone_data(catalog=catalog_zone.pk))
+        self.assertTrue(form.is_valid(), form.errors)
+
+        zone = form.save()
+
+        self.assertEqual(zone.catalog, catalog_zone)
+        self.assertTrue(models.PTRRecord.objects.filter(zone=catalog_zone).exists())
+
+    def test_creating_a_zone_without_a_catalog_enrolls_it_nowhere(self):
+        form = forms.DNSZoneForm(data=self._zone_data())
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertIsNone(form.save().catalog)
+
+    def test_rejects_a_catalog_for_a_catalog_zone(self):
+        """Nesting is refused here as it is on the membership model."""
+        form = forms.DNSZoneForm(
+            data=self._zone_data(zone_type=DNSZoneTypeChoices.TYPE_CATALOG, catalog=self._catalog_zone().pk)
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("cannot be a member of another catalog zone", str(form.errors["catalog"]))
+
+    def test_rejects_a_catalog_that_is_not_a_catalog_zone(self):
+        """The picker filters by zone type, so only a hand-built payload reaches this."""
+        form = forms.DNSZoneForm(data=self._zone_data(catalog=DNSZone.objects.create(name="primary.example").pk))
+        self.assertFalse(form.is_valid())
+        self.assertIn("not a catalog zone", str(form.errors["catalog"]))
+
+    def test_rejects_a_catalog_in_another_view(self):
+        other_view = DNSView.objects.create(name="Other")
+        catalog_zone = DNSZone.objects.create(
+            name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG, dns_view=other_view
+        )
+        form = forms.DNSZoneForm(data=self._zone_data(catalog=catalog_zone.pk))
+        self.assertFalse(form.is_valid())
+        self.assertIn("same view", str(form.errors["catalog"]))
+
+    def test_editing_shows_the_current_catalog(self):
+        zone, catalog_zone = self._enrolled_zone()
+        self.assertEqual(forms.DNSZoneForm(instance=zone).initial["catalog"], catalog_zone)
+
+    def test_editing_moves_the_zone_to_another_catalog(self):
+        """The membership is reused, so the member label a consumer keys on survives the move."""
+        zone, _ = self._enrolled_zone()
+        member_label = zone.catalog_membership.get().member_label
+        other_catalog = DNSZone.objects.create(name="other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+
+        form = forms.DNSZoneForm(instance=zone, data=self._zone_data(name=zone.name, catalog=other_catalog.pk))
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+
+        membership = zone.catalog_membership.get()
+        self.assertEqual(membership.catalog_zone, other_catalog)
+        self.assertEqual(membership.member_label, member_label)
+
+    def test_editing_withdraws_the_zone_from_its_catalog(self):
+        zone, catalog_zone = self._enrolled_zone()
+
+        form = forms.DNSZoneForm(instance=zone, data=self._zone_data(name=zone.name, catalog=""))
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+
+        self.assertFalse(zone.catalog_membership.exists())
+        self.assertFalse(models.PTRRecord.objects.filter(zone=catalog_zone).exists())
+
+    def test_catalog_is_disabled_when_editing_catalog_zone(self):
+        zone = DNSZone.objects.create(name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        form = forms.DNSZoneForm(instance=zone)
+        self.assertTrue(form.fields["catalog"].disabled)
+
+    def test_catalog_is_enabled_when_editing_primary_zone(self):
+        zone = DNSZone.objects.create(name="primary.example")
+        form = forms.DNSZoneForm(instance=zone)
+        self.assertFalse(form.fields["catalog"].disabled)
+
+    def _catalog_zone(self, **overrides):
+        """Create and return a catalog zone in the view the form payload uses."""
+        fields = {"name": "catalog.example", "zone_type": DNSZoneTypeChoices.TYPE_CATALOG}
+        fields.update(overrides)
+        return DNSZone.objects.create(**fields)
+
+    def _enrolled_zone(self):
+        """Create a zone already enrolled in a catalog, returning both."""
+        catalog_zone = self._catalog_zone()
+        zone = DNSZone.objects.create(name="member.example")
+        models.CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone).validated_save()
+        return zone, catalog_zone
+
     def _zone_data(self, **overrides):
         """Return a valid DNSZoneForm payload, with any supplied overrides applied."""
         data = {
