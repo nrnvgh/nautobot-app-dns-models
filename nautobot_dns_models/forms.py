@@ -264,6 +264,18 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         required=True,
         label="View",
     )
+    catalog = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        query_params={
+            "zone_type": DNSZoneTypeChoices.TYPE_CATALOG,
+            "dns_view": "$dns_view",
+        },
+        required=False,
+        label="Catalog Zone",
+        help_text="Catalog zone this zone belongs to.",
+    )
+
+    field_order = ["name", "zone_type", "dns_view", "catalog", "auto_create_ptr"]
 
     class Meta:
         """Meta attributes."""
@@ -273,21 +285,71 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         widgets = {"zone_type": StaticSelect2()}
 
     class Media:
-        """Load create-time zone_type -> auto_create_ptr toggling."""
+        """Load create-time toggling of the controls a catalog zone cannot use."""
 
         js = ("nautobot_dns_models/js/dns_zone_form.js",)
 
     def __init__(self, *args, **kwargs):
-        """Disable fields the model forbids setting for the instance being edited."""
+        """Show the current catalog enrollment and disable fields the model forbids setting for this instance."""
         super().__init__(*args, **kwargs)
 
         if self.instance.present_in_database:
+            self.initial["catalog"] = self.instance.catalog
             self.fields["zone_type"].disabled = True
             self.fields["zone_type"].help_text = "Zone type cannot be changed after creation."
 
             if self.instance.zone_type == DNSZoneTypeChoices.TYPE_CATALOG:
                 self.fields["auto_create_ptr"].disabled = True
                 self.fields["auto_create_ptr"].help_text = "Catalog zones cannot enable automatic PTR creation."
+                self.fields["catalog"].disabled = True
+                self.fields["catalog"].help_text = "A catalog zone cannot be a member of another catalog zone."
+
+    def clean(self):
+        """Reject an enrollment `CatalogZoneMember` would refuse, so the error lands on the field."""
+        super().clean()
+
+        catalog_zone = self.cleaned_data.get("catalog")
+        if catalog_zone is None:
+            return self.cleaned_data
+
+        if self.cleaned_data.get("zone_type") == DNSZoneTypeChoices.TYPE_CATALOG:
+            raise forms.ValidationError({"catalog": "A catalog zone cannot be a member of another catalog zone."})
+
+        if not catalog_zone.is_catalog_zone:
+            raise forms.ValidationError({"catalog": "The selected zone is not a catalog zone."})
+
+        dns_view = self.cleaned_data.get("dns_view")
+        if dns_view is not None and catalog_zone.dns_view_id != dns_view.pk:
+            raise forms.ValidationError({"catalog": "The catalog zone must be in the same view as this zone."})
+
+        return self.cleaned_data
+
+    def save(self, commit=True):
+        """Write the zone, then bring its catalog enrollment into line with the form."""
+        zone = super().save(commit=commit)
+
+        if commit:
+            self._sync_catalog_membership(zone)
+
+        return zone
+
+    def _sync_catalog_membership(self, zone):
+        """Create, move, or remove the membership enrolling `zone` in a catalog.
+
+        Moving one keeps its member label, and removing one withdraws the catalog's PTR through the
+        `post_delete` receiver, so neither case needs handling here.
+        """
+        catalog_zone = self.cleaned_data.get("catalog")
+        membership = zone.catalog_membership.first()
+
+        if catalog_zone is None:
+            if membership is not None:
+                membership.delete()
+        elif membership is None:
+            models.CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone).validated_save()
+        elif membership.catalog_zone_id != catalog_zone.pk:
+            membership.catalog_zone = catalog_zone
+            membership.validated_save()
 
 
 class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
@@ -414,8 +476,7 @@ class CatalogZoneMemberForm(NautobotModelForm):
     )
     member_zone = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.all(),
-        # Catalogs are not offered as members: RFC 9432 never defines nesting, and consumer
-        # support for it is the exception rather than the rule, so the model rejects it outright.
+        # Catalogs are left out of the picker because `CatalogZoneMember.clean()` refuses them.
         # `$catalog_zone` only yields a PK, so same_dns_view_as maps that zone to its view.
         query_params={
             "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
