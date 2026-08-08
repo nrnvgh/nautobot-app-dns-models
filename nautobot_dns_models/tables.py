@@ -162,8 +162,8 @@ class DNSZoneTable(BaseTable):
             "pk",
             "name",
             "zone_type",
-            "catalog",
             "dns_view",
+            "catalog",
             "enabled",
             "ttl",
             "filename",
@@ -183,8 +183,8 @@ class DNSZoneTable(BaseTable):
             "pk",
             "name",
             "zone_type",
-            "catalog",
             "dns_view",
+            "catalog",
             "enabled",
             "ttl",
             "filename",
@@ -192,6 +192,10 @@ class DNSZoneTable(BaseTable):
             "soa_rname",
             "actions",
         )
+
+    def render_catalog(self, value):
+        """Name the catalog alone; `DNSZone.__str__` would repeat the view the row already carries."""
+        return value.name
 
 
 class CatalogZoneMemberTable(BaseTable):

@@ -207,6 +207,8 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         body = extract_page_body(response.content.decode(response.charset))
         # The catalog's own row names it once; every member row names it again in the catalog column.
         self.assertEqual(body.count(catalog.name), 13)
+        # The column names the catalog alone, leaving the view to the column that already carries it.
+        self.assertNotIn(str(catalog), body)
 
 
 class CatalogZoneMemberViewTest(ViewTestCases.PrimaryObjectViewTestCase):
