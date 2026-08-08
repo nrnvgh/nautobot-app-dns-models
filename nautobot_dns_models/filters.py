@@ -10,6 +10,7 @@ from nautobot.core.filters import MultiValueCharFilter, NaturalKeyOrPKMultipleCh
 from netaddr import IPAddress as NetIPAddress
 
 from nautobot_dns_models import models
+from nautobot_dns_models.choices import DNSZoneTypeChoices
 
 EXPIRATION_DATE_INPUT_FORMATS = ("%Y-%m-%d",)
 
@@ -106,6 +107,17 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
             "soa_mname": "icontains",
             "soa_rname": "icontains",
         }
+    )
+    # `catalog` is a property rather than a field, so the filter spans the membership itself. A zone
+    # holds at most one membership, so the join cannot repeat a zone. `query_params` is what keeps
+    # non-catalog zones out of the picker, including the filter form's Advanced tab, since the
+    # widget lists whatever the REST endpoint returns rather than the queryset.
+    catalog = NaturalKeyOrPKMultipleChoiceFilter(
+        field_name="catalog_membership__catalog_zone",
+        queryset=models.DNSZone.objects.all(),
+        query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+        to_field_name="name",
+        label="Catalog zone (name or ID)",
     )
     # Used by CatalogZoneMemberForm so the member-zone picker can follow `$catalog_zone` even though
     # DynamicModelChoiceField only substitutes that field's PK, not its dns_view.

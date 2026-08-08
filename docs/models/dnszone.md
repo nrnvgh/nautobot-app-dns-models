@@ -54,6 +54,8 @@ email form as follows:
 
     Zones are enrolled through [Catalog Zone Member](catalogzonemember.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one.
 
+    The zone list carries a Catalog Zone column and a filter of the same name, so a catalog's members can be found from the zone list rather than only from the catalog's own page.
+
     A zone's REST API representation carries a read-only `catalog` field naming the catalog it is enrolled in, or `null` when it is not enrolled. Enrollments themselves are created, moved, and removed through the Catalog Zone Member endpoint.
 
 +++ 1.2.0 "DNS label length rules"

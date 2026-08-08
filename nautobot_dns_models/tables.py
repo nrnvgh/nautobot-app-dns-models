@@ -141,6 +141,13 @@ class DNSZoneTable(BaseTable):
     tenant = TenantColumn()
     dns_view = tables.Column(linkify=True)
     enabled = BooleanColumn()
+    # `catalog` is a property, so `BaseTable` cannot derive the prefetch from it and sorting has to
+    # name the underlying path. `DNSZoneUIViewSet` supplies the matching prefetch.
+    catalog = tables.Column(
+        linkify=True,
+        verbose_name="Catalog Zone",
+        order_by="catalog_membership__catalog_zone__name",
+    )
     actions = ButtonsColumn(
         models.DNSZone,
         buttons=("changelog", "edit", "delete"),
@@ -155,6 +162,7 @@ class DNSZoneTable(BaseTable):
             "pk",
             "name",
             "zone_type",
+            "catalog",
             "dns_view",
             "enabled",
             "ttl",
@@ -175,6 +183,7 @@ class DNSZoneTable(BaseTable):
             "pk",
             "name",
             "zone_type",
+            "catalog",
             "dns_view",
             "enabled",
             "ttl",

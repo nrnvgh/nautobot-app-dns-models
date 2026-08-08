@@ -440,6 +440,15 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertIn(enrolled, edit_qs)
         self.assertIn(free, edit_qs)
 
+    def test_catalog(self):
+        """Match member zones by the catalog they are enrolled in, named or by ID."""
+        catalog = DNSZone.objects.get(name="Catalog One")
+        enrolled = DNSZone.objects.get(name="Test One")
+        CatalogZoneMember.objects.create(catalog_zone=catalog, member_zone=enrolled)
+
+        self.assertEqual(list(self.filterset({"catalog": [catalog.name]}, self.queryset).qs), [enrolled])
+        self.assertEqual(list(self.filterset({"catalog": [str(catalog.pk)]}, self.queryset).qs), [enrolled])
+
     def test_search(self):
         """Test filtering by Q search value."""
         self.assertEqual(self.filterset({"q": "Test One"}, self.queryset).qs.count(), 1)

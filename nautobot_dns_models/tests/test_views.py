@@ -4,7 +4,7 @@ from constance import config as constance_config
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.urls import reverse
-from nautobot.apps.testing import ViewTestCases
+from nautobot.apps.testing import AssertNoRepeatedQueries, ViewTestCases
 from nautobot.core.testing.utils import extract_page_body
 from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
@@ -188,6 +188,25 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         cls.bulk_edit_data = {"description": "Bulk edit views", "enabled": False}
+
+    def test_list_names_each_zone_catalog_without_per_zone_queries(self):
+        """The catalog column reads the enrollment from the view's prefetch, not once per row."""
+        catalog = DNSZone.objects.create(name="catalog-list.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        for index in range(12):
+            CatalogZoneMember.objects.create(
+                catalog_zone=catalog,
+                member_zone=DNSZone.objects.create(name=f"member-list-{index}.example"),
+            )
+
+        self.add_permissions("nautobot_dns_models.view_dnszone")
+        # The rows arrive on the HTMX follow-up request; the first response is an empty table shell.
+        with AssertNoRepeatedQueries(self):
+            response = self.client.get(self._get_url("list"), headers={"HX-Request": "true"})
+
+        self.assertHttpStatus(response, 200)
+        body = extract_page_body(response.content.decode(response.charset))
+        # The catalog's own row names it once; every member row names it again in the catalog column.
+        self.assertEqual(body.count(catalog.name), 13)
 
 
 class CatalogZoneMemberViewTest(ViewTestCases.PrimaryObjectViewTestCase):

@@ -443,6 +443,12 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
         widget=StaticSelect2Multiple(),
         label="Zone Type",
     )
+    catalog = DynamicModelMultipleChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+        required=False,
+        label="Catalog Zone",
+    )
     enabled = forms.NullBooleanField(
         required=False,
         widget=StaticSelect2(choices=BOOLEAN_WITH_BLANK_CHOICES),
@@ -454,6 +460,7 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
         "q",
         "name",
         "zone_type",
+        "catalog",
         "enabled",
         "filename",
     ]

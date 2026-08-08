@@ -344,7 +344,8 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     filterset_form_class = DNSZoneFilterForm
     serializer_class = DNSZoneSerializer
     lookup_field = "pk"
-    queryset = DNSZone.objects.all()
+    # The prefetch is what keeps the table's `catalog` column off a per-zone query when listing.
+    queryset = DNSZone.objects.prefetch_related("catalog_membership__catalog_zone")
     table_class = DNSZoneTable
 
     object_detail_content = ObjectDetailContent(
