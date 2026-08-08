@@ -1,5 +1,8 @@
 """DNS Plugin Views."""
 
+from urllib.parse import urlencode
+
+from django.urls import reverse
 from nautobot.apps import views
 from nautobot.apps.ui import (
     ButtonColorChoices,
@@ -239,6 +242,28 @@ class AddRecordsDropdownButton(object_detail.DropdownButton):
             return False
 
         return any(child.should_render(context) for child in self.children)
+
+
+class AddMemberZoneButton(object_detail.Button):
+    """An Add Member Zone entry, offered only on the zones that can publish members.
+
+    The header counterpart of the Add Records menu: each zone type gets a button for the child
+    object it actually has.
+    """
+
+    def get_link(self, context):
+        """Pre-select the catalog and come back here, matching the members panel's own Add link."""
+        zone = get_obj_from_context(context)
+        query = urlencode({"catalog_zone": zone.pk, "return_url": zone.get_absolute_url()})
+        return f"{reverse(self.link_name)}?{query}"
+
+    def should_render(self, context):
+        """Render only for catalog zones."""
+        if not super().should_render(context):
+            return False
+
+        zone = get_obj_from_context(context)
+        return zone is not None and zone.is_catalog_zone
 
 
 class DNSViewUIViewSet(views.NautobotUIViewSet):
@@ -500,6 +525,15 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                         required_permissions=["nautobot_dns_models.add_txtrecord"],
                     ),
                 ),
+            ),
+            AddMemberZoneButton(
+                weight=200,
+                color=ButtonColorChoices.BLUE,
+                label="Add Member Zone",
+                icon="mdi-plus-thick",
+                link_name="plugins:nautobot_dns_models:catalogzonemember_add",
+                link_includes_pk=False,
+                required_permissions=["nautobot_dns_models.add_catalogzonemember"],
             ),
         ],
     )

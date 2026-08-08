@@ -582,6 +582,18 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
         self.add_permissions("nautobot_dns_models.change_dnszone", "nautobot_dns_models.add_arecord")
         self.assertIn("Add Records", self._detail(self.member_zone))
 
+    def test_catalog_zone_offers_the_add_member_zone_button(self):
+        """A catalog's child object is the membership, so the header offers it where records would be."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        content = self._detail(self.catalog_zone)
+        self.assertIn("Add Member Zone", content)
+        self.assertIn(f"catalog_zone={self.catalog_zone.pk}", content)
+
+    def test_primary_zone_has_no_add_member_zone_button(self):
+        """Only a catalog zone publishes members, so only a catalog zone offers to add one."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        self.assertNotIn("Add Member Zone", self._detail(self.member_zone))
+
     def test_catalog_zone_lists_its_members(self):
         """The membership is the operator-facing object, so the catalog leads with it."""
         self.assertIn("MEMBER PTR RECORDS", self._panels(self.catalog_zone))
