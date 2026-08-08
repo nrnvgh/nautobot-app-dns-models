@@ -581,9 +581,12 @@ class DNSZone(DNSModel):
         """Return the catalog zone this zone is enrolled in, or None if it is not enrolled.
 
         A unique constraint holds a zone to one membership, but `member_zone` is a ForeignKey rather
-        than a OneToOneField, so the reverse accessor is still a manager.
+        than a OneToOneField, so the reverse accessor is still a manager. Reading it with a bare
+        `all()` is what lets a caller serializing many zones pay for this once: narrowing the manager
+        builds a fresh queryset, which ignores any `prefetch_related("catalog_membership__catalog_zone")`
+        and goes back to the database per zone.
         """
-        membership = self.catalog_membership.select_related("catalog_zone").first()  # pylint: disable=no-member
+        membership = next(iter(self.catalog_membership.all()), None)  # pylint: disable=no-member
         return membership.catalog_zone if membership else None
 
     @property

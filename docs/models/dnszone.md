@@ -54,6 +54,8 @@ email form as follows:
 
     Zones are enrolled through [Catalog Zone Member](catalogzonemember.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one.
 
+    A zone's REST API representation carries a read-only `catalog` field naming the catalog it is enrolled in, or `null` when it is not enrolled. Enrollments themselves are created, moved, and removed through the Catalog Zone Member endpoint.
+
 +++ 1.2.0 "DNS label length rules"
 
     When DNS validation is enabled (via the `DNS_VALIDATION_LEVEL` configuration), `DNSZone` enforces the following DNS label length rules, as specified by [RFC 1035 §3.1](https://datatracker.ietf.org/doc/html/rfc1035#section-3.1):

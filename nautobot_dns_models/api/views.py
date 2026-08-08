@@ -91,7 +91,8 @@ class DNSRegistrationViewSet(NautobotModelViewSet):
 class DNSZoneViewSet(NautobotModelViewSet):
     """DNSZone API ViewSet."""
 
-    queryset = DNSZone.objects.all()
+    # The prefetch is what keeps the serializer's `catalog` field off a per-zone query when listing.
+    queryset = DNSZone.objects.prefetch_related("catalog_membership__catalog_zone")
     serializer_class = DNSZoneSerializer
     filterset_class = DNSZoneFilterSet
 

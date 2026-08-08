@@ -1,11 +1,24 @@
 """API serializers for nautobot_dns_models."""
 
 from drf_spectacular.utils import extend_schema_field
-from nautobot.apps.api import NautobotModelSerializer, ValidatedModelSerializer
+from nautobot.apps.api import NautobotHyperlinkedRelatedField, NautobotModelSerializer, ValidatedModelSerializer
 from rest_framework import serializers
 
 from nautobot_dns_models import models
 from nautobot_dns_models.models import UINT32_MAX
+
+
+class PropertyHyperlinkedRelatedField(NautobotHyperlinkedRelatedField):
+    """Relate to an object reached through a property rather than through a model field.
+
+    DRF otherwise hands `to_representation()` a stand-in carrying only the primary key, leaving the
+    field to work out the related model from the attribute on the parent model. That lookup expects
+    a relation, and a property is not one, so the instance itself has to be passed through.
+    """
+
+    def use_pk_only_optimization(self):
+        """Pass the related instance, since its primary key alone cannot name its model."""
+        return False
 
 
 class DNSViewSerializer(NautobotModelSerializer):
@@ -59,6 +72,11 @@ class DNSZoneSerializer(NautobotModelSerializer):
     """DNSZone Serializer."""
 
     url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:dnszone-detail")
+    catalog = PropertyHyperlinkedRelatedField(
+        view_name="plugins-api:nautobot_dns_models-api:dnszone-detail",
+        read_only=True,
+        help_text="The catalog zone this zone is enrolled in.",
+    )
 
     class Meta:
         """Meta attributes."""

@@ -8,6 +8,8 @@ The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatr
 
 A zone belongs to at most one catalog, and each label is unique within a catalog.
 
+This model is where enrollments are created, moved, and removed, in the UI and through its REST API endpoint alike. A zone reports its own catalog read-only, since a membership carries a `member_label` that a field on the zone could not express.
+
 ## Member label
 
 RFC 9432 §4.1 lets the producer choose any unique label and treats it as the member's identity for consumer state. The generated label is a random UUID encoded as unpadded lowercase base32, which is 26 DNS-safe characters.

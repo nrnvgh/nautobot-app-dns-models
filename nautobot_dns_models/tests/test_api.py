@@ -10,7 +10,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.test import override_settings
 from django.urls import reverse
 from nautobot.apps.api import get_serializer_for_model
-from nautobot.apps.testing import APIViewTestCases
+from nautobot.apps.testing import APIViewTestCases, AssertNoRepeatedQueries
 from nautobot.core.testing import utils
 from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
@@ -607,6 +607,56 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         self.assertIn("cannot be changed after creation", str(response.data["zone_type"]))
         zone.refresh_from_db()
         self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_PRIMARY)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_get_reports_the_catalog_a_zone_is_enrolled_in(self):
+        """An enrolled zone names its catalog, and one that is not enrolled reports null."""
+        catalog_zone = _create_zone(name="api-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = _create_zone(name="api-member.example")
+        unenrolled_zone = _create_zone(name="api-unenrolled.example")
+        CatalogZoneMember.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+
+        response = self.client.get(self._get_detail_url(member_zone), **self.header)
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        self.assertEqual(response.data["catalog"]["id"], catalog_zone.pk)
+
+        response = self.client.get(self._get_detail_url(unenrolled_zone), **self.header)
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        self.assertIsNone(response.data["catalog"])
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_patch_leaves_enrollment_alone(self):
+        """`catalog` is read-only here, so a payload naming one is ignored rather than acted on."""
+        self.add_permissions("nautobot_dns_models.change_dnszone")
+        catalog_zone = _create_zone(name="api-catalog-ro.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_catalog_zone = _create_zone(name="api-catalog-ro-2.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = _create_zone(name="api-member-ro.example")
+        CatalogZoneMember.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+
+        response = self.client.patch(
+            self._get_detail_url(member_zone),
+            {"catalog": other_catalog_zone.pk},
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        self.assertEqual(member_zone.catalog, catalog_zone)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_list_reads_every_enrollment_at_once(self):
+        """Listing zones must not go back to the database for each one's catalog."""
+        catalog_zone = _create_zone(name="api-catalog-list.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        # Above the context manager's default repetition threshold, so an unprefetched read trips it.
+        for index in range(12):
+            CatalogZoneMember.objects.create(
+                catalog_zone=catalog_zone,
+                member_zone=_create_zone(name=f"api-member-list-{index}.example"),
+            )
+
+        with AssertNoRepeatedQueries(self):
+            response = self.client.get(self._get_list_url(), **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_200_OK)
 
 
 class CatalogZoneMemberAPITestCase(APIViewTestCases.APIViewTestCase):
