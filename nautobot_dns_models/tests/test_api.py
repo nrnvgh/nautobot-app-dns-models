@@ -748,6 +748,22 @@ class CatalogZoneMemberAPITestCase(APIViewTestCases.APIViewTestCase):
         self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
         self.assertIn("The member label cannot be changed", str(response.data["member_label"]))
 
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_list_reads_every_referenced_view_at_once(self):
+        """A membership's `display` names both zones, and a zone names its view, which cannot cost a query each."""
+        catalog_zone = _create_zone(name="member-list-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        # Above the context manager's default repetition threshold, so an unselected view trips it.
+        for index in range(12):
+            CatalogZoneMember.objects.create(
+                catalog_zone=catalog_zone,
+                member_zone=_create_zone(name=f"member-list-{index}.example"),
+            )
+
+        with AssertNoRepeatedQueries(self):
+            response = self.client.get(self._get_list_url(), **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+
 
 class NSRecordAPITestCase(APIViewTestCases.APIViewTestCase):
     """Test the Nautobot NSRecord API."""

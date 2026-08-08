@@ -102,7 +102,7 @@ class DNSZoneViewSet(NautobotModelViewSet):
 class CatalogZoneMemberViewSet(NautobotModelViewSet):
     """CatalogZoneMember API ViewSet."""
 
-    queryset = CatalogZoneMember.objects.all()
+    queryset = CatalogZoneMember.objects.select_related("catalog_zone__dns_view", "member_zone__dns_view")
     serializer_class = CatalogZoneMemberSerializer
     filterset_class = CatalogZoneMemberFilterSet
 
