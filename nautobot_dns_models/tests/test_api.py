@@ -703,6 +703,31 @@ class CatalogZoneMemberAPITestCase(APIViewTestCases.APIViewTestCase):
         self.assertRegex(response.data["member_label"], r"^[a-z2-7]{26}$")
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_csv_import_without_a_label_column_generates_labels(self):
+        """Bulk import is how a catalog is populated, and it cannot ask the operator to invent labels."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        entry = self.create_data[0]
+        csv_data = f"catalog_zone,member_zone\n{entry['catalog_zone']},{entry['member_zone']}\n"
+
+        response = self.client.post(self._get_list_url(), csv_data, content_type="text/csv", **self.header)
+
+        # Creating from CSV is always a bulk create, so the response is a list however many rows were sent.
+        self.assertHttpStatus(response, status.HTTP_201_CREATED)
+        self.assertRegex(response.data[0]["member_label"], r"^[a-z2-7]{26}$")
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_csv_import_with_an_empty_label_cell_generates_a_label(self):
+        """A sheet exported with the column and cleared is asking for a label, not for an empty one."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        entry = self.create_data[1]
+        csv_data = f"catalog_zone,member_zone,member_label\n{entry['catalog_zone']},{entry['member_zone']},\n"
+
+        response = self.client.post(self._get_list_url(), csv_data, content_type="text/csv", **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_201_CREATED)
+        self.assertRegex(response.data[0]["member_label"], r"^[a-z2-7]{26}$")
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_duplicate_member_label_rejected(self):
         """The serializer drops DRF's uniqueness validators, leaving `full_clean()` to enforce the constraint."""
         self.add_permissions("nautobot_dns_models.add_catalogzonemember")
