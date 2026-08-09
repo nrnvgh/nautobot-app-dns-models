@@ -639,30 +639,65 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
 
 
 @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
-class ZoneListViewByZoneTypeTest(TestCase):
-    """Tests for list-view row actions that depend on zone type."""
+class ZoneListEnrollmentActionsTest(TestCase):
+    """Tests for the enrollment actions a zone list row offers for its own membership."""
 
     @classmethod
     def setUpTestData(cls):
         cls.catalog_zone = create_zone("list-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.primary_zone = create_zone("list-primary.example")
+        cls.enrolled_zone = create_zone("list-enrolled.example")
+        cls.membership = CatalogZoneMember(catalog_zone=cls.catalog_zone, member_zone=cls.enrolled_zone)
+        cls.membership.validated_save()
         cls.add_member_path = reverse("plugins:nautobot_dns_models:catalogzonemember_add")
+        cls.edit_member_path = reverse("plugins:nautobot_dns_models:catalogzonemember_edit", args=(cls.membership.pk,))
+        cls.delete_member_path = reverse(
+            "plugins:nautobot_dns_models:catalogzonemember_delete", args=(cls.membership.pk,)
+        )
 
-    def test_catalog_zone_offers_add_member_zone(self):
-        """A catalog row should deep-link into membership create with the catalog preselected."""
+    def test_catalog_zone_offers_no_enrollment_action(self):
+        """Enrollment is offered from the member's row; the catalog's own page carries the other direction."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        self.assertNotIn(f"{self.add_member_path}?catalog_zone=", self._list())
+
+    def test_unenrolled_zone_offers_add_to_catalog(self):
+        """The other side of the same form: the zone is preselected and the catalog is what is chosen."""
         self.add_permissions("nautobot_dns_models.add_catalogzonemember")
         content = self._list()
-        self.assertIn(f"{self.add_member_path}?catalog_zone={self.catalog_zone.pk}", content)
-        self.assertIn("Add member zone", content)
+        self.assertIn(f"{self.add_member_path}?member_zone={self.primary_zone.pk}", content)
+        self.assertIn("Add to catalog", content)
 
-    def test_primary_zone_offers_no_add_member_zone(self):
-        """Primary zones are not catalogs, so the action must not appear on their rows."""
+    def test_add_to_catalog_requires_permission(self):
+        """The row action must not offer what the membership's own pages would refuse."""
+        self.assertNotIn(f"{self.add_member_path}?member_zone={self.primary_zone.pk}", self._list())
+
+    def test_enrolled_zone_offers_no_add_to_catalog(self):
+        """A zone belongs to one catalog, and the create form's picker excludes one already enrolled."""
         self.add_permissions("nautobot_dns_models.add_catalogzonemember")
-        self.assertNotIn(f"{self.add_member_path}?catalog_zone={self.primary_zone.pk}", self._list())
+        self.assertNotIn(f"{self.add_member_path}?member_zone={self.enrolled_zone.pk}", self._list())
 
-    def test_add_member_zone_requires_permission(self):
-        """Without add permission the action stays hidden even on a catalog row."""
-        self.assertNotIn(f"{self.add_member_path}?catalog_zone={self.catalog_zone.pk}", self._list())
+    def test_enrolled_zone_offers_editing_its_membership(self):
+        """Retargeting the membership is how a zone moves between catalogs."""
+        self.add_permissions("nautobot_dns_models.change_catalogzonemember")
+        content = self._list()
+        self.assertIn(self.edit_member_path, content)
+        self.assertIn("Edit catalog membership", content)
+
+    def test_editing_the_membership_requires_change_permission(self):
+        """Enrollment is governed by the membership's permissions, not the zone's."""
+        self.assertNotIn(self.edit_member_path, self._list())
+
+    def test_enrolled_zone_offers_removal_from_its_catalog(self):
+        """Withdrawal is a deletion of the membership, so the row links to its confirmation page."""
+        self.add_permissions("nautobot_dns_models.delete_catalogzonemember")
+        content = self._list()
+        self.assertIn(self.delete_member_path, content)
+        self.assertIn("Remove from catalog", content)
+
+    def test_removal_requires_delete_permission(self):
+        """Withdrawing discards the member label, so change permission must not reach it."""
+        self.add_permissions("nautobot_dns_models.change_catalogzonemember")
+        self.assertNotIn(self.delete_member_path, self._list())
 
     def _list(self):
         """Return the rendered rows of the DNS zone list page.

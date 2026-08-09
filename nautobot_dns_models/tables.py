@@ -7,12 +7,33 @@ from nautobot.tenancy.tables import TenantColumn
 from nautobot_dns_models import models
 
 DNSZONE_BUTTONS = """
-{% if record.is_catalog_zone and perms.nautobot_dns_models.add_catalogzonemember %}
-    <li>
-        <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_add' %}?catalog_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
-            <span class="mdi mdi-plus-thick me-4" aria-hidden="true"></span>Add member zone
-        </a>
-    </li>
+{% if not record.is_catalog_zone %}
+    {% with membership=record.catalog_membership.first %}
+        {% if not membership %}
+            {% if perms.nautobot_dns_models.add_catalogzonemember %}
+                <li>
+                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_add' %}?member_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
+                        <span class="mdi mdi-plus-thick me-4" aria-hidden="true"></span>Add to catalog
+                    </a>
+                </li>
+            {% endif %}
+        {% else %}
+            {% if perms.nautobot_dns_models.change_catalogzonemember %}
+                <li>
+                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_edit' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-warning">
+                        <span class="mdi mdi-pencil me-4" aria-hidden="true"></span>Edit catalog membership
+                    </a>
+                </li>
+            {% endif %}
+            {% if perms.nautobot_dns_models.delete_catalogzonemember %}
+                <li>
+                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_delete' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-danger">
+                        <span class="mdi mdi-minus-thick me-4" aria-hidden="true"></span>Remove from catalog
+                    </a>
+                </li>
+            {% endif %}
+        {% endif %}
+    {% endwith %}
 {% endif %}
 """
 
