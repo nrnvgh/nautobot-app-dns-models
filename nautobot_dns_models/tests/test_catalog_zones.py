@@ -2,12 +2,14 @@
 
 import re
 
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db.models import ProtectedError
 from django.test import override_settings
 from django.urls import reverse
 from nautobot.apps.testing import TestCase
 from nautobot.core.testing.utils import extract_page_body
+from nautobot.users.models import ObjectPermission
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import (
@@ -673,3 +675,143 @@ class ZoneListViewByZoneTypeTest(TestCase):
         content = extract_page_body(response.content.decode(response.charset))
         self.assertIn(self.catalog_zone.name, content)
         return content
+
+
+class ZoneFormEnrollmentPermissionTest(TestCase):
+    """Tests that the zone form's catalog field is governed by the membership's own permissions.
+
+    The field writes `CatalogZoneMember` rows, so `change_dnszone` alone must not carry a user
+    through an enrollment they could not have made from the membership's own pages.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.other_catalog_zone = create_zone("other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.unenrolled_zone = create_zone("unenrolled.example")
+        cls.enrolled_zone = create_zone("enrolled.example")
+        CatalogZoneMember(catalog_zone=cls.catalog_zone, member_zone=cls.enrolled_zone).validated_save()
+
+    def setUp(self):
+        """Grant the zone permissions every one of these edits needs before its enrollment is judged."""
+        super().setUp()
+        self.add_permissions(
+            "nautobot_dns_models.view_dnsview",
+            "nautobot_dns_models.view_dnszone",
+            "nautobot_dns_models.add_dnszone",
+            "nautobot_dns_models.change_dnszone",
+        )
+
+    ADD_REFUSED = "You do not have permission to add a zone to a catalog."
+    CHANGE_REFUSED = "You do not have permission to move a zone to another catalog."
+    DELETE_REFUSED = "You do not have permission to remove a zone from its catalog."
+
+    def test_enrolling_requires_add_permission(self):
+        """Creating a membership from the zone form is still creating a membership."""
+        self._assert_refused(self._edit(self.unenrolled_zone, self.catalog_zone), self.ADD_REFUSED)
+        self.assertIsNone(self._catalog_of(self.unenrolled_zone))
+
+    def test_enrolling_is_allowed_with_add_permission(self):
+        """The field must remain usable by anyone entitled to the membership it writes."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        self.assertHttpStatus(self._edit(self.unenrolled_zone, self.catalog_zone), 302)
+        self.assertEqual(self._catalog_of(self.unenrolled_zone), self.catalog_zone)
+
+    def test_moving_requires_change_permission(self):
+        """Retargeting the existing row is a change to it, not a new membership."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        self._assert_refused(self._edit(self.enrolled_zone, self.other_catalog_zone), self.CHANGE_REFUSED)
+        self.assertEqual(self._catalog_of(self.enrolled_zone), self.catalog_zone)
+
+    def test_moving_is_allowed_with_change_permission(self):
+        """A move keeps the membership and its label, so change permission is the whole of it."""
+        self.add_permissions("nautobot_dns_models.change_catalogzonemember")
+        self.assertHttpStatus(self._edit(self.enrolled_zone, self.other_catalog_zone), 302)
+        self.assertEqual(self._catalog_of(self.enrolled_zone), self.other_catalog_zone)
+
+    def test_withdrawing_requires_delete_permission(self):
+        """Clearing the field deletes the membership and the catalog's PTR along with it."""
+        self.add_permissions("nautobot_dns_models.change_catalogzonemember")
+        self._assert_refused(self._edit(self.enrolled_zone), self.DELETE_REFUSED)
+        self.assertEqual(self._catalog_of(self.enrolled_zone), self.catalog_zone)
+
+    def test_withdrawing_is_allowed_with_delete_permission(self):
+        """Nothing is created or retargeted, so delete permission alone must suffice."""
+        self.add_permissions("nautobot_dns_models.delete_catalogzonemember")
+        self.assertHttpStatus(self._edit(self.enrolled_zone), 302)
+        self.assertIsNone(self._catalog_of(self.enrolled_zone))
+
+    def test_editing_an_enrolled_zone_leaves_its_enrollment_alone(self):
+        """Resubmitting the catalog a zone already has asks for nothing, so it must demand nothing."""
+        self.assertHttpStatus(self._edit(self.enrolled_zone, self.catalog_zone), 302)
+        self.assertEqual(self._catalog_of(self.enrolled_zone), self.catalog_zone)
+
+    def test_creating_an_enrolled_zone_requires_add_permission(self):
+        """The zone is written before the membership is judged, so the refusal must take it back out."""
+        response = self.client.post(
+            reverse("plugins:nautobot_dns_models:dnszone_add"),
+            self._zone_data(create_zone_name="new.example", catalog=self.catalog_zone),
+        )
+        self._assert_refused(response, self.ADD_REFUSED)
+        self.assertFalse(DNSZone.objects.filter(name="new.example").exists())
+
+    def test_constraints_are_evaluated_against_the_membership(self):
+        """A permission narrowed to one catalog must not enroll zones in any other."""
+        object_permission = ObjectPermission(
+            name="Enroll in one catalog only",
+            actions=["add"],
+            constraints={"catalog_zone__name": self.catalog_zone.name},
+        )
+        object_permission.save()
+        object_permission.users.add(self.user)
+        object_permission.object_types.add(ContentType.objects.get_for_model(CatalogZoneMember))
+
+        self._assert_refused(self._edit(self.unenrolled_zone, self.other_catalog_zone), self.ADD_REFUSED)
+        self.assertIsNone(self._catalog_of(self.unenrolled_zone))
+
+        self.assertHttpStatus(self._edit(self.unenrolled_zone, self.catalog_zone), 302)
+        self.assertEqual(self._catalog_of(self.unenrolled_zone), self.catalog_zone)
+
+    def _assert_refused(self, response, message):
+        """Assert the save was refused for the stated reason, on the field the user chose the catalog in.
+
+        Any form error redisplays the page, so the status alone would let an unrelated failure pass.
+        """
+        self.assertHttpStatus(response, 200)
+        body = extract_page_body(response.content.decode(response.charset))
+        self.assertIn(message, body)
+        self.assertIn("id_catalog_error", body)
+
+    def _catalog_of(self, zone):
+        """Return the catalog `zone` is enrolled in, read back from the database."""
+        return DNSZone.objects.get(pk=zone.pk).catalog
+
+    def _edit(self, zone, catalog=None):
+        """Post `zone`'s edit form, offering `catalog` in the field that governs its enrollment."""
+        return self.client.post(
+            reverse("plugins:nautobot_dns_models:dnszone_edit", args=(zone.pk,)),
+            self._zone_data(zone=zone, catalog=catalog),
+        )
+
+    def _zone_data(self, zone=None, create_zone_name=None, catalog=None):
+        """Return a complete zone form submission, since an incomplete one never reaches the save."""
+        zone = zone or DNSZone(name=create_zone_name, filename=f"{create_zone_name}.zone")
+        data = {
+            "name": zone.name,
+            "zone_type": DNSZoneTypeChoices.TYPE_PRIMARY,
+            "dns_view": DNSView.objects.get(name="Default").pk,
+            "filename": zone.filename,
+            "soa_mname": "ns1.example.",
+            "soa_rname": "admin@example.com",
+            "soa_refresh": 86400,
+            "soa_retry": 7200,
+            "soa_expire": 3600000,
+            "soa_serial": 0,
+            "soa_minimum": 172800,
+            "ttl": 3600,
+            "enabled": True,
+        }
+        if catalog is not None:
+            data["catalog"] = catalog.pk
+
+        return data

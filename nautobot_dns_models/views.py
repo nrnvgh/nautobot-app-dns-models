@@ -2,6 +2,7 @@
 
 from urllib.parse import urlencode
 
+from django.core.exceptions import ValidationError
 from django.urls import reverse
 from nautobot.apps import views
 from nautobot.apps.ui import (
@@ -537,6 +538,58 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             ),
         ],
     )
+
+    def form_save(self, form, **kwargs):
+        """Refuse an enrollment change the user could not have made on the membership itself.
+
+        The form's `catalog` field writes `CatalogZoneMember` rows, which `change_dnszone` alone
+        should not authorize. Object-level constraints are evaluated against the stored row, so a
+        new membership can only be tested once it exists; the enclosing transaction takes the zone
+        back out with it.
+        """
+        action, membership = self._pending_enrollment(form)
+        if action is not None:
+            self._require_membership_permission(form, action, membership)
+
+        zone = super().form_save(form, **kwargs)
+
+        if action in ("add", "change"):
+            # Read the row itself: this viewset prefetches `catalog_membership`, so the zone's own
+            # manager would answer from the cache the request was rendered with.
+            self._require_membership_permission(
+                form, action, CatalogZoneMember.objects.filter(member_zone=zone).first()
+            )
+
+        return zone
+
+    def _pending_enrollment(self, form):
+        """Name the membership operation the submitted catalog implies, and the row it acts on."""
+        membership = form.instance.catalog_membership.first() if form.instance.present_in_database else None
+        catalog_zone = form.cleaned_data.get("catalog")
+
+        if membership is None:
+            return ("add", None) if catalog_zone is not None else (None, None)
+
+        if catalog_zone is None:
+            return "delete", membership
+
+        if membership.catalog_zone_id != catalog_zone.pk:
+            return "change", membership
+
+        return None, None
+
+    def _require_membership_permission(self, form, action, membership):
+        """Stop the save, reporting on the field where the catalog was chosen."""
+        if self.request.user.has_perm(f"nautobot_dns_models.{action}_catalogzonemember", membership):
+            return
+
+        message = {
+            "add": "You do not have permission to add a zone to a catalog.",
+            "change": "You do not have permission to move a zone to another catalog.",
+            "delete": "You do not have permission to remove a zone from its catalog.",
+        }[action]
+        form.add_error("catalog", message)
+        raise ValidationError(message)
 
 
 class CatalogZoneMemberUIViewSet(views.NautobotUIViewSet):
