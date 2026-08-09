@@ -816,6 +816,18 @@ class AutoCreatePTRRecordTestCase(TestCase):
         self.assertFalse(ARecord.objects.filter(name="host3").exists())
         self.assertFalse(PTRRecord.objects.exists())
 
+    def test_auto_ptr_does_not_use_catalog_reverse_zone(self):
+        """A reverse-named catalog zone is not eligible to receive an automatically created PTR."""
+        catalog_zone = DNSZone.objects.create(
+            name="1.168.192.in-addr.arpa",
+            dns_view=self.view,
+            zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+        )
+        with self.assertRaises(ValidationError):
+            ARecord.objects.create(name="host4", ip_address=self.ipv4_unmatched, zone=self.fwd_on)
+        self.assertFalse(ARecord.objects.filter(name="host4").exists())
+        self.assertFalse(PTRRecord.objects.filter(zone=catalog_zone).exists())
+
     def test_auto_ptr_idempotent_when_ptr_already_exists(self):
         """If a PTR with the same owner name already exists in the reverse zone, no duplicate is created."""
         existing = PTRRecord.objects.create(name="1", ptrdname="host1.auto.example.com", zone=self.reverse_zone)
@@ -851,8 +863,25 @@ class TestDNSZoneFindForPtrdname(TestCase):
         broad = DNSZone.objects.create(name="10.in-addr.arpa", dns_view=self.view_a)
         self.assertEqual(DNSZone.find_reverse_zone_for_ptrdname("1.0.0.10.in-addr.arpa"), broad)
 
+    def test_falls_back_past_catalog_zone(self):
+        DNSZone.objects.create(
+            name="0.0.10.in-addr.arpa",
+            dns_view=self.view_a,
+            zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+        )
+        broad = DNSZone.objects.create(name="10.in-addr.arpa", dns_view=self.view_a)
+        self.assertEqual(DNSZone.find_reverse_zone_for_ptrdname("1.0.0.10.in-addr.arpa"), broad)
+
     def test_returns_none_when_nothing_matches(self):
         self.assertIsNone(DNSZone.find_reverse_zone_for_ptrdname("1.2.3.4.in-addr.arpa"))
+
+    def test_returns_none_when_only_catalog_matches(self):
+        DNSZone.objects.create(
+            name="0.0.10.in-addr.arpa",
+            dns_view=self.view_a,
+            zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+        )
+        self.assertIsNone(DNSZone.find_reverse_zone_for_ptrdname("1.0.0.10.in-addr.arpa"))
 
     def test_dns_view_scoping(self):
         """When dns_view is provided, only zones in that view are considered."""

@@ -597,6 +597,9 @@ class DNSZone(DNSModel):
     @classmethod
     def find_reverse_zone_for_ptrdname(cls, ptrdname, dns_view=None):
         """Return the most-specific reverse DNSZone whose name matches a tail of `ptrdname`, otherwise None."""
+        permitted_zone_types = [
+            zone_type for zone_type in ZONE_TYPE_USER_RECORDS if zone_type_allows(zone_type, PTRRecord)
+        ]
         labels = ptrdname.split(".")
         for i in range(1, len(labels)):
             zone_name = ".".join(labels[i:])
@@ -604,7 +607,7 @@ class DNSZone(DNSModel):
             if zone_name in RESERVED_ROOTS:
                 break
 
-            zones = cls.objects.filter(name=zone_name)
+            zones = cls.objects.filter(name=zone_name, zone_type__in=permitted_zone_types)
             if dns_view is not None:
                 zones = zones.filter(dns_view=dns_view)
             zone = zones.first()
