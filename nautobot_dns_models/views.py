@@ -15,6 +15,11 @@ from nautobot.apps.ui import (
 )
 from nautobot.apps.views import get_obj_from_context
 from nautobot.core.ui import object_detail
+
+# Not re-exported through `nautobot.apps`, but resolving a bulk selection means honouring pk_list,
+# "select all" with its filters, saved views, and the user's object permissions together. This is the
+# helper the bulk edit view and its job both use to do that.
+from nautobot.core.views.utils import get_bulk_queryset_from_view
 from nautobot.ipam.tables import PrefixTable
 
 from nautobot_dns_models.api.serializers import (
@@ -32,6 +37,7 @@ from nautobot_dns_models.api.serializers import (
     SRVRecordSerializer,
     TXTRecordSerializer,
 )
+from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
@@ -72,6 +78,7 @@ from nautobot_dns_models.forms import (
     DNSZoneBulkEditForm,
     DNSZoneFilterForm,
     DNSZoneForm,
+    DNSZoneWithCatalogBulkEditForm,
     MXRecordBulkEditForm,
     MXRecordFilterForm,
     MXRecordForm,
@@ -562,6 +569,13 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
 
         return zone
 
+    def get_form_class(self, **kwargs):
+        """Offer the bulk PTR control only where every selected zone could accept it."""
+        if self.action == "bulk_update" and self._selection_includes_catalog_zone():
+            return DNSZoneWithCatalogBulkEditForm
+
+        return super().get_form_class(**kwargs)
+
     def _pending_enrollment(self, form):
         """Name the membership operation the submitted catalog implies, and the row it acts on."""
         membership = form.instance.catalog_membership.first() if form.instance.present_in_database else None
@@ -590,6 +604,20 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         }[action]
         form.add_error("catalog", message)
         raise ValidationError(message)
+
+    def _selection_includes_catalog_zone(self):
+        """Report whether the zones this bulk edit would reach include a catalog zone.
+
+        `perform_bulk_update` records the selection on the view before the form is built, on the pass
+        that renders it and the pass that validates it alike, so both see the same answer. Without it
+        the form was reached some other way and is offered whole.
+        """
+        key_params = getattr(self, "key_params", None)
+        if not key_params:
+            return False
+
+        selection = get_bulk_queryset_from_view(user=self.request.user, action="change", **key_params)
+        return selection.filter(zone_type=DNSZoneTypeChoices.TYPE_CATALOG).exists()
 
 
 class CatalogZoneMemberUIViewSet(views.NautobotUIViewSet):

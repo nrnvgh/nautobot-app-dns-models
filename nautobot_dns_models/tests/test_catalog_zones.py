@@ -12,6 +12,7 @@ from nautobot.core.testing.utils import extract_page_body
 from nautobot.users.models import ObjectPermission
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
+from nautobot_dns_models.forms import DNSZoneWithCatalogBulkEditForm
 from nautobot_dns_models.models import (
     APEX_RECORD_NAME,
     CATALOG_APEX_NS_SERVER,
@@ -850,3 +851,65 @@ class ZoneFormEnrollmentPermissionTest(TestCase):
             data["catalog"] = catalog.pk
 
         return data
+
+
+class ZoneBulkEditPTRControlTest(TestCase):
+    """Tests that a bulk edit withdraws the PTR control once a catalog zone is among the selection.
+
+    A catalog zone refuses `auto_create_ptr`, and the bulk edit job saves each object in turn outside
+    a transaction, so offering the control would write the primary zones and then fail on the first
+    catalog zone.
+    """
+
+    WITHDRAWN = "Catalog zones cannot enable this, and the selection includes one."
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("bulk-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.primary_zones = [create_zone(f"bulk-primary-{index}.example") for index in range(2)]
+        cls.bulk_edit_path = reverse("plugins:nautobot_dns_models:dnszone_bulk_edit")
+
+    def setUp(self):
+        """Grant the permissions a bulk edit needs before its selection is judged."""
+        super().setUp()
+        self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
+
+    def test_a_selection_of_primary_zones_offers_the_control(self):
+        """Every one of these zones can take the flag, so nothing is withheld."""
+        content = self._bulk_edit_form(pk_list=[zone.pk for zone in self.primary_zones])
+        self.assertIn('name="auto_create_ptr"', content)
+        self.assertNotIn(self.WITHDRAWN, content)
+
+    def test_a_selection_holding_a_catalog_zone_withdraws_the_control(self):
+        """One catalog zone is enough: the flag is refused per object, not per selection."""
+        content = self._bulk_edit_form(pk_list=[self.primary_zones[0].pk, self.catalog_zone.pk])
+        self.assertIn(self.WITHDRAWN, content)
+
+    def test_select_all_withdraws_the_control_when_it_includes_a_catalog_zone(self):
+        """Nothing narrows this one, so it resolves to the catalog zone without ever naming it."""
+        self.assertIn(self.WITHDRAWN, self._bulk_edit_form(edit_all=True))
+
+    def test_select_all_keeps_the_control_when_filtered_to_primary_zones(self):
+        """A filter narrows what "select all" resolves to, and the judgement must follow it."""
+        content = self._bulk_edit_form(edit_all=True, query=f"?zone_type={DNSZoneTypeChoices.TYPE_PRIMARY}")
+        self.assertIn('name="auto_create_ptr"', content)
+        self.assertNotIn(self.WITHDRAWN, content)
+
+    def test_a_withdrawn_control_discards_a_submitted_value(self):
+        """The job applies the view's cleaned data, so a value the form disowns never reaches a zone."""
+        form = DNSZoneWithCatalogBulkEditForm(
+            DNSZone,
+            {"pk": [str(zone.pk) for zone in self.primary_zones], "auto_create_ptr": "True"},
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertIsNone(form.cleaned_data["auto_create_ptr"])
+
+    def _bulk_edit_form(self, pk_list=None, edit_all=False, query=""):
+        """Return the bulk edit page rendered for a selection, named by pk or claimed wholesale."""
+        data = {"pk": [str(pk) for pk in pk_list or []]}
+        if edit_all:
+            data["_all"] = "on"
+
+        response = self.client.post(f"{self.bulk_edit_path}{query}", data)
+        self.assertHttpStatus(response, 200)
+        return extract_page_body(response.content.decode(response.charset))

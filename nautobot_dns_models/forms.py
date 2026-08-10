@@ -428,6 +428,22 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         ]
 
 
+class DNSZoneWithCatalogBulkEditForm(DNSZoneBulkEditForm):
+    """DNSZone bulk edit form for a selection that includes at least one catalog zone.
+
+    A catalog zone refuses `auto_create_ptr`, and the bulk edit job saves each object in turn outside
+    a transaction, so offering the control would write the primary zones and then fail on the first
+    catalog zone. `DNSZoneUIViewSet.get_form_class` chooses this form once it knows the selection.
+    """
+
+    def __init__(self, *args, **kwargs):
+        """Withdraw the control no catalog zone in the selection could accept."""
+        super().__init__(*args, **kwargs)
+
+        self.fields["auto_create_ptr"].disabled = True
+        self.fields["auto_create_ptr"].help_text = "Catalog zones cannot enable this, and the selection includes one."
+
+
 class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
     """Filter form to filter searches."""
 
