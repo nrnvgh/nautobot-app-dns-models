@@ -85,10 +85,8 @@ class DNSZoneSerializer(NautobotModelSerializer):
         fields = "__all__"
 
 
-class CatalogZoneMemberSerializer(NautobotModelSerializer):
+class CatalogZoneMemberSerializer(ValidatedModelSerializer):
     """CatalogZoneMember Serializer."""
-
-    url = serializers.HyperlinkedIdentityField(view_name="plugins-api:nautobot_dns_models-api:catalogzonemember-detail")
 
     class Meta:
         """Meta attributes."""

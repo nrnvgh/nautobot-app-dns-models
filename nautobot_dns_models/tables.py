@@ -6,37 +6,6 @@ from nautobot.tenancy.tables import TenantColumn
 
 from nautobot_dns_models import models
 
-DNSZONE_BUTTONS = """
-{% if not record.is_catalog_zone %}
-    {% with membership=record.catalog_membership.first %}
-        {% if not membership %}
-            {% if perms.nautobot_dns_models.add_catalogzonemember %}
-                <li>
-                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_add' %}?member_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
-                        <span class="mdi mdi-plus-thick me-4" aria-hidden="true"></span>Add to catalog
-                    </a>
-                </li>
-            {% endif %}
-        {% else %}
-            {% if perms.nautobot_dns_models.change_catalogzonemember %}
-                <li>
-                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_edit' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-warning">
-                        <span class="mdi mdi-pencil me-4" aria-hidden="true"></span>Edit catalog membership
-                    </a>
-                </li>
-            {% endif %}
-            {% if perms.nautobot_dns_models.delete_catalogzonemember %}
-                <li>
-                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_delete' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-danger">
-                        <span class="mdi mdi-minus-thick me-4" aria-hidden="true"></span>Remove from catalog
-                    </a>
-                </li>
-            {% endif %}
-        {% endif %}
-    {% endwith %}
-{% endif %}
-"""
-
 
 class DNSRecordTable(BaseTable):  # pylint: disable=nb-no-model-found
     """Base table for DNS records list view."""
@@ -172,7 +141,6 @@ class DNSZoneTable(BaseTable):
     actions = ButtonsColumn(
         models.DNSZone,
         buttons=("changelog", "edit", "delete"),
-        prepend_template=DNSZONE_BUTTONS,
     )
 
     class Meta(BaseTable.Meta):
@@ -219,52 +187,16 @@ class DNSZoneTable(BaseTable):
         return value.name
 
 
-class CatalogZoneMemberTable(BaseTable):
-    """Table for Catalog Zone Member list view."""
-
-    pk = ToggleColumn()
-    catalog_zone = tables.Column(linkify=True)
-    member_zone = tables.Column(linkify=True)
-    actions = ButtonsColumn(
-        models.CatalogZoneMember,
-        buttons=("changelog", "edit", "delete"),
-    )
-
-    class Meta(BaseTable.Meta):
-        """Meta attributes."""
-
-        model = models.CatalogZoneMember
-        fields = (
-            "pk",
-            "catalog_zone",
-            "member_zone",
-            "member_label",
-            "actions",
-        )
-
-        default_columns = (
-            "pk",
-            "catalog_zone",
-            "member_zone",
-            "member_label",
-            "actions",
-        )
-
-
 class CatalogMemberPTRTable(BaseTable):  # pylint: disable=nb-sub-class-name
     """Membership rows presented as the PTR records a catalog zone publishes for them.
 
-    `Meta.model` stays `CatalogZoneMember` so edit/delete act on the membership, while the columns
-    mirror the derived PTR (`<label>.zones` → member zone name). Named apart from
-    `CatalogZoneMemberTable`, which is the ordinary membership list.
+    The columns mirror the derived PTR (`<label>.zones` → member zone name). Read-only: the
+    membership is the through model behind `DNSZone.catalogs` rather than an object of its own, so
+    there is nothing to link a row to and enrollment is changed from the member zone.
     """
 
     name = tables.Column(accessor="member_label", empty_values=(), verbose_name="Name")
     ptrdname = tables.Column(accessor="member_zone", linkify=True, verbose_name="Ptrdname")
-    actions = ButtonsColumn(
-        models.CatalogZoneMember,
-        buttons=("changelog", "edit", "delete"),
-    )
 
     class Meta(BaseTable.Meta):
         """Meta attributes."""
@@ -273,12 +205,10 @@ class CatalogMemberPTRTable(BaseTable):  # pylint: disable=nb-sub-class-name
         fields = (
             "name",
             "ptrdname",
-            "actions",
         )
         default_columns = (
             "name",
             "ptrdname",
-            "actions",
         )
 
     def render_name(self, record):

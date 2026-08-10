@@ -8,8 +8,10 @@ from django.db import IntegrityError
 from django.db.models import ProtectedError
 from django.test import override_settings
 from django.urls import reverse
+from nautobot.apps.change_logging import web_request_context
 from nautobot.apps.testing import TestCase
 from nautobot.core.testing.utils import extract_page_body
+from nautobot.extras.models import ObjectChange
 from nautobot.users.models import ObjectPermission
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
@@ -332,6 +334,86 @@ class CatalogMemberLabelTest(TestCase):
         self.assertNotEqual(catalog_member_label(), catalog_member_label())
 
 
+class CatalogMembershipChangeLogTest(TestCase):
+    """Tests that enrollment is recorded against the zones it relates, not only the membership row."""
+
+    def test_enrolling_records_a_change_against_both_zones(self):
+        """Declaring the membership as an M2M through earns core's side-object change records."""
+        catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = create_zone("member.example")
+
+        with web_request_context(self.user):
+            CatalogZoneMember(catalog_zone=catalog_zone, member_zone=member_zone).validated_save()
+
+        self.assertTrue(ObjectChange.objects.filter(changed_object_id=member_zone.pk).exists())
+        self.assertTrue(ObjectChange.objects.filter(changed_object_id=catalog_zone.pk).exists())
+
+
+class CatalogMembershipManagerTest(TestCase):
+    """Tests the M2M manager shortcut, which reaches the through table without saving through it."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = create_zone("member.example")
+
+    def test_adding_enrolls_the_zone_and_publishes_it(self):
+        """A manager add is a real enrollment, so it earns a label and a member record."""
+        self.member_zone.catalogs.add(self.catalog_zone)
+
+        membership = self.member_zone.catalog_membership.get()
+        self.assertEqual(len(membership.member_label), 26)
+        self.assertTrue(
+            PTRRecord.objects.filter(zone=self.catalog_zone, name=f"{membership.member_label}.zones").exists()
+        )
+
+    def test_adding_from_the_catalog_end_enrolls_the_zone_too(self):
+        """The reverse accessor writes the same row, so it is held to the same rules."""
+        self.catalog_zone.members.add(self.member_zone)
+
+        self.assertEqual(self.member_zone.catalog_membership.get().catalog_zone, self.catalog_zone)
+
+    def test_adding_several_zones_gives_each_its_own_label(self):
+        """Bulk-created rows never reach save(), so the label has to come from the field default."""
+        second_zone = create_zone("second.example")
+
+        self.catalog_zone.members.add(self.member_zone, second_zone)
+
+        labels = set(CatalogZoneMember.objects.values_list("member_label", flat=True))
+        self.assertEqual(len(labels), 2)
+
+    def test_adding_refuses_to_nest_a_catalog_zone(self):
+        """The manager cannot be used to write a membership the model would have rejected.
+
+        Nothing is queried after the refusal: the rules are checked from `pre_add`, which Django
+        runs inside an atomic block it opened without a savepoint, so raising there leaves any
+        enclosing transaction unusable.
+        """
+        nested_catalog = create_zone("nested.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.members.add(nested_catalog)
+
+        self.assertIn("cannot be a member of another catalog zone", str(context.exception))
+
+    def test_adding_refuses_a_zone_from_another_view(self):
+        """View scoping holds on the manager path as it does on the membership."""
+        other_zone = create_zone("other.example", dns_view=DNSView.objects.create(name="Other"))
+
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.members.add(other_zone)
+
+        self.assertIn("same view", str(context.exception))
+
+    def test_removing_withdraws_the_member_record(self):
+        """Removal deletes the through row, which the post_delete receiver already answers for."""
+        self.catalog_zone.members.add(self.member_zone)
+
+        self.catalog_zone.members.remove(self.member_zone)
+
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+
+
 class CatalogZoneMemberTest(TestCase):
     """Tests for the membership model that enrolls a zone in a catalog zone."""
 
@@ -641,18 +723,6 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
         self.add_permissions("nautobot_dns_models.change_dnszone", "nautobot_dns_models.add_arecord")
         self.assertIn("Add Records", self._detail(self.member_zone))
 
-    def test_catalog_zone_offers_the_add_member_zone_button(self):
-        """A catalog's child object is the membership, so the header offers it where records would be."""
-        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
-        content = self._detail(self.catalog_zone)
-        self.assertIn("Add Member Zone", content)
-        self.assertIn(f"catalog_zone={self.catalog_zone.pk}", content)
-
-    def test_primary_zone_has_no_add_member_zone_button(self):
-        """Only a catalog zone publishes members, so only a catalog zone offers to add one."""
-        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
-        self.assertNotIn("Add Member Zone", self._detail(self.member_zone))
-
     def test_catalog_zone_lists_its_members(self):
         """The membership is the operator-facing object, so the catalog leads with it."""
         self.assertIn("MEMBER PTR RECORDS", self._panels(self.catalog_zone))
@@ -696,79 +766,6 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
 
 
 @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
-class ZoneListEnrollmentActionsTest(TestCase):
-    """Tests for the enrollment actions a zone list row offers for its own membership."""
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.catalog_zone = create_zone("list-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        cls.primary_zone = create_zone("list-primary.example")
-        cls.enrolled_zone = create_zone("list-enrolled.example")
-        cls.membership = CatalogZoneMember(catalog_zone=cls.catalog_zone, member_zone=cls.enrolled_zone)
-        cls.membership.validated_save()
-        cls.add_member_path = reverse("plugins:nautobot_dns_models:catalogzonemember_add")
-        cls.edit_member_path = reverse("plugins:nautobot_dns_models:catalogzonemember_edit", args=(cls.membership.pk,))
-        cls.delete_member_path = reverse(
-            "plugins:nautobot_dns_models:catalogzonemember_delete", args=(cls.membership.pk,)
-        )
-
-    def test_catalog_zone_offers_no_enrollment_action(self):
-        """Enrollment is offered from the member's row; the catalog's own page carries the other direction."""
-        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
-        self.assertNotIn(f"{self.add_member_path}?catalog_zone=", self._list())
-
-    def test_unenrolled_zone_offers_add_to_catalog(self):
-        """The other side of the same form: the zone is preselected and the catalog is what is chosen."""
-        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
-        content = self._list()
-        self.assertIn(f"{self.add_member_path}?member_zone={self.primary_zone.pk}", content)
-        self.assertIn("Add to catalog", content)
-
-    def test_add_to_catalog_requires_permission(self):
-        """The row action must not offer what the membership's own pages would refuse."""
-        self.assertNotIn(f"{self.add_member_path}?member_zone={self.primary_zone.pk}", self._list())
-
-    def test_enrolled_zone_offers_no_add_to_catalog(self):
-        """A zone belongs to one catalog, and the create form's picker excludes one already enrolled."""
-        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
-        self.assertNotIn(f"{self.add_member_path}?member_zone={self.enrolled_zone.pk}", self._list())
-
-    def test_enrolled_zone_offers_editing_its_membership(self):
-        """Retargeting the membership is how a zone moves between catalogs."""
-        self.add_permissions("nautobot_dns_models.change_catalogzonemember")
-        content = self._list()
-        self.assertIn(self.edit_member_path, content)
-        self.assertIn("Edit catalog membership", content)
-
-    def test_editing_the_membership_requires_change_permission(self):
-        """Enrollment is governed by the membership's permissions, not the zone's."""
-        self.assertNotIn(self.edit_member_path, self._list())
-
-    def test_enrolled_zone_offers_removal_from_its_catalog(self):
-        """Withdrawal is a deletion of the membership, so the row links to its confirmation page."""
-        self.add_permissions("nautobot_dns_models.delete_catalogzonemember")
-        content = self._list()
-        self.assertIn(self.delete_member_path, content)
-        self.assertIn("Remove from catalog", content)
-
-    def test_removal_requires_delete_permission(self):
-        """Withdrawing discards the member label, so change permission must not reach it."""
-        self.add_permissions("nautobot_dns_models.change_catalogzonemember")
-        self.assertNotIn(self.delete_member_path, self._list())
-
-    def _list(self):
-        """Return the rendered rows of the DNS zone list page.
-
-        The first response defers the table to an HTMX follow-up, so an ordinary GET returns the page
-        around an empty table and would let a row action test pass without ever rendering a row.
-        """
-        response = self.client.get(reverse("plugins:nautobot_dns_models:dnszone_list"), headers={"HX-Request": "true"})
-        self.assertHttpStatus(response, 200)
-        content = extract_page_body(response.content.decode(response.charset))
-        self.assertIn(self.catalog_zone.name, content)
-        return content
-
-
 class ZoneFormEnrollmentPermissionTest(TestCase):
     """Tests that the zone form's catalog field is governed by the membership's own permissions.
 

@@ -1,13 +1,10 @@
 """DNS Plugin Views."""
 
-from urllib.parse import urlencode
-
 from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction
 from django.shortcuts import redirect, render
-from django.urls import reverse
 from nautobot.apps import views
 from nautobot.apps.forms import restrict_form_fields
 from nautobot.apps.ui import (
@@ -32,7 +29,6 @@ from rest_framework.decorators import action
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
-    CatalogZoneMemberSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -48,7 +44,6 @@ from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
-    CatalogZoneMemberFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -67,9 +62,6 @@ from nautobot_dns_models.forms import (
     ARecordBulkEditForm,
     ARecordFilterForm,
     ARecordForm,
-    CatalogZoneMemberBulkEditForm,
-    CatalogZoneMemberFilterForm,
-    CatalogZoneMemberForm,
     CNAMERecordBulkEditForm,
     CNAMERecordFilterForm,
     CNAMERecordForm,
@@ -122,7 +114,6 @@ from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
     CatalogMemberPTRTable,
-    CatalogZoneMemberTable,
     CNAMERecordTable,
     DNSRegistrarTable,
     DNSRegistrationTable,
@@ -203,6 +194,10 @@ class CatalogMemberPTRTablePanel(ObjectsTablePanel):
         """Apply catalog-member PTR table defaults on the zone detail page."""
         kwargs.setdefault("table_filter", "catalog_zone")
         kwargs.setdefault("table_title", "Member PTR Records")
+        # The membership is a through model with no views of its own, so the header badge has
+        # nowhere to lead and the panel has no Add control to offer.
+        kwargs.setdefault("enable_related_link", False)
+        kwargs.setdefault("add_button_route", None)
         super().__init__(**kwargs)
 
     def should_render(self, context):
@@ -258,28 +253,6 @@ class AddRecordsDropdownButton(object_detail.DropdownButton):
             return False
 
         return any(child.should_render(context) for child in self.children)
-
-
-class AddMemberZoneButton(object_detail.Button):
-    """An Add Member Zone entry, offered only on the zones that can publish members.
-
-    The header counterpart of the Add Records menu: each zone type gets a button for the child
-    object it actually has.
-    """
-
-    def get_link(self, context):
-        """Pre-select the catalog and come back here, matching the members panel's own Add link."""
-        zone = get_obj_from_context(context)
-        query = urlencode({"catalog_zone": zone.pk, "return_url": zone.get_absolute_url()})
-        return f"{reverse(self.link_name)}?{query}"
-
-    def should_render(self, context):
-        """Render only for catalog zones."""
-        if not super().should_render(context):
-            return False
-
-        zone = get_obj_from_context(context)
-        return zone is not None and zone.is_catalog_zone
 
 
 class DNSViewUIViewSet(views.NautobotUIViewSet):
@@ -542,15 +515,6 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                     ),
                 ),
             ),
-            AddMemberZoneButton(
-                weight=200,
-                color=ButtonColorChoices.BLUE,
-                label="Add Member Zone",
-                icon="mdi-plus-thick",
-                link_name="plugins:nautobot_dns_models:catalogzonemember_add",
-                link_includes_pk=False,
-                required_permissions=["nautobot_dns_models.add_catalogzonemember"],
-            ),
         ],
     )
 
@@ -726,29 +690,6 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
 
         selection = get_bulk_queryset_from_view(user=self.request.user, action="change", **key_params)
         return selection.filter(zone_type=DNSZoneTypeChoices.TYPE_CATALOG).exists()
-
-
-class CatalogZoneMemberUIViewSet(views.NautobotUIViewSet):
-    """CatalogZoneMember UI ViewSet."""
-
-    form_class = CatalogZoneMemberForm
-    bulk_update_form_class = CatalogZoneMemberBulkEditForm
-    filterset_class = CatalogZoneMemberFilterSet
-    filterset_form_class = CatalogZoneMemberFilterForm
-    serializer_class = CatalogZoneMemberSerializer
-    lookup_field = "pk"
-    queryset = CatalogZoneMember.objects.all()
-    table_class = CatalogZoneMemberTable
-
-    object_detail_content = ObjectDetailContent(
-        panels=[
-            ObjectFieldsPanel(
-                weight=100,
-                section=SectionChoices.LEFT_HALF,
-                fields="__all__",
-            ),
-        ],
-    )
 
 
 class NSRecordUIViewSet(views.NautobotUIViewSet):

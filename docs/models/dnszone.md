@@ -65,7 +65,7 @@ The TTL on all of these records is set to 0. Per [RFC 9432 §4.1](https://datatr
 
 Zones are enrolled through [Catalog Zone Member](catalogzonemember.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one.
 
-A zone's edit form offers a Catalog Zone field as a shortcut, and the zone list offers an Add to Catalog action for a selection of zones, but the enrollment either writes is a Catalog Zone Member and is governed by [that model's permissions](catalogzonemember.md#permissions); `change_dnszone` alone does not authorize it.
+Enrollment is set from the member zone: its add or edit form offers a Catalog Zone field, and the zone list offers an Add to Catalog action for a selection of zones. What it writes is a Catalog Zone Member, governed by [that model's permissions](catalogzonemember.md#permissions); `change_dnszone` alone does not authorize it.
 
 !!! warning "Grant zone editors `view` permission on catalog zones"
 

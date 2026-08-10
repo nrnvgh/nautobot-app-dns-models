@@ -489,6 +489,14 @@ class DNSZone(DNSModel):
         help_text="Automatically create PTR records when A/AAAA records are created in this zone.",
         verbose_name="Auto-create PTR Records",
     )
+    catalogs = models.ManyToManyField(
+        to="self",
+        through="CatalogZoneMember",
+        through_fields=("member_zone", "catalog_zone"),
+        symmetrical=False,
+        related_name="members",
+        blank=True,
+    )
 
     objects = BaseManager.from_queryset(DNSZoneQuerySet)()
 
@@ -697,20 +705,13 @@ class DNSViewPrefixAssignment(BaseModel):
         return f"{self.dns_view}: {self.prefix}"
 
 
-@extras_features(
-    "custom_fields",
-    "custom_links",
-    "custom_validators",
-    "export_templates",
-    "graphql",
-    "relationships",
-    "webhooks",
-)
-class CatalogZoneMember(PrimaryModel):
-    """Membership of a DNS zone in an RFC 9432 catalog zone.
+@extras_features("graphql")
+class CatalogZoneMember(BaseModel):
+    """Through model for the `DNSZone.catalogs` relation, enrolling a zone in an RFC 9432 catalog.
 
-    The operator-facing object for enrolling a zone. The PTR record that publishes the membership
-    to consumers is derived from this row rather than managed directly.
+    Not an object in its own right: enrollment is a property of the zone, and the change records
+    for it are written against the two zones by core's M2M side-object logging. The PTR record that
+    publishes the membership to consumers is derived from this row rather than managed directly.
     """
 
     catalog_zone = ForeignKeyWithAutoRelatedName(
@@ -730,6 +731,9 @@ class CatalogZoneMember(PrimaryModel):
     member_label = models.CharField(
         max_length=63,
         blank=True,
+        # A default as well as the fill-in in `save()`: rows written by `DNSZone.catalogs.add()` are
+        # bulk-created, so they never reach `save()`, and two blank labels in one catalog collide.
+        default=catalog_member_label,
         help_text=(
             "Opaque DNS label identifying this member within the catalog zone. "
             "Generated automatically if left blank, and fixed thereafter."

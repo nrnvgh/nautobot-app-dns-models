@@ -1,6 +1,6 @@
 # Catalog Zone Member Model
 
-The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) catalog zone. It is the operator-facing object for membership; the PTR record that publishes the membership to consumers is derived from it rather than managed directly.
+The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) catalog zone. It is the model behind the zone's catalog membership rather than an object in its own right: it has no pages of its own, and enrollment is set from the member zone. The PTR record that publishes the membership to consumers is derived from it rather than managed directly.
 
 - `catalog_zone` (DNSZone): The catalog zone publishing this membership. Must have a `zone_type` of `Catalog`.
 - `member_zone` (DNSZone): The zone published by the catalog. Must be in the same DNS view as the catalog zone, and cannot itself be a catalog zone.
@@ -8,7 +8,7 @@ The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatr
 
 A zone belongs to at most one catalog, and each label is unique within a catalog.
 
-This model is where enrollments are created, moved, and removed, in the UI and through its REST API endpoint alike. Two shortcuts write the same rows: a zone's edit form offers a Catalog Zone field, and the zone list offers an Add to Catalog action for a selection of zones.
+In the UI, enrollments are created, moved, and removed from the zone: a zone's add or edit form offers a Catalog Zone field, and the zone list offers an Add to Catalog action for a selection of zones. Both write the rows described here, and both are recorded in the change log of the two zones the enrollment relates. The model also has a REST API endpoint of its own, which writes the same rows directly.
 
 The Add to Catalog action confirms the selection before writing anything. Zones with no catalog are enrolled and zones already in another catalog are moved, all in one transaction, so a zone the batch cannot write takes the rest back with it. Since a catalog only holds zones from its own view, the picker offers just the catalogs in the view the selection shares. A selection no catalog could take, because it holds a catalog zone or spans several views, is refused on the confirmation before a catalog is asked for.
 
@@ -16,7 +16,7 @@ The Add to Catalog action confirms the selection before writing anything. Zones 
 
 [RFC 9432 §4.1](https://datatracker.ietf.org/doc/html/rfc9432#section-4.1) defines an opaque label for each catalog member. It has no meaning beyond tagging the member, and it must be unique within the catalog.
 
-Nautobot generates a random 26-character label automatically when one is not supplied. The UI never offers the field. The REST API and CSV import may supply a label explicitly; it must not contain a dot and must be no more than 63 octets in wire format.
+Nautobot generates a random 26-character label automatically when one is not supplied. No form offers the field. The REST API and CSV import may supply a label explicitly; it must not contain a dot and must be no more than 63 octets in wire format.
 
 Once assigned, the label cannot be changed through Nautobot. Catalog consumers use it as the member's identity: if the label changes, they discard the member's existing state and configure the zone again, per [RFC 9432 §5.4](https://datatracker.ietf.org/doc/html/rfc9432#section-5.4) and [§5.6](https://datatracker.ietf.org/doc/html/rfc9432#section-5.6).
 

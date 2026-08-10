@@ -404,42 +404,6 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_CATALOG]}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_PRIMARY]}, self.queryset).qs.count(), 3)
 
-    def test_same_dns_view_as(self):
-        """Restrict to zones that share another zone's DNS view, for the membership form picker."""
-        other_view = DNSView.objects.create(name="Other")
-        reference = DNSZone.objects.create(
-            name="Reference Zone",
-            filename="reference.conf",
-            dns_view=other_view,
-            soa_mname="ns1.reference.example",
-            soa_rname="admin@reference.example",
-        )
-        peer = DNSZone.objects.create(
-            name="Peer Zone",
-            filename="peer.conf",
-            dns_view=other_view,
-            soa_mname="ns1.peer.example",
-            soa_rname="admin@peer.example",
-        )
-
-        qs = self.filterset({"same_dns_view_as": reference.pk}, self.queryset).qs
-        self.assertCountEqual(list(qs), [peer, reference])
-
-    def test_available_for_catalog_membership(self):
-        """Hide enrolled member zones on create; keep the current member selectable when editing."""
-        catalog = DNSZone.objects.get(name="Catalog One")
-        enrolled = DNSZone.objects.get(name="Test One")
-        free = DNSZone.objects.get(name="Test Two")
-        membership = CatalogZoneMember.objects.create(catalog_zone=catalog, member_zone=enrolled)
-
-        create_qs = self.filterset({"available_for_catalog_membership": "true"}, self.queryset).qs
-        self.assertNotIn(enrolled, create_qs)
-        self.assertIn(free, create_qs)
-
-        edit_qs = self.filterset({"available_for_catalog_membership": str(membership.pk)}, self.queryset).qs
-        self.assertIn(enrolled, edit_qs)
-        self.assertIn(free, edit_qs)
-
     def test_catalog(self):
         """Match member zones by the catalog they are enrolled in, named or by ID."""
         catalog = DNSZone.objects.get(name="Catalog One")

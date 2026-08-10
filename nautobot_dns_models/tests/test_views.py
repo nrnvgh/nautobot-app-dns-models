@@ -211,43 +211,6 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         self.assertNotIn(str(catalog), body)
 
 
-class CatalogZoneMemberViewTest(ViewTestCases.PrimaryObjectViewTestCase):
-    """Test the CatalogZoneMember views."""
-
-    model = CatalogZoneMember
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.catalog_zones = [
-            DNSZone.objects.create(name=f"catalog-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-            for index in range(2)
-        ]
-        # One per membership under test, since a zone may belong to only one catalog without `coo`.
-        member_zones = [DNSZone.objects.create(name=f"member-{index}.example") for index in range(5)]
-
-        for member_zone in member_zones[:3]:
-            CatalogZoneMember.objects.create(catalog_zone=cls.catalog_zones[0], member_zone=member_zone)
-
-        cls.form_data = {
-            "catalog_zone": cls.catalog_zones[1].pk,
-            "member_zone": member_zones[3].pk,
-        }
-
-        # The label is not on the form, so update payloads carry only the fields an operator can change.
-        cls.update_data = {
-            "catalog_zone": cls.catalog_zones[1].pk,
-            "member_zone": member_zones[3].pk,
-        }
-
-        cls.csv_data = (
-            "catalog_zone,member_zone",
-            f"{cls.catalog_zones[1].pk},{member_zones[4].pk}",
-        )
-
-        # The catalog is the only field a membership lets an operator change in bulk.
-        cls.bulk_edit_data = {"catalog_zone": cls.catalog_zones[1].pk}
-
-
 class NSRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
     """Test the NSRecord views."""
 
