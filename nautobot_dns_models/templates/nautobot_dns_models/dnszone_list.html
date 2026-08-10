@@ -1,15 +1,21 @@
 {% extends 'generic/object_list.html' %}
 
 {% comment %}
-Enrollment writes a Catalog Zone Member, so the button is offered on that model's permission rather
-than the zone's. The link sits inside `object_list_form`, where core's `initializeFormActionClick`
-submits the selection to it.
+Enrollment and withdrawal write a Catalog Zone Member, so each button is offered on that model's
+permission rather than the zone's. The links sit inside `object_list_form`, where core's
+`initializeFormActionClick` submits the selection to them.
 {% endcomment %}
 {% block bulk_buttons %}
     {% if perms.nautobot_dns_models.add_catalogzonemember %}
         <a href="{% url 'plugins:nautobot_dns_models:dnszone_bulk_assign_catalog' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
            class="btn btn-sm btn-primary formaction">
             <span class="mdi mdi-plus-thick" aria-hidden="true"></span> Add to Catalog
+        </a>
+    {% endif %}
+    {% if perms.nautobot_dns_models.delete_catalogzonemember %}
+        <a href="{% url 'plugins:nautobot_dns_models:dnszone_bulk_withdraw_catalog' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
+           class="btn btn-sm btn-danger formaction">
+            <span class="mdi mdi-minus-thick" aria-hidden="true"></span> Remove from Catalog
         </a>
     {% endif %}
 {% endblock %}

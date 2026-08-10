@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+
+{% block title %}Remove {{ obj_type_plural }} from their catalog zones{% endblock %}
+
+{% block content %}
+    <form action="{{ request.get_full_path }}" method="post" class="h-100 vstack">
+        {% csrf_token %}
+        {% comment %}
+        The form asks nothing beyond the confirmation itself, so its one field is carried hidden and
+        the page's own return_url is used rather than the one `ReturnURLForm` would contribute.
+        {% endcomment %}
+        {{ form.confirm }}
+        <input type="hidden" name="return_url" value="{{ return_url }}" />
+        {% comment %}
+        The selection is resolved from these on the applying pass too, so it is carried the way it
+        arrived rather than restated as a list of zones.
+        {% endcomment %}
+        {% if select_all %}
+            <input type="hidden" name="_all" value="true" />
+        {% else %}
+            {% for pk in pk_list %}
+                <input type="hidden" name="pk" value="{{ pk }}" />
+            {% endfor %}
+        {% endif %}
+        <div class="row align-content-start flex-fill">
+            <p class="mb-16">
+                {{ selected_count }} {{ obj_type_plural }} selected, {{ enrolled_count }} of them enrolled in a catalog zone.
+            </p>
+            {% if table %}
+                <div class="col-lg-7">
+                    <div class="card">
+                        <div class="table-responsive">
+                            {% include 'inc/table.html' %}
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+            <div class="{% if table %}col-lg-5{% else %}col-lg-6{% endif %}">
+                {% if form.non_field_errors %}
+                    <div class="card border-danger">
+                        <div class="card-header bg-danger-subtle border-danger text-body">
+                            <strong>Errors</strong>
+                        </div>
+                        <div class="card-body">
+                            {{ form.non_field_errors }}
+                        </div>
+                    </div>
+                {% endif %}
+                <div class="card border-warning">
+                    <div class="card-header bg-warning-subtle border-warning text-body">
+                        <strong>Confirm removal</strong>
+                    </div>
+                    <div class="card-body">
+                        <p>
+                            A zone removed from a catalog is no longer published to the consumers of that catalog,
+                            which stop serving it.
+                        </p>
+                        <p class="mb-0">
+                            Removal discards the zone's member label. Enrolling it again mints a new one, which
+                            catalog consumers read as an unrelated zone.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="nb-form-sticky-footer">
+            <button type="submit" name="_apply" class="btn btn-danger" {% if not enrolled_count %}disabled{% endif %}>
+                <span aria-hidden="true" class="mdi mdi-minus-thick me-4"></span><!--
+                -->Remove
+            </button>
+            <a href="{{ return_url }}" class="btn btn-secondary">
+                <span aria-hidden="true" class="mdi mdi-close me-4"></span><!--
+                -->Cancel
+            </a>
+        </div>
+    </form>
+{% endblock %}

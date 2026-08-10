@@ -8,9 +8,13 @@ The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatr
 
 A zone belongs to at most one catalog, and each label is unique within a catalog.
 
-In the UI, enrollments are created, moved, and removed from the zone: a zone's add or edit form offers a Catalog Zone field, and the zone list offers an Add to Catalog action for a selection of zones. Both write the rows described here, and both are recorded in the change log of the two zones the enrollment relates. The model also has a REST API endpoint of its own, which writes the same rows directly.
+In the UI, enrollments are created, moved, and removed from the zone: a zone's add or edit form offers a Catalog Zone field, and the zone list offers Add to Catalog and Remove from Catalog actions for a selection of zones. All of them write the rows described here, and all of them are recorded in the change log of the two zones the enrollment relates. The model also has a REST API endpoint of its own, which writes the same rows directly.
 
-The Add to Catalog action confirms the selection before writing anything. Zones with no catalog are enrolled and zones already in another catalog are moved, all in one transaction, so a zone the batch cannot write takes the rest back with it. Since a catalog only holds zones from its own view, the picker offers just the catalogs in the view the selection shares. A selection no catalog could take, because it holds a catalog zone or spans several views, is refused on the confirmation before a catalog is asked for.
+Both bulk actions confirm the selection before writing anything, and write it in one transaction, so a zone the batch cannot write takes the rest back with it.
+
+Add to Catalog enrolls the zones with no catalog and moves those already in another. Since a catalog only holds zones from its own view, the picker offers just the catalogs in the view the selection shares. A selection no catalog could take, because it holds a catalog zone or spans several views, is refused on the confirmation before a catalog is asked for.
+
+Remove from Catalog withdraws each selected zone from whichever catalog holds it, so a selection may span several catalogs and several views. Selected zones that are not enrolled are counted out and left alone rather than refused; a selection holding none at all is offered nothing to confirm.
 
 ## Member label
 
@@ -32,6 +36,8 @@ Those PTR records are system-managed. They cannot be created, edited, or deleted
 
 Adding a zone to a catalog requires `add_catalogzonemember`, moving it to another catalog requires `change_catalogzonemember`, and removing it requires `delete_catalogzonemember`.
 
-When enrollment is changed from a zone's add or edit form, or from the zone list's Add to Catalog action, those permissions are required in addition to the permission needed to create or change the zone itself. `change_dnszone` alone does not authorize enrollment.
+When enrollment is changed from a zone's add or edit form, or from either of the zone list's bulk actions, those permissions are required in addition to the permission needed to create or change the zone itself. `change_dnszone` alone does not authorize enrollment.
 
-The Add to Catalog action is offered to anyone holding `add_catalogzonemember`, since enrolling is what it is for. A selection that also moves zones out of another catalog needs `change_catalogzonemember` as well, and is refused in full without it.
+Add to Catalog is offered to anyone holding `add_catalogzonemember`, since enrolling is what it is for. A selection that also moves zones out of another catalog needs `change_catalogzonemember` as well, and is refused in full without it. Remove from Catalog is offered on `delete_catalogzonemember` alone.
+
+Object-level constraints are honored by both. A permission narrowed to one catalog reaches only the memberships of that catalog, and a batch reaching past it is refused in full rather than in part.

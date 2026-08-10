@@ -6,7 +6,7 @@ from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction
 from django.shortcuts import redirect, render
 from nautobot.apps import views
-from nautobot.apps.forms import restrict_form_fields
+from nautobot.apps.forms import ConfirmationForm, restrict_form_fields
 from nautobot.apps.ui import (
     ButtonColorChoices,
     ObjectDetailContent,
@@ -614,6 +614,67 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             },
         )
 
+    @action(
+        detail=False,
+        methods=["POST"],
+        url_path="withdraw-catalog",
+        url_name="bulk_withdraw_catalog",
+        custom_view_base_action="change",
+        custom_view_additional_permissions=["nautobot_dns_models.delete_catalogzonemember"],
+    )
+    def bulk_withdraw_catalog(self, request):
+        """Withdraw a selection of zones from the catalogs holding them, confirming the selection first.
+
+        The twin of `bulk_assign_catalog`, and its own action for the same reason: the memberships it
+        deletes are governed apart from the zones that carry them. Selecting zones with no catalog is
+        not a fault, since a selection is rarely all of one kind; they are counted out and left alone.
+        """
+        model = self.get_queryset().model
+        select_all = bool(request.POST.get("_all"))
+        pk_list = list(request.POST.getlist("pk"))
+        zones = get_bulk_queryset_from_view(
+            user=request.user,
+            action="change",
+            content_type=ContentType.objects.get_for_model(model),
+            edit_all=select_all,
+            filter_query_params=convert_querydict_to_dict(request.GET),
+            pk_list=pk_list,
+            saved_view_id=request.GET.get("saved_view", ""),
+        )
+
+        if not zones.exists():
+            messages.warning(request, "No zones were selected.")
+            return redirect(self.get_return_url(request))
+
+        memberships = CatalogZoneMember.objects.filter(member_zone__in=zones)
+        applying = "_apply" in request.POST
+        form = ConfirmationForm(request.POST if applying else None)
+
+        if applying and form.is_valid():
+            try:
+                with transaction.atomic():
+                    withdrawn = self._withdraw_from_catalogs(memberships)
+            except ObjectDoesNotExist:
+                form.add_error(None, "Withdrawal failed due to object-level permissions violation.")
+            else:
+                messages.success(request, f"Withdrew {withdrawn} zones from their catalogs.")
+                return redirect(self.get_return_url(request))
+
+        return render(
+            request,
+            "nautobot_dns_models/dnszone_bulk_withdraw_catalog.html",
+            {
+                "enrolled_count": memberships.count(),
+                "form": form,
+                "obj_type_plural": model._meta.verbose_name_plural,
+                "pk_list": pk_list,
+                "return_url": self.get_return_url(request),
+                "select_all": select_all,
+                "selected_count": zones.count(),
+                "table": None if select_all else self.get_table_class()(zones, orderable=False),
+            },
+        )
+
     def _enroll_in_catalog(self, zones, catalog_zone):
         """Write the memberships the selection implies, and answer for them where they differ.
 
@@ -647,6 +708,25 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 raise ObjectDoesNotExist
 
         return len(written["add"]), len(written["change"])
+
+    def _withdraw_from_catalogs(self, memberships):
+        """Delete the memberships a selection holds, refusing the batch if one of them is out of reach.
+
+        Enrollment can only test its rows once they exist, but these are already stored, so the
+        constraints are evaluated before anything is written. Deleting through the queryset still
+        reaches the `post_delete` receiver that withdraws each published PTR: the receiver rules out
+        Django's fast-delete path.
+        """
+        pks = list(memberships.values_list("pk", flat=True))
+        if not pks:
+            return 0
+
+        permitted = CatalogZoneMember.objects.restrict(self.request.user, "delete").filter(pk__in=pks)
+        if permitted.count() != len(pks):
+            raise ObjectDoesNotExist
+
+        memberships.delete()
+        return len(pks)
 
     def _pending_enrollment(self, form):
         """Name the membership operation the submitted catalog implies, and the row it acts on."""
