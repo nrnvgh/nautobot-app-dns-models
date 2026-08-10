@@ -2,9 +2,14 @@
 
 from urllib.parse import urlencode
 
-from django.core.exceptions import ValidationError
+from django.contrib import messages
+from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.db import transaction
+from django.shortcuts import redirect, render
 from django.urls import reverse
 from nautobot.apps import views
+from nautobot.apps.forms import restrict_form_fields
 from nautobot.apps.ui import (
     ButtonColorChoices,
     ObjectDetailContent,
@@ -15,12 +20,14 @@ from nautobot.apps.ui import (
 )
 from nautobot.apps.views import get_obj_from_context
 from nautobot.core.ui import object_detail
+from nautobot.core.utils.requests import convert_querydict_to_dict
 
 # Not re-exported through `nautobot.apps`, but resolving a bulk selection means honouring pk_list,
 # "select all" with its filters, saved views, and the user's object permissions together. This is the
 # helper the bulk edit view and its job both use to do that.
 from nautobot.core.views.utils import get_bulk_queryset_from_view
 from nautobot.ipam.tables import PrefixTable
+from rest_framework.decorators import action
 
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
@@ -75,6 +82,7 @@ from nautobot_dns_models.forms import (
     DNSViewBulkEditForm,
     DNSViewFilterForm,
     DNSViewForm,
+    DNSZoneBulkAssignCatalogForm,
     DNSZoneBulkEditForm,
     DNSZoneFilterForm,
     DNSZoneForm,
@@ -554,17 +562,17 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         new membership can only be tested once it exists; the enclosing transaction takes the zone
         back out with it.
         """
-        action, membership = self._pending_enrollment(form)
-        if action is not None:
-            self._require_membership_permission(form, action, membership)
+        operation, membership = self._pending_enrollment(form)
+        if operation is not None:
+            self._require_membership_permission(form, operation, membership)
 
         zone = super().form_save(form, **kwargs)
 
-        if action in ("add", "change"):
+        if operation in ("add", "change"):
             # Read the row itself: this viewset prefetches `catalog_membership`, so the zone's own
             # manager would answer from the cache the request was rendered with.
             self._require_membership_permission(
-                form, action, CatalogZoneMember.objects.filter(member_zone=zone).first()
+                form, operation, CatalogZoneMember.objects.filter(member_zone=zone).first()
             )
 
         return zone
@@ -575,6 +583,106 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             return DNSZoneWithCatalogBulkEditForm
 
         return super().get_form_class(**kwargs)
+
+    @action(
+        detail=False,
+        methods=["POST"],
+        url_path="assign-catalog",
+        url_name="bulk_assign_catalog",
+        custom_view_base_action="change",
+        custom_view_additional_permissions=["nautobot_dns_models.add_catalogzonemember"],
+    )
+    def bulk_assign_catalog(self, request):
+        """Enroll a selection of zones in one catalog, confirming the selection first.
+
+        Enrollment writes `CatalogZoneMember` rows, which the bulk edit job cannot reach: it applies
+        form fields to the zones themselves, and its one path to a related model, `_save_m2m_fields`,
+        checks no permission on what it writes. So this is an action of its own in the shape of core's
+        `BulkComponentCreateView`: the first POST arrives from the list and renders the form, the
+        second carries `_apply` and writes the batch inside one transaction.
+        """
+        model = self.get_queryset().model
+        select_all = bool(request.POST.get("_all"))
+        pk_list = list(request.POST.getlist("pk"))
+        zones = get_bulk_queryset_from_view(
+            user=request.user,
+            action="change",
+            content_type=ContentType.objects.get_for_model(model),
+            edit_all=select_all,
+            filter_query_params=convert_querydict_to_dict(request.GET),
+            pk_list=pk_list,
+            saved_view_id=request.GET.get("saved_view", ""),
+        )
+
+        if not zones.exists():
+            messages.warning(request, "No zones were selected.")
+            return redirect(self.get_return_url(request))
+
+        applying = "_apply" in request.POST
+        form = DNSZoneBulkAssignCatalogForm(zones, request.POST if applying else None)
+        restrict_form_fields(form, request.user)
+
+        if applying and form.is_valid():
+            try:
+                with transaction.atomic():
+                    enrolled, moved = self._enroll_in_catalog(zones, form.cleaned_data["catalog"])
+            except ObjectDoesNotExist:
+                form.add_error(None, "Enrollment failed due to object-level permissions violation.")
+            except ValidationError as error:
+                form.add_error(None, error)
+            else:
+                messages.success(request, f"Enrolled {enrolled} and moved {moved} zones.")
+                return redirect(self.get_return_url(request))
+
+        return render(
+            request,
+            "nautobot_dns_models/dnszone_bulk_assign_catalog.html",
+            {
+                "form": form,
+                "obj_type_plural": model._meta.verbose_name_plural,
+                "pk_list": pk_list,
+                "return_url": self.get_return_url(request),
+                "select_all": select_all,
+                # Listing every zone behind a "select all" would be a page of its own, so that case
+                # reports the count instead, as the bulk delete confirmation does.
+                "selected_count": zones.count(),
+                "table": None if select_all else self.get_table_class()(zones, orderable=False),
+            },
+        )
+
+    def _enroll_in_catalog(self, zones, catalog_zone):
+        """Write the memberships the selection implies, and answer for them where they differ.
+
+        A zone with no membership is being added and one enrolled elsewhere is being moved, which are
+        separately granted. Object-level constraints are evaluated against stored rows, so each can
+        only be tested once it exists; the caller's transaction takes them all back out together.
+        """
+        written = {"add": [], "change": []}
+        memberships = {
+            membership.member_zone_id: membership
+            for membership in CatalogZoneMember.objects.filter(member_zone__in=zones)
+        }
+
+        for zone in zones:
+            membership = memberships.get(zone.pk)
+            if membership is None:
+                membership = CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone)
+                operation = "add"
+            elif membership.catalog_zone_id != catalog_zone.pk:
+                membership.catalog_zone = catalog_zone
+                operation = "change"
+            else:
+                continue
+
+            membership.validated_save()
+            written[operation].append(membership.pk)
+
+        for operation, pks in written.items():
+            permitted = CatalogZoneMember.objects.restrict(self.request.user, operation).filter(pk__in=pks)
+            if permitted.count() != len(pks):
+                raise ObjectDoesNotExist
+
+        return len(written["add"]), len(written["change"])
 
     def _pending_enrollment(self, form):
         """Name the membership operation the submitted catalog implies, and the row it acts on."""
@@ -592,16 +700,16 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
 
         return None, None
 
-    def _require_membership_permission(self, form, action, membership):
+    def _require_membership_permission(self, form, operation, membership):
         """Stop the save, reporting on the field where the catalog was chosen."""
-        if self.request.user.has_perm(f"nautobot_dns_models.{action}_catalogzonemember", membership):
+        if self.request.user.has_perm(f"nautobot_dns_models.{operation}_catalogzonemember", membership):
             return
 
         message = {
             "add": "You do not have permission to add a zone to a catalog.",
             "change": "You do not have permission to move a zone to another catalog.",
             "delete": "You do not have permission to remove a zone from its catalog.",
-        }[action]
+        }[operation]
         form.add_error("catalog", message)
         raise ValidationError(message)
 

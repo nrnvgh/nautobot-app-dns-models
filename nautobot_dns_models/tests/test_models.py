@@ -3,7 +3,6 @@
 
 from constance.test import override_config
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
 from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
@@ -1055,58 +1054,3 @@ class DNSModelEnabledFieldTest(TestCase):
         record.refresh_from_db()
         self.assertTrue(record.enabled)
 
-
-class DNSZoneTypeTest(TestCase):
-    """Tests for the DNSZone.zone_type field and the invariants it carries."""
-
-    def test_default_zone_type_is_primary(self):
-        """A zone created without an explicit type is a primary zone."""
-        zone = DNSZone.objects.create(name="default-type.example")
-        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_PRIMARY)
-
-    def test_catalog_zone_can_be_created(self):
-        """A catalog zone can be created and validated."""
-        zone = self._make_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        zone.validated_save()
-        zone.refresh_from_db()
-        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_CATALOG)
-
-    def test_rejects_zone_type_change(self):
-        """Changing zone_type on an existing zone is rejected."""
-        zone = self._make_zone("immutable.example")
-        zone.validated_save()
-        zone.zone_type = DNSZoneTypeChoices.TYPE_CATALOG
-        with self.assertRaises(ValidationError) as context:
-            zone.full_clean()
-        self.assertIn("cannot be changed after creation", str(context.exception.message_dict["zone_type"]))
-
-    def test_primary_zone_allows_auto_create_ptr(self):
-        """auto_create_ptr remains available on primary zones."""
-        zone = self._make_zone("ptr-ok.example", auto_create_ptr=True)
-        zone.validated_save()
-        self.assertTrue(zone.auto_create_ptr)
-
-    def test_catalog_zone_rejects_auto_create_ptr(self):
-        """Validation rejects auto_create_ptr on a catalog zone rather than silently ignoring it."""
-        zone = self._make_zone("catalog-ptr.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG, auto_create_ptr=True)
-        with self.assertRaises(ValidationError) as context:
-            zone.full_clean()
-        self.assertIn("cannot enable automatic PTR creation", str(context.exception.message_dict["auto_create_ptr"]))
-
-    def test_catalog_zone_auto_create_ptr_blocked_at_database(self):
-        """The check constraint blocks auto_create_ptr on catalog zones even when validation is skipped."""
-        zone = DNSZone.objects.create(name="catalog-db.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        with self.assertRaises(IntegrityError):
-            DNSZone.objects.filter(pk=zone.pk).update(auto_create_ptr=True)
-
-    @staticmethod
-    def _make_zone(name, **kwargs):
-        """Build an unsaved DNSZone populated with every field full_clean() requires."""
-        defaults = {
-            "name": name,
-            "filename": f"{name}.zone",
-            "soa_mname": f"ns1.{name}.",
-            "soa_rname": f"admin@{name}",
-        }
-        defaults.update(kwargs)
-        return DNSZone(**defaults)

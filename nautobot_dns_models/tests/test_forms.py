@@ -38,7 +38,30 @@ class DNSViewFormTestCase(TestCase):
         self.assertIn("This field is required.", form.errors["name"])
 
 
-class DNSZoneFormTestCase(TestCase):
+class DNSZoneFormPayloadMixin:
+    """The base form payload the DNSZone form suites post, which each of them varies."""
+
+    def _zone_data(self, **overrides):
+        """Return a valid DNSZoneForm payload, with any supplied overrides applied."""
+        data = {
+            "name": "Development",
+            "zone_type": DNSZoneTypeChoices.TYPE_PRIMARY,
+            "dns_view": self.dns_view.id,
+            "ttl": 1010101,
+            "filename": "development.zone",
+            "soa_mname": "ns1.example.com",
+            "soa_rname": "admin@example.com",
+            "soa_refresh": 10800,
+            "soa_retry": 3600,
+            "soa_expire": 604800,
+            "soa_serial": 202,
+            "soa_minimum": 3600,
+        }
+        data.update(overrides)
+        return data
+
+
+class DNSZoneFormTestCase(DNSZoneFormPayloadMixin, TestCase):
     """Test DNSZone forms."""
 
     @classmethod
@@ -136,6 +159,14 @@ class DNSZoneFormTestCase(TestCase):
         form = forms.DNSZoneForm(instance=zone)
         self.assertFalse(form.fields["auto_create_ptr"].disabled)
 
+
+class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
+    """Test the DNSZoneForm catalog field, which enrolls the zone as it is saved."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.dns_view = DNSView.objects.get(name="Default")
+
     def test_can_enroll_a_new_zone_in_a_catalog(self):
         """Enrolling at creation saves the operator a second trip through Catalog Zone Members."""
         catalog_zone = self._catalog_zone()
@@ -225,25 +256,6 @@ class DNSZoneFormTestCase(TestCase):
         zone = DNSZone.objects.create(name="member.example")
         models.CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone).validated_save()
         return zone, catalog_zone
-
-    def _zone_data(self, **overrides):
-        """Return a valid DNSZoneForm payload, with any supplied overrides applied."""
-        data = {
-            "name": "Development",
-            "zone_type": DNSZoneTypeChoices.TYPE_PRIMARY,
-            "dns_view": self.dns_view.id,
-            "ttl": 1010101,
-            "filename": "development.zone",
-            "soa_mname": "ns1.example.com",
-            "soa_rname": "admin@example.com",
-            "soa_refresh": 10800,
-            "soa_retry": 3600,
-            "soa_expire": 604800,
-            "soa_serial": 202,
-            "soa_minimum": 3600,
-        }
-        data.update(overrides)
-        return data
 
 
 class CatalogZoneMemberFormTestCase(TestCase):

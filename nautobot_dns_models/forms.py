@@ -1,6 +1,11 @@
 """Forms for nautobot_dns_models."""
 
+# One form per model, plus the bulk and filter variants of each, which puts this module over pylint's
+# 1000-line default. Splitting it would follow the same seams as models.py and is deferred with it.
+# pylint: disable=too-many-lines
+
 from django import forms
+from django.utils.html import format_html, format_html_join
 from nautobot.apps.forms import (
     BulkEditNullBooleanSelect,
     DatePicker,
@@ -431,9 +436,9 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
 class DNSZoneWithCatalogBulkEditForm(DNSZoneBulkEditForm):
     """DNSZone bulk edit form for a selection that includes at least one catalog zone.
 
-    A catalog zone refuses `auto_create_ptr`, and the bulk edit job saves each object in turn outside
-    a transaction, so offering the control would write the primary zones and then fail on the first
-    catalog zone. `DNSZoneUIViewSet.get_form_class` chooses this form once it knows the selection.
+    A catalog zone refuses `auto_create_ptr`, and the bulk edit job runs the whole selection in one
+    transaction, so offering the control would only earn an error and no edits at all.
+    `DNSZoneUIViewSet.get_form_class` chooses this form once it knows the selection.
     """
 
     def __init__(self, *args, **kwargs):
@@ -442,6 +447,104 @@ class DNSZoneWithCatalogBulkEditForm(DNSZoneBulkEditForm):
 
         self.fields["auto_create_ptr"].disabled = True
         self.fields["auto_create_ptr"].help_text = "Catalog zones cannot enable this, and the selection includes one."
+
+
+class DNSZoneBulkAssignCatalogForm(forms.Form):
+    """Catalog picker for a selection of zones being enrolled together.
+
+    Only the catalog is asked for. The selection is resolved from the request on the pass that renders
+    this form and the pass that applies it alike, so nothing about which zones are written depends on
+    what the browser sends back.
+    """
+
+    catalog = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+        label="Catalog Zone",
+        help_text="A selected zone already enrolled elsewhere is moved to this catalog.",
+    )
+
+    NESTING = "A catalog zone cannot belong to another catalog zone, and the selection holds"
+    SPANS_VIEWS = "A catalog zone only holds zones from its own view, and the selection spans"
+
+    def __init__(self, zones, *args, **kwargs):
+        """Hold the selection, judge it, and offer only the catalogs that could take it."""
+        super().__init__(*args, **kwargs)
+
+        self.zones = zones
+        self.dns_view_ids = {zone.dns_view_id for zone in zones}
+        self.selection_errors = self._judge_selection()
+
+        if self.selection_errors:
+            # No catalog could take this selection, so the control is shown refused rather than
+            # inviting a choice that the applying pass would then have to take back.
+            self.fields["catalog"].disabled = True
+        elif self.dns_view_ids:
+            # Scoped here rather than declared above because the view is only known once the
+            # selection is.
+            self.fields["catalog"].widget.add_query_param("dns_view", str(next(iter(self.dns_view_ids))))
+
+    def clean(self):
+        """Reject a pairing `CatalogZoneMember` would refuse, naming the zones responsible.
+
+        The write is atomic, so leaving these to the model would roll the batch back with an error
+        naming a single zone. Reported here, the selection can be corrected in one pass.
+        """
+        super().clean()
+
+        if self.selection_errors:
+            raise forms.ValidationError(self.selection_errors)
+
+        catalog_zone = self.cleaned_data.get("catalog")
+        if catalog_zone is None:
+            return self.cleaned_data
+
+        # Unreachable from the scoped picker, and still the only thing standing between a crafted
+        # post and a membership the model would refuse one zone at a time.
+        strangers = [zone for zone in self.zones if zone.dns_view_id != catalog_zone.dns_view_id]
+        if strangers:
+            raise forms.ValidationError(
+                {
+                    "catalog": format_html(
+                        "Not in this catalog zone's view: {}.", self._names(zone.name for zone in strangers)
+                    )
+                },
+            )
+
+        return self.cleaned_data
+
+    def _judge_selection(self):
+        """Name every reason the selection could take no catalog at all, before one is asked for.
+
+        Both faults are reported together so that correcting one does not uncover the other on the
+        next attempt, and each ends in the evidence, since a selection made with "select all" is
+        never listed back to the user.
+        """
+        reasons = []
+
+        catalogs = [zone.name for zone in self.zones if zone.is_catalog_zone]
+        if catalogs:
+            reasons.append(format_html("{} {}.", self.NESTING, self._names(catalogs)))
+
+        if len(self.dns_view_ids) > 1:
+            views = models.DNSView.objects.filter(pk__in=self.dns_view_ids).values_list("name", flat=True)
+            reasons.append(format_html("{} {}.", self.SPANS_VIEWS, self._names(views)))
+
+        return reasons
+
+    @staticmethod
+    def _names(names, limit=5):
+        """List the names in bold, falling back on a count once the list would stop being readable.
+
+        Marked up here rather than in the template because `clean()` reports the same sentences, in
+        the shape core gives the objects that block a delete.
+        """
+        names = sorted(names)
+        listed = format_html_join(", ", "<strong>{}</strong>", ((name,) for name in names[:limit]))
+        if len(names) > limit:
+            return format_html("{}, and {} more", listed, len(names) - limit)
+
+        return listed
 
 
 class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):

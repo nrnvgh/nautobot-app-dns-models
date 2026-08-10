@@ -1,0 +1,79 @@
+{% extends 'base.html' %}
+{% load form_helpers %}
+
+{% block title %}Add {{ obj_type_plural }} to a catalog zone{% endblock %}
+
+{% block content %}
+    <form action="{{ request.get_full_path }}" method="post" class="h-100 vstack">
+        {% csrf_token %}
+        <input type="hidden" name="return_url" value="{{ return_url }}" />
+        {% comment %}
+        The selection is resolved from these on the applying pass too, so it is carried the way it
+        arrived rather than restated as a list of zones.
+        {% endcomment %}
+        {% if select_all %}
+            <input type="hidden" name="_all" value="true" />
+        {% else %}
+            {% for pk in pk_list %}
+                <input type="hidden" name="pk" value="{{ pk }}" />
+            {% endfor %}
+        {% endif %}
+        <div class="row align-content-start flex-fill">
+            <p class="mb-16">{{ selected_count }} {{ obj_type_plural }} selected</p>
+            {% if table %}
+                <div class="col-lg-7">
+                    <div class="card">
+                        <div class="table-responsive">
+                            {% include 'inc/table.html' %}
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+            <div class="{% if table %}col-lg-5{% else %}col-lg-6{% endif %}">
+                {% comment %}
+                A refused selection is judged before a catalog is asked for, so it is reported on the
+                first render rather than through the bound form's errors, which would repeat it.
+                {% endcomment %}
+                {% if form.selection_errors %}
+                    <div class="card border-danger">
+                        <div class="card-header bg-danger-subtle border-danger text-body">
+                            <strong>Cannot enroll this selection</strong>
+                        </div>
+                        <div class="card-body">
+                            <ul class="mb-0">
+                                {% for reason in form.selection_errors %}
+                                    <li>{{ reason }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                {% elif form.non_field_errors %}
+                    <div class="card border-danger">
+                        <div class="card-header bg-danger-subtle border-danger text-body">
+                            <strong>Errors</strong>
+                        </div>
+                        <div class="card-body">
+                            {{ form.non_field_errors }}
+                        </div>
+                    </div>
+                {% endif %}
+                <div class="card">
+                    <div class="card-header"><strong>Catalog Zone</strong></div>
+                    <div class="card-body">
+                        {% render_field form.catalog %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="nb-form-sticky-footer">
+            <button type="submit" name="_apply" class="btn btn-primary" {% if form.selection_errors %}disabled{% endif %}>
+                <span aria-hidden="true" class="mdi mdi-check me-4"></span><!--
+                -->Enroll
+            </button>
+            <a href="{{ return_url }}" class="btn btn-secondary">
+                <span aria-hidden="true" class="mdi mdi-close me-4"></span><!--
+                -->Cancel
+            </a>
+        </div>
+    </form>
+{% endblock %}

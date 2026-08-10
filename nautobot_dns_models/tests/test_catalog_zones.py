@@ -4,6 +4,7 @@ import re
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.db.models import ProtectedError
 from django.test import override_settings
 from django.urls import reverse
@@ -12,7 +13,6 @@ from nautobot.core.testing.utils import extract_page_body
 from nautobot.users.models import ObjectPermission
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
-from nautobot_dns_models.forms import DNSZoneWithCatalogBulkEditForm
 from nautobot_dns_models.models import (
     APEX_RECORD_NAME,
     CATALOG_APEX_NS_SERVER,
@@ -42,6 +42,62 @@ def create_zone(name, **kwargs):
         soa_rname=f"admin@{name}",
         **kwargs,
     )
+
+
+class DNSZoneTypeTest(TestCase):
+    """Tests for the DNSZone.zone_type field and the invariants it carries."""
+
+    def test_default_zone_type_is_primary(self):
+        """A zone created without an explicit type is a primary zone."""
+        zone = DNSZone.objects.create(name="default-type.example")
+        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_PRIMARY)
+
+    def test_catalog_zone_can_be_created(self):
+        """A catalog zone can be created and validated."""
+        zone = self._make_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone.validated_save()
+        zone.refresh_from_db()
+        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_CATALOG)
+
+    def test_rejects_zone_type_change(self):
+        """Changing zone_type on an existing zone is rejected."""
+        zone = self._make_zone("immutable.example")
+        zone.validated_save()
+        zone.zone_type = DNSZoneTypeChoices.TYPE_CATALOG
+        with self.assertRaises(ValidationError) as context:
+            zone.full_clean()
+        self.assertIn("cannot be changed after creation", str(context.exception.message_dict["zone_type"]))
+
+    def test_primary_zone_allows_auto_create_ptr(self):
+        """auto_create_ptr remains available on primary zones."""
+        zone = self._make_zone("ptr-ok.example", auto_create_ptr=True)
+        zone.validated_save()
+        self.assertTrue(zone.auto_create_ptr)
+
+    def test_catalog_zone_rejects_auto_create_ptr(self):
+        """Validation rejects auto_create_ptr on a catalog zone rather than silently ignoring it."""
+        zone = self._make_zone("catalog-ptr.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG, auto_create_ptr=True)
+        with self.assertRaises(ValidationError) as context:
+            zone.full_clean()
+        self.assertIn("cannot enable automatic PTR creation", str(context.exception.message_dict["auto_create_ptr"]))
+
+    def test_catalog_zone_auto_create_ptr_blocked_at_database(self):
+        """The check constraint blocks auto_create_ptr on catalog zones even when validation is skipped."""
+        zone = DNSZone.objects.create(name="catalog-db.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        with self.assertRaises(IntegrityError):
+            DNSZone.objects.filter(pk=zone.pk).update(auto_create_ptr=True)
+
+    @staticmethod
+    def _make_zone(name, **kwargs):
+        """Build an unsaved DNSZone populated with every field full_clean() requires."""
+        defaults = {
+            "name": name,
+            "filename": f"{name}.zone",
+            "soa_mname": f"ns1.{name}.",
+            "soa_rname": f"admin@{name}",
+        }
+        defaults.update(kwargs)
+        return DNSZone(**defaults)
 
 
 class CatalogZoneRecordGatingTest(TestCase):
@@ -851,65 +907,3 @@ class ZoneFormEnrollmentPermissionTest(TestCase):
             data["catalog"] = catalog.pk
 
         return data
-
-
-class ZoneBulkEditPTRControlTest(TestCase):
-    """Tests that a bulk edit withdraws the PTR control once a catalog zone is among the selection.
-
-    A catalog zone refuses `auto_create_ptr`, and the bulk edit job saves each object in turn outside
-    a transaction, so offering the control would write the primary zones and then fail on the first
-    catalog zone.
-    """
-
-    WITHDRAWN = "Catalog zones cannot enable this, and the selection includes one."
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.catalog_zone = create_zone("bulk-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        cls.primary_zones = [create_zone(f"bulk-primary-{index}.example") for index in range(2)]
-        cls.bulk_edit_path = reverse("plugins:nautobot_dns_models:dnszone_bulk_edit")
-
-    def setUp(self):
-        """Grant the permissions a bulk edit needs before its selection is judged."""
-        super().setUp()
-        self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
-
-    def test_a_selection_of_primary_zones_offers_the_control(self):
-        """Every one of these zones can take the flag, so nothing is withheld."""
-        content = self._bulk_edit_form(pk_list=[zone.pk for zone in self.primary_zones])
-        self.assertIn('name="auto_create_ptr"', content)
-        self.assertNotIn(self.WITHDRAWN, content)
-
-    def test_a_selection_holding_a_catalog_zone_withdraws_the_control(self):
-        """One catalog zone is enough: the flag is refused per object, not per selection."""
-        content = self._bulk_edit_form(pk_list=[self.primary_zones[0].pk, self.catalog_zone.pk])
-        self.assertIn(self.WITHDRAWN, content)
-
-    def test_select_all_withdraws_the_control_when_it_includes_a_catalog_zone(self):
-        """Nothing narrows this one, so it resolves to the catalog zone without ever naming it."""
-        self.assertIn(self.WITHDRAWN, self._bulk_edit_form(edit_all=True))
-
-    def test_select_all_keeps_the_control_when_filtered_to_primary_zones(self):
-        """A filter narrows what "select all" resolves to, and the judgement must follow it."""
-        content = self._bulk_edit_form(edit_all=True, query=f"?zone_type={DNSZoneTypeChoices.TYPE_PRIMARY}")
-        self.assertIn('name="auto_create_ptr"', content)
-        self.assertNotIn(self.WITHDRAWN, content)
-
-    def test_a_withdrawn_control_discards_a_submitted_value(self):
-        """The job applies the view's cleaned data, so a value the form disowns never reaches a zone."""
-        form = DNSZoneWithCatalogBulkEditForm(
-            DNSZone,
-            {"pk": [str(zone.pk) for zone in self.primary_zones], "auto_create_ptr": "True"},
-        )
-        self.assertTrue(form.is_valid(), form.errors)
-        self.assertIsNone(form.cleaned_data["auto_create_ptr"])
-
-    def _bulk_edit_form(self, pk_list=None, edit_all=False, query=""):
-        """Return the bulk edit page rendered for a selection, named by pk or claimed wholesale."""
-        data = {"pk": [str(pk) for pk in pk_list or []]}
-        if edit_all:
-            data["_all"] = "on"
-
-        response = self.client.post(f"{self.bulk_edit_path}{query}", data)
-        self.assertHttpStatus(response, 200)
-        return extract_page_body(response.content.decode(response.charset))

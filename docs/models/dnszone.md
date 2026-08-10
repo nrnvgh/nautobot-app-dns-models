@@ -59,13 +59,13 @@ Every record in a catalog zone is system-managed, so no record type can be creat
 - `version` TXT record, holding `2`, the only schema version RFC 9432 defines
 - one PTR record per member, at `<member_label>.zones`, pointing at the member zone name
 
-Because `DNSRecord.name` does not accept a blank value, the apex NS record is named `@`, which denotes the zone origin per [RFC 1035 §5.1](https://datatracker.ietf.org/doc/html/rfc1035#section-5.1). Its `server` omits the trailing dot the RFC writes, leaving zone file syntax to whoever renders the zone.
+The apex NS record is named `@`, which denotes the zone origin per [RFC 1035 §5.1](https://datatracker.ietf.org/doc/html/rfc1035#section-5.1). Its `server` omits the trailing dot the RFC writes, leaving zone file syntax to whoever renders the zone.
 
 The TTL on all of these records is set to 0. Per [RFC 9432 §4.1](https://datatracker.ietf.org/doc/html/rfc9432#section-4.1), the TTL field has no meaning for records in a catalog zone and should be ignored.
 
 Zones are enrolled through [Catalog Zone Member](catalogzonemember.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one.
 
-A zone's edit form offers a Catalog Zone field as a shortcut, but the enrollment it writes is a Catalog Zone Member and is governed by [that model's permissions](catalogzonemember.md#permissions) rather than by `change_dnszone`.
+A zone's edit form offers a Catalog Zone field as a shortcut, and the zone list offers an Add to Catalog action for a selection of zones, but the enrollment either writes is a Catalog Zone Member and is governed by [that model's permissions](catalogzonemember.md#permissions); `change_dnszone` alone does not authorize it.
 
 !!! warning "Grant zone editors `view` permission on catalog zones"
 
