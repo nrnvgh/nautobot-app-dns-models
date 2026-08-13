@@ -686,7 +686,10 @@ class CatalogZoneMemberAPITestCase(APIViewTestCases.APIViewTestCase):
             {"catalog_zone": cls.catalog_zones[1].pk, "member_zone": member_zone.pk} for member_zone in member_zones[3:]
         ]
 
-        # `member_zone` is unique per membership and `member_label` is fixed, leaving the catalog.
+        # The catalog is the only field a generic update may touch: `member_zone` is unique per
+        # membership, `member_label` is not editable, and either one changing remints the label,
+        # which the generic tests read as an unexpected side effect.
+        cls.update_data = {"catalog_zone": cls.catalog_zones[1].pk}
         cls.bulk_update_data = {"catalog_zone": cls.catalog_zones[1].pk}
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])

@@ -10,6 +10,9 @@ A zone belongs to at most one catalog, and each label is unique within a catalog
 
 In the UI, enrollments are created, moved, and removed from the zone: a zone's add or edit form offers a Catalog Zone field, and the zone list offers Add to Catalog and Remove from Catalog actions for a selection of zones. All of them write the rows described here, and all of them are recorded in the change log of the two zones the enrollment relates. The model also has a REST API endpoint of its own, which writes the same rows directly.
 
+!!! note
+    Recording an enrollment against the two zones it relates requires Nautobot 3.2.2 or later, which is where core began writing change records for both sides of a many-to-many relationship. Enrollment behaves the same on earlier releases, but goes unrecorded: the membership is not a change-logged object in its own right, so there is nowhere else for the record to land.
+
 Both bulk actions confirm the selection before writing anything, and write it in one transaction, so a zone the batch cannot write takes the rest back with it.
 
 Add to Catalog enrolls the zones with no catalog and moves those already in another. Since a catalog only holds zones from its own view, the picker offers just the catalogs in the view the selection shares. A selection no catalog could take, because it holds a catalog zone or spans several views, is refused on the confirmation before a catalog is asked for.
@@ -22,15 +25,21 @@ Remove from Catalog withdraws each selected zone from whichever catalog holds it
 
 Nautobot generates a random 26-character label automatically when one is not supplied. No form offers the field. The REST API and CSV import may supply a label explicitly; it must not contain a dot and must be no more than 63 octets in wire format.
 
-Once assigned, the label cannot be changed through Nautobot. Catalog consumers use it as the member's identity: if the label changes, they discard the member's existing state and configure the zone again, per [RFC 9432 §5.4](https://datatracker.ietf.org/doc/html/rfc9432#section-5.4) and [§5.6](https://datatracker.ietf.org/doc/html/rfc9432#section-5.6).
+Once assigned, the label cannot be edited through Nautobot. Catalog consumers use it as the member's identity: a label they have not seen before is the addition of a member zone, and a label that stops appearing is the removal of one. Changing it therefore discards the zone data, DNSSEC keys, and timers the consumer held, and has it configure the zone again from scratch, per [RFC 9432 §5.4](https://datatracker.ietf.org/doc/html/rfc9432#section-5.4) and [§5.6](https://datatracker.ietf.org/doc/html/rfc9432#section-5.6).
 
-Removing a membership and creating a new one also produces a new label. That is the supported way to reset consumer state when the label itself cannot be edited.
+Nautobot issues a new label itself where that reset is the right outcome: when the member zone is renamed, and when a membership is pointed at a different zone. In both cases the zone the label named is gone, and what a consumer holds against it belongs to nothing. A rename withdraws the membership and enrolls the zone again, so the new label belongs to a new row. Retargeting regenerates the label on the existing row. The alternative, keeping the label and republishing it against the new zone name, is a transition RFC 9432 does not define, and consumers do not agree on one. The catalog stops publishing the old label in the same transaction, so it never advertises the zone twice.
+
+Deleting a membership and creating another produces a new label for the same reason, which is how to force that reset by hand.
 
 ## Published record
 
 Saving or deleting a membership reconciles the catalog zone's member PTR records. Each membership publishes one PTR record at `<member_label>.zones` within the catalog zone, pointing at the member zone name, with a TTL of 0.
 
 Those PTR records are system-managed. They cannot be created, edited, or deleted through ordinary PTR record CRUD; change the membership instead. See [DNS Zone](dnszone.md) for the rest of a catalog zone's contents.
+
+Renaming a member zone removes its entry from the catalog and creates a new one: the membership row is deleted and another is created, which issues a new label. The change log of the catalog zone reads that way too: the member PTR at the old label is recorded as a deletion, and the one at the new label as a creation. The membership row itself carries no change record, being no object in its own right, so those two records are where the history of a rename is legible.
+
+Renaming a catalog zone publishes nothing new, because a member's owner name is stored relative to the catalog's apex rather than as a fully qualified name.
 
 ## Permissions
 

@@ -119,8 +119,7 @@ def catalog_member_label():
     for consumer state: the label is generated once, stored, and must not change. A fresh UUID
     encoded as unpadded lowercase base32 yields 26 DNS-safe characters (a-z, 2-7), well inside
     the 63-octet label limit. Delete-and-re-add with a blank label therefore mints a new identity
-    and resets consumer state, matching NSD's random-label producer and PowerDNS's intent that a
-    recreated membership not silently resume prior state.
+    and resets consumer state, so a recreated membership does not silently resume prior state.
     """
     return base64.b32encode(uuid.uuid4().bytes).decode("ascii").rstrip("=").lower()
 
@@ -247,6 +246,26 @@ def _ensure_member_records(zone):
     for name, ptrdname in expected.items():
         if name not in published:
             PTRRecord(name=name, ptrdname=ptrdname, zone=zone, _ttl=0).validated_save()
+
+
+def reenroll_in_catalog(zone):
+    """Withdraw `zone` from the catalog holding it and enroll it again.
+
+    RFC 9432 does not define what to do when a member zone is renamed. We delete the
+    membership and create another so the catalog withdraws the PTR at the old label and
+    publishes the renamed zone at a new one, which a consumer processes as a removal
+    and an addition (§5.4).
+
+    Does nothing for a zone that is not enrolled. The new row is validated the same way
+    any other enrollment is.
+    """
+    membership = zone.catalog_membership.first()
+    if membership is None:
+        return
+
+    catalog_zone = membership.catalog_zone
+    membership.delete()
+    CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone).validated_save()
 
 
 def purge_system_managed_records(zones):
@@ -570,11 +589,23 @@ class DNSZone(DNSModel):
         Atomic because a catalog zone missing its version record is broken (RFC 9432 §4.2.1) and
         loses its catalog meaning altogether (§5.1), so a zone whose required records cannot be
         written should not be left behind at all.
+
+        Renaming a zone withdraws it from the catalog holding it and publishes it afresh, rather
+        than carrying its catalog identity across, which is why the stored name is read first.
         """
         self.soa_rname = normalize_soa_rname(self.soa_rname)
+        stored_name = (
+            DNSZone.objects.filter(pk=self.pk).values_list("name", flat=True).first()
+            if self.present_in_database
+            else None
+        )
+
         with transaction.atomic():
             super().save(*args, **kwargs)
             ensure_catalog_zone_records(self)
+            # After the save, so that re-enrollment publishes the new name.
+            if stored_name is not None and stored_name != self.name:
+                reenroll_in_catalog(self)
 
     def supports_record_type(self, record_model):
         """Return whether a user may create `record_model` records in this zone."""
@@ -594,6 +625,9 @@ class DNSZone(DNSModel):
         builds a fresh queryset, which ignores any `prefetch_related("catalog_membership__catalog_zone")`
         and goes back to the database per zone.
         """
+        if self.is_catalog_zone:
+            return None
+
         membership = next(iter(self.catalog_membership.all()), None)  # pylint: disable=no-member
         return membership.catalog_zone if membership else None
 
@@ -736,7 +770,7 @@ class CatalogZoneMember(BaseModel):
         default=catalog_member_label,
         help_text=(
             "Opaque DNS label identifying this member within the catalog zone. "
-            "Generated automatically if left blank, and fixed thereafter."
+            "Generated automatically if left blank, and not editable afterwards. "
         ),
         verbose_name="Member Label",
     )
@@ -797,13 +831,23 @@ class CatalogZoneMember(BaseModel):
 
         Atomic for the reason `DNSZone.save()` is: a membership whose PTR cannot be written would
         leave the catalog claiming something other than what Nautobot holds.
+
+        The label is reminted here rather than in `clean()`, which refuses a label that differs from
+        the stored one and would reject this change as though a user had made it.
         """
-        self._ensure_member_label()
-        previous_catalog_zone_id = (
-            CatalogZoneMember.objects.filter(pk=self.pk).values_list("catalog_zone_id", flat=True).first()
+        stored = (
+            CatalogZoneMember.objects.filter(pk=self.pk).values("catalog_zone_id", "member_zone_id").first()
             if self.present_in_database
             else None
         )
+        previous_catalog_zone_id = stored["catalog_zone_id"] if stored else None
+        previous_member_zone_id = stored["member_zone_id"] if stored else None
+
+        # Pointing the membership at another zone hands it the identity the previous one was
+        # published under, which a consumer would read as that zone carrying on under a new name.
+        if previous_member_zone_id is not None and previous_member_zone_id != self.member_zone_id:
+            self.member_label = catalog_member_label()
+        self._ensure_member_label()
 
         with transaction.atomic():
             super().save(*args, **kwargs)
