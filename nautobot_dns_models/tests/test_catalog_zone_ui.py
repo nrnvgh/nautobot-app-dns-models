@@ -72,7 +72,7 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
         self.assertNotIn(self._edit_url(NSRecord.objects.get(zone=self.catalog_zone)), self._detail(self.catalog_zone))
 
     def test_primary_zone_keeps_write_controls_for_its_records(self):
-        """CatalogSystemRecordsPanel is catalog-only; an ordinary zone's TXT records stay editable."""
+        """A system-managed TXT panel is catalog-only; an ordinary zone's TXT records stay editable."""
         self.add_permissions("nautobot_dns_models.change_txtrecord")
         self.assertIn(self._edit_url(self.member_zone_record), self._detail(self.member_zone))
 
@@ -116,6 +116,14 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
     def test_catalog_zone_has_no_record_statistics(self):
         """The counts are of record types a zone without user records cannot hold."""
         self.assertNotIn("RECORDS STATISTICS", self._panels(self.catalog_zone))
+
+    def test_catalog_zone_has_no_registration_panel(self):
+        """A catalog zone is not a registered name, so the registrar row does not belong here."""
+        self.assertNotIn("REGISTRATION", self._panels(self.catalog_zone))
+
+    def test_primary_zone_keeps_the_registration_panel(self):
+        """Hiding registration on a catalog must not take it off an ordinary zone."""
+        self.assertIn("REGISTRATION", self._panels(self.member_zone))
 
     def test_primary_zone_keeps_record_statistics(self):
         """Gating that panel by capability must leave it standing where the counts mean something."""

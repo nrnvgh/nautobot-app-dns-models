@@ -148,45 +148,49 @@ class ZoneFieldsPanel(ObjectFieldsPanel):
 
 
 class ZoneRecordsTablePanel(ObjectsTablePanel):
-    """A table of one user-managed record type on the zone detail page.
+    """A table of one record type on the zone detail page.
 
-    Appears only when users may create that type, with Add/Edit controls.
+    User-managed panels appear where that type is creatable, with Add/Edit controls. System-managed
+    panels (`system_managed=True`) appear on catalog zones only, without write controls.
     """
 
     def __init__(self, **kwargs):
         """Apply the defaults shared by every zone-records panel on the zone detail page."""
+        self.system_managed = kwargs.pop("system_managed", False)
         table_class = kwargs.get("table_class") or self.table_class
         kwargs.setdefault("table_title", table_class.Meta.model._meta.verbose_name_plural)
         kwargs.setdefault("table_filter", "zone")
-        kwargs.setdefault("exclude_columns", ["zone"])
         kwargs.setdefault("max_display_count", 5)
+        if self.system_managed:
+            kwargs.setdefault("add_button_route", None)
+            kwargs.setdefault("exclude_columns", ["zone", "actions"])
+        else:
+            kwargs.setdefault("exclude_columns", ["zone"])
         super().__init__(**kwargs)
 
     def should_render(self, context):
-        """Render only where this panel's record type is user-creatable."""
+        """Render a user-managed panel where the type is creatable, or a system panel on a catalog."""
         if not super().should_render(context):
             return False
 
         zone = get_obj_from_context(context)
-        return zone is not None and zone.supports_record_type(self.table_class.Meta.model)
+        if zone is None:
+            return False
+        if self.system_managed:
+            return zone.is_catalog_zone
+        return zone.supports_record_type(self.table_class.Meta.model)
 
 
-class CatalogSystemRecordsPanel(ZoneRecordsTablePanel):
-    """One type of the catalog zone's system-managed records, listed without write controls."""
-
-    def __init__(self, **kwargs):
-        """Disable Add/Edit controls the parent panel would otherwise keep."""
-        kwargs.setdefault("add_button_route", None)
-        kwargs.setdefault("exclude_columns", ["zone", "actions"])
-        super().__init__(**kwargs)
+class ZoneRegistrationPanel(ObjectsTablePanel):
+    """The zone's registrar row, omitted on catalog zones, which are not registered names."""
 
     def should_render(self, context):
-        """Render only for catalog zones."""
-        if not ObjectsTablePanel.should_render(self, context):
+        """Render only for zones that are not catalogs."""
+        if not super().should_render(context):
             return False
 
         zone = get_obj_from_context(context)
-        return zone is not None and zone.is_catalog_zone
+        return zone is not None and not zone.is_catalog_zone
 
 
 class CatalogMemberZoneTablePanel(ObjectsTablePanel):
@@ -376,7 +380,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 additional_fields=["catalog"],
                 key_transforms={"catalog": "Catalog Zone"},
             ),
-            ObjectsTablePanel(
+            ZoneRegistrationPanel(
                 weight=200,
                 section=SectionChoices.LEFT_HALF,
                 table_filter="dns_zone",
@@ -385,16 +389,23 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 include_columns=["dns_registrar", "status", "expiration_date", "auto_renewal", "actions"],
                 max_display_count=1,
             ),
-            # should_render methods in the two NS panels ensure only one is visible at a time
+            # Same weight: only one of these renders, so they occupy the same left-pane slot.
             ZoneRecordsTablePanel(
                 weight=300,
                 section=SectionChoices.LEFT_HALF,
                 table_class=NSRecordTable,
             ),
-            CatalogSystemRecordsPanel(
+            ZoneRecordsTablePanel(
                 weight=300,
                 section=SectionChoices.LEFT_HALF,
                 table_class=NSRecordTable,
+                system_managed=True,
+            ),
+            ZoneRecordsTablePanel(
+                weight=400,
+                section=SectionChoices.LEFT_HALF,
+                table_class=TXTRecordTable,
+                system_managed=True,
             ),
             # Right pane
             RecordStatsPanel(
@@ -411,6 +422,12 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                     SRVRecord,
                     TXTRecord,
                 ],
+            ),
+            CatalogMemberZoneTablePanel(
+                weight=50,
+                section=SectionChoices.RIGHT_HALF,
+                table_class=CatalogMemberZoneTable,
+                max_display_count=10,
             ),
             ZoneRecordsTablePanel(
                 weight=100,
@@ -432,30 +449,17 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 section=SectionChoices.RIGHT_HALF,
                 table_class=MXRecordTable,
             ),
-            # should_render methods in the PTR panel and the members panel ensure only one is visible at a time
             ZoneRecordsTablePanel(
                 weight=500,
                 section=SectionChoices.RIGHT_HALF,
                 table_class=PTRRecordTable,
-            ),
-            CatalogMemberZoneTablePanel(
-                weight=500,
-                section=SectionChoices.RIGHT_HALF,
-                table_class=CatalogMemberZoneTable,
-                max_display_count=10,
             ),
             ZoneRecordsTablePanel(
                 weight=600,
                 section=SectionChoices.RIGHT_HALF,
                 table_class=SRVRecordTable,
             ),
-            # should_render methods in the two TXT panels ensure only one is visible at a time
             ZoneRecordsTablePanel(
-                weight=700,
-                section=SectionChoices.RIGHT_HALF,
-                table_class=TXTRecordTable,
-            ),
-            CatalogSystemRecordsPanel(
                 weight=700,
                 section=SectionChoices.RIGHT_HALF,
                 table_class=TXTRecordTable,
