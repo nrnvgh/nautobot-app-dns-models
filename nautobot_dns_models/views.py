@@ -5,6 +5,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from nautobot.apps import views
 from nautobot.apps.forms import ConfirmationForm, restrict_form_fields
 from nautobot.apps.ui import (
@@ -215,6 +216,22 @@ class CatalogMemberZoneTablePanel(ObjectsTablePanel):
 
         zone = get_obj_from_context(context)
         return zone is not None and zone.is_catalog_zone
+
+    def _get_table_add_url(self, context):
+        """Seed the add form's `catalog_zone` field.
+
+        `related_field_name` is `catalog` so the count badge can link to the zone list. The add form
+        field is `catalog_zone`; the parent's add URL would otherwise pass `catalog=` and leave the
+        picker empty.
+        """
+        request = context["request"]
+        if not request.user.has_perm("nautobot_dns_models.add_catalogzonemember"):
+            return None
+
+        obj = get_obj_from_context(context)
+        add_route = reverse("plugins:nautobot_dns_models:catalogzonemember_add")
+        return_url = context.get("return_url", obj.get_absolute_url())
+        return f"{add_route}?catalog_zone={obj.pk}&return_url={return_url}"
 
 
 class RecordStatsPanel(StatsPanel):
