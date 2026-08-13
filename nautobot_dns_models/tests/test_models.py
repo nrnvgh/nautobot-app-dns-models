@@ -2,6 +2,7 @@
 # pylint: disable=too-many-lines
 
 from constance.test import override_config
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.extras.models import Status
@@ -15,6 +16,7 @@ from nautobot_dns_models.models import (
     ARecord,
     CNAMERecord,
     DNSRegistrar,
+    DNSRegistration,
     DNSView,
     DNSViewPrefixAssignment,
     DNSZone,
@@ -140,6 +142,52 @@ class TestDNSRegistrar(ModelTestCases.BaseModelTestCase):
         registrar = DNSRegistrar.objects.get(name="Registrar 1")
         self.assertEqual(registrar.get_absolute_url(), f"/plugins/dns/dns-registrars/{registrar.id}/")
 
+class TestDNSRegistration(ModelTestCases.BaseModelTestCase):
+    """Test DNSRegistration model."""
+
+    model = DNSRegistration
+
+    @classmethod
+    def setUpTestData(cls):
+        """Create test data for DNSRegistration Model."""
+        super().setUpTestData()
+        for i in range(3):
+            DNSZone.objects.create(name=f"Test Zone {i}", zone_type=DNSZoneTypeChoices.TYPE_PRIMARY)
+
+        cls.registrar = DNSRegistrar.objects.create(name="Test Registrar")
+        status = Status.objects.get(name="Active")
+        status.content_types.add(ContentType.objects.get_for_model(DNSRegistration))
+        cls.status = status
+
+        DNSRegistration.objects.create(
+            dns_registrar=cls.registrar,
+            status=cls.status,
+            dns_zone=DNSZone.objects.get(name="Test Zone 0"),
+        )
+
+    def test_registration_accepts_primary_zone(self):
+        """Test that registration accepts a primary zone."""
+        primary_zone = DNSZone.objects.create(name="Test Primary", zone_type=DNSZoneTypeChoices.TYPE_PRIMARY)
+        registration = DNSRegistration(
+            dns_registrar=self.registrar,
+            status=self.status,
+            dns_zone=primary_zone,
+        )
+        registration.validated_save()
+
+        self.assertEqual(registration.dns_zone, primary_zone)
+
+    def test_registration_rejects_catalog_zone(self):
+        """Test that registration rejects a catalog zone."""
+        catalog_zone = DNSZone.objects.create(name="Test Catalog", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        with self.assertRaises(ValidationError) as context:
+            DNSRegistration(
+                dns_registrar=self.registrar,
+                status=self.status,
+                dns_zone=catalog_zone,
+            ).validated_save()
+
+        self.assertEqual(context.exception.message_dict["dns_zone"], ["Catalog zones cannot be registered."])
 
 class TestDnsZone(ModelTestCases.BaseModelTestCase):
     """Test DnsZone model."""

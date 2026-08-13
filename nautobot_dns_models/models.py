@@ -716,6 +716,13 @@ class DNSRegistration(PrimaryModel):
         """Stringify instance."""
         return f"{self.dns_zone} @ {self.dns_registrar}"
 
+    def clean(self):
+        """Ensure registration is not against a catalog zone."""
+        super().clean()
+
+        if self.dns_zone_id and self.dns_zone.is_catalog_zone:
+            raise ValidationError({"dns_zone": "Catalog zones cannot be registered."})
+
 
 @extras_features("graphql")
 class DNSViewPrefixAssignment(BaseModel):

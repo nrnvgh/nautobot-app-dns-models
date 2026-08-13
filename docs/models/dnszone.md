@@ -63,7 +63,7 @@ The apex NS record is named `@`, which denotes the zone origin per [RFC 1035 §5
 
 The TTL on all of these records is set to 0. Per [RFC 9432 §4.1](https://datatracker.ietf.org/doc/html/rfc9432#section-4.1), the TTL field has no meaning for records in a catalog zone and should be ignored.
 
-Zones are enrolled through [Catalog Zone Member](catalogzonemember.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one.
+Zones are enrolled through [Catalog Zone Member](catalogzonemember.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one. A catalog zone is not a registered name, so it cannot be the zone on a [DNS Registration](dnsregistration.md).
 
 Enrollment is set from the member zone and from the catalog. A zone's add or edit form offers a Catalog Zone field. The zone list offers an Edit Catalog Memberships menu for a selection of zones, and per-row actions to enroll an unenrolled zone or withdraw an enrolled one. A catalog's Member Zones panel offers Add and per-row Edit and Delete. What they write is a Catalog Zone Member, governed by [that model's permissions](catalogzonemember.md#permissions); `change_dnszone` alone does not authorize it.
 

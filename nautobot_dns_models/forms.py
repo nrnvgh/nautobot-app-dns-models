@@ -157,6 +157,14 @@ class DNSRegistrationForm(NautobotModelForm):
         widget=DatePicker(),
         input_formats=EXPIRATION_DATE_INPUT_FORMATS,
     )
+    dns_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        required=True,
+        query_params={
+            "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
+        },
+        label="Zone",
+    )
 
     class Meta:
         """Meta attributes."""
@@ -176,6 +184,10 @@ class DNSRegistrationBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
     dns_zone = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.all(),
         required=False,
+        query_params={
+            "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
+        },
+        label="Zone",
     )
     status = DynamicModelChoiceField(
         queryset=Status.objects.all(),
@@ -219,6 +231,9 @@ class DNSRegistrationFilterForm(NautobotFilterForm):
     dns_zone = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.all(),
         required=False,
+        query_params={
+            "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
+        },
         label="Zone",
     )
     status = DynamicModelChoiceField(
