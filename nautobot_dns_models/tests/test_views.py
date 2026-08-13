@@ -1,13 +1,17 @@
 """Unit tests for views."""
 
+import uuid
+
 from constance import config as constance_config
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.test import override_settings
 from django.urls import reverse
-from nautobot.apps.testing import AssertNoRepeatedQueries, ViewTestCases
+from nautobot.apps.testing import AssertNoRepeatedQueries, ViewTestCases, post_data
 from nautobot.core.testing.utils import extract_page_body
 from nautobot.extras.models import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
+from nautobot.users.models import ObjectPermission
 from netutils.ip import ipaddress_address
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
@@ -25,6 +29,7 @@ from nautobot_dns_models.models import (
     SRVRecord,
     TXTRecord,
 )
+from nautobot_dns_models.tests.test_catalog_zones import create_zone
 
 User = get_user_model()
 
@@ -209,6 +214,192 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         self.assertEqual(body.count(catalog.name), 13)
         # The column names the catalog alone, leaving the view to the column that already carries it.
         self.assertNotIn(str(catalog), body)
+
+
+class CatalogZoneMemberViewTest(
+    ViewTestCases.CreateObjectViewTestCase,
+    ViewTestCases.EditObjectViewTestCase,
+    ViewTestCases.DeleteObjectViewTestCase,
+):
+    """Test the membership add, edit, and delete pages.
+
+    Create looks up the new row by `member_zone`. The mixin uses `queryset.last()`, which follows
+    `ordering = ["catalog_zone", "member_label"]`, and CatalogZoneMember has no `last_updated`.
+    """
+
+    model = CatalogZoneMember
+
+    @classmethod
+    def setUpTestData(cls):
+        catalogs = [
+            create_zone("view-catalog-0.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG),
+            create_zone("view-catalog-1.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG),
+        ]
+        members = [create_zone(f"view-member-{index}.example") for index in range(4)]
+        for index, member in enumerate(members[:3]):
+            CatalogZoneMember.objects.create(
+                catalog_zone=catalogs[0],
+                member_zone=member,
+                member_label=f"label{index}",
+            )
+
+        cls.catalog_zone = catalogs[0]
+        cls.enrolled_zone = members[0]
+        cls.unenrolled_zone = members[3]
+        cls.membership = CatalogZoneMember.objects.get(member_zone=members[0])
+        cls.form_data = {
+            "catalog_zone": catalogs[0].pk,
+            "member_zone": members[3].pk,
+        }
+        # `member_zone` is required on the form. Changing it remints the label, so keep the first
+        # row's member and only move the catalog. `label0` is first() under the model's ordering.
+        cls.update_data = {
+            "catalog_zone": catalogs[1].pk,
+            "member_zone": members[0].pk,
+        }
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_create_object_with_constrained_permission(self):
+        initial_count = self._get_queryset().count()
+        obj_perm = ObjectPermission(
+            name="Test permission",
+            constraints={"pk": str(uuid.uuid4())},
+            actions=["add"],
+        )
+        obj_perm.save()
+        obj_perm.users.add(self.user)
+        obj_perm.object_types.add(ContentType.objects.get_for_model(self.model))
+
+        self.assertHttpStatus(self.client.get(self._get_url("add")), 200)
+
+        request = {"path": self._get_url("add"), "data": post_data(self.form_data)}
+        self.assertHttpStatus(self.client.post(**request), 200)
+        self.assertEqual(initial_count, self._get_queryset().count())
+
+        obj_perm.constraints = {"pk__isnull": False}
+        obj_perm.save()
+
+        request = {"path": self._get_url("add"), "data": post_data(self.form_data)}
+        self.assertHttpStatus(self.client.post(**request), 302)
+        self.assertEqual(initial_count + 1, self._get_queryset().count())
+        self.assertInstanceEqual(
+            self._get_queryset().get(member_zone=self.form_data["member_zone"]),
+            self.form_data,
+        )
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_create_object_with_permission(self):
+        initial_count = self._get_queryset().count()
+        self.add_permissions(f"{self.model._meta.app_label}.add_{self.model._meta.model_name}")
+
+        self.assertHttpStatus(self.client.get(self._get_url("add")), 200)
+
+        request = {"path": self._get_url("add"), "data": post_data(self.form_data)}
+        self.assertHttpStatus(self.client.post(**request), 302)
+        self.assertEqual(initial_count + 1, self._get_queryset().count())
+        self.assertInstanceEqual(
+            self._get_queryset().get(member_zone=self.form_data["member_zone"]),
+            self.form_data,
+        )
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_add_page_seeds_the_catalog_zone_from_the_query(self):
+        """The catalog's Add button names the catalog so the operator only picks a member."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+
+        response = self.client.get(self._get_url("add"), {"catalog_zone": self.catalog_zone.pk})
+        self.assertHttpStatus(response, 200)
+        body = extract_page_body(response.content.decode(response.charset))
+
+        self.assertIn('name="catalog_zone"', body)
+        self.assertIn(str(self.catalog_zone.pk), body)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_add_page_seeds_the_member_zone_from_the_query(self):
+        """Add to Catalog on an unenrolled zone names that zone so the operator only picks a catalog."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+
+        response = self.client.get(self._get_url("add"), {"member_zone": self.unenrolled_zone.pk})
+        self.assertHttpStatus(response, 200)
+        body = extract_page_body(response.content.decode(response.charset))
+
+        self.assertIn('name="member_zone"', body)
+        self.assertIn(str(self.unenrolled_zone.pk), body)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_adding_follows_the_return_url(self):
+        """The form carries ReturnURLForm so the catalog Add button can send the operator back."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        return_url = self.catalog_zone.get_absolute_url()
+
+        response = self.client.post(
+            self._get_url("add"),
+            {
+                "catalog_zone": self.catalog_zone.pk,
+                "member_zone": self.unenrolled_zone.pk,
+                "return_url": return_url,
+            },
+        )
+
+        self.assertHttpStatus(response, 302)
+        self.assertEqual(response.url, return_url)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_catalog_detail_links_to_add_edit_and_delete(self):
+        """The Member Zones panel is how these pages are reached from the catalog."""
+        self.add_permissions(
+            "nautobot_dns_models.add_catalogzonemember",
+            "nautobot_dns_models.change_catalogzonemember",
+            "nautobot_dns_models.delete_catalogzonemember",
+        )
+        add_url = self._get_url("add")
+        list_url = reverse("plugins:nautobot_dns_models:dnszone_list")
+
+        response = self.client.get(self.catalog_zone.get_absolute_url())
+        self.assertHttpStatus(response, 200)
+        body = extract_page_body(response.content.decode(response.charset))
+
+        self.assertIn(f"{add_url}?catalog_zone={self.catalog_zone.pk}", body)
+        self.assertIn(self._get_url("edit", self.membership), body)
+        self.assertIn(self._get_url("delete", self.membership), body)
+        self.assertIn(f"{list_url}?catalog={self.catalog_zone.pk}", body)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_zone_list_links_an_unenrolled_zone_to_add(self):
+        """Add to Catalog is the unenrolled row's path onto the add page."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemember")
+        add_url = self._get_url("add")
+        # The rows arrive on the HTMX follow-up request; the first response is an empty table shell.
+        response = self.client.get(
+            reverse("plugins:nautobot_dns_models:dnszone_list"),
+            headers={"HX-Request": "true"},
+        )
+        self.assertHttpStatus(response, 200)
+        body = extract_page_body(response.content.decode(response.charset))
+
+        self.assertIn(f"{add_url}?member_zone={self.unenrolled_zone.pk}", body)
+        self.assertNotIn(self._get_url("edit", self.membership), body)
+        self.assertNotIn(f"{add_url}?catalog_zone={self.catalog_zone.pk}", body)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_zone_list_links_an_enrolled_zone_to_delete(self):
+        """Remove is the enrolled row's list action; Move lives on the catalog panel and the zone form."""
+        self.add_permissions(
+            "nautobot_dns_models.change_catalogzonemember",
+            "nautobot_dns_models.delete_catalogzonemember",
+        )
+        add_url = self._get_url("add")
+        # The rows arrive on the HTMX follow-up request; the first response is an empty table shell.
+        response = self.client.get(
+            reverse("plugins:nautobot_dns_models:dnszone_list"),
+            headers={"HX-Request": "true"},
+        )
+        self.assertHttpStatus(response, 200)
+        body = extract_page_body(response.content.decode(response.charset))
+
+        self.assertIn(self._get_url("delete", self.membership), body)
+        self.assertNotIn(self._get_url("edit", self.membership), body)
+        self.assertNotIn(f"{add_url}?member_zone={self.enrolled_zone.pk}", body)
 
 
 class NSRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
