@@ -49,7 +49,7 @@ email form as follows:
 
 ## Catalog Zones
 
-+++ 2.3.0
++++ 2.4.0
 
 A zone with a `zone_type` of `Catalog` names the zones enrolled in it, the mechanism [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) defines for provisioning zones to secondary name servers. This app builds a catalog's contents but does not serve or consume one.
 
