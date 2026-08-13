@@ -11,7 +11,7 @@ A zone belongs to at most one catalog, and each label is unique within a catalog
 In the UI, enrollments are created, moved, and removed from the zone and from the catalog:
 
 - a zone's add or edit form offers a Catalog Zone field
-- the zone list offers an Edit Catalog Memberships menu for a selection of zones (Add to Catalog and Remove from Catalog), and per-row actions: Add Member Zone on a catalog, Add to Catalog on an unenrolled zone, and Move to Catalog or Remove from Catalog on an enrolled zone
+- the zone list offers an Edit Catalog Memberships menu for a selection of zones (Add to Catalog and Remove from Catalog), and per-row actions: Add to Catalog on an unenrolled zone, and Remove from Catalog on an enrolled zone
 - a catalog zone's Member Zones panel offers Add, which opens the membership form with that catalog pre-selected. Each row in that panel has Edit and Delete actions for the membership. The panel footer links to the PTR records the catalog publishes for those members.
 
 All of them write the rows described here, and all of them are recorded in the change log of the two zones the enrollment relates. The model also has a REST API endpoint of its own, which writes the same rows directly.

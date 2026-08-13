@@ -8,15 +8,7 @@ from nautobot_dns_models import models
 
 
 DNSZONE_BUTTONS = """
-{% if record.is_catalog_zone %}
-    {% if perms.nautobot_dns_models.add_catalogzonemember %}
-        <li>
-            <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_add' %}?catalog_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
-                <span class="mdi mdi-plus-thick me-4" aria-hidden="true"></span>Add Member Zone
-            </a>
-        </li>
-    {% endif %}
-{% else %}
+{% if not record.is_catalog_zone %}
     {% with membership=record.catalog_membership.all.0 %}
         {% if not membership %}
             {% if perms.nautobot_dns_models.add_catalogzonemember %}
@@ -26,21 +18,12 @@ DNSZONE_BUTTONS = """
                     </a>
                 </li>
             {% endif %}
-        {% else %}
-            {% if perms.nautobot_dns_models.change_catalogzonemember %}
-                <li>
-                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_edit' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-warning">
-                        <span class="mdi mdi-folder-plus-outline me-4" aria-hidden="true"></span>Move to Catalog
-                    </a>
-                </li>
-            {% endif %}
-            {% if perms.nautobot_dns_models.delete_catalogzonemember %}
-                <li>
-                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_delete' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-danger">
-                        <span class="mdi mdi-folder-minus-outline me-4" aria-hidden="true"></span>Remove from Catalog
-                    </a>
-                </li>
-            {% endif %}
+        {% elif perms.nautobot_dns_models.delete_catalogzonemember %}
+            <li>
+                <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_delete' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-danger">
+                    <span class="mdi mdi-folder-minus-outline me-4" aria-hidden="true"></span>Remove from Catalog
+                </a>
+            </li>
         {% endif %}
     {% endwith %}
 {% endif %}
