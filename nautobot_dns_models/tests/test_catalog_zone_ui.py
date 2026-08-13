@@ -106,12 +106,12 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
 
     def test_catalog_zone_lists_its_members(self):
         """The membership is the operator-facing object, so the catalog leads with it."""
-        self.assertIn("MEMBER PTR RECORDS", self._panels(self.catalog_zone))
+        self.assertIn("MEMBER ZONES", self._panels(self.catalog_zone))
         self.assertIn(self.membership.member_label, self._detail(self.catalog_zone))
 
     def test_primary_zone_has_no_member_zones_panel(self):
         """Only a zone that publishes members has anything to list here."""
-        self.assertNotIn("MEMBER PTR RECORDS", self._panels(self.member_zone))
+        self.assertNotIn("MEMBER ZONES", self._panels(self.member_zone))
 
     def test_catalog_zone_has_no_record_statistics(self):
         """The counts are of record types a zone without user records cannot hold."""

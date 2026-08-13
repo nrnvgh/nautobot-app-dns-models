@@ -798,7 +798,7 @@ class CatalogZoneMember(BaseModel):
 
     def __str__(self):
         """Stringify instance."""
-        return f"{self.member_zone} in {self.catalog_zone}"
+        return f"{self.member_zone.name} in {self.catalog_zone.name}"
 
     def clean(self):
         """Reject memberships the RFC or this app's data model cannot represent."""

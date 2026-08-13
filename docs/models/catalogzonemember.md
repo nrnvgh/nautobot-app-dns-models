@@ -1,6 +1,6 @@
 # Catalog Zone Member Model
 
-The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) catalog zone. It is the model behind the zone's catalog membership rather than an object in its own right: it has no pages of its own, and enrollment is set from the member zone. The PTR record that publishes the membership to consumers is derived from it rather than managed directly.
+The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) catalog zone. It is the model behind the zone's catalog membership rather than an object in its own right: it has add, edit, and delete forms, but no list or detail page of its own. The PTR record that publishes the membership to consumers is derived from it rather than managed directly.
 
 - `catalog_zone` (DNSZone): The catalog zone publishing this membership. Must have a `zone_type` of `Catalog`.
 - `member_zone` (DNSZone): The zone published by the catalog. Must be in the same DNS view as the catalog zone, and cannot itself be a catalog zone.
@@ -8,7 +8,13 @@ The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatr
 
 A zone belongs to at most one catalog, and each label is unique within a catalog.
 
-In the UI, enrollments are created, moved, and removed from the zone: a zone's add or edit form offers a Catalog Zone field, and the zone list offers Add to Catalog and Remove from Catalog actions for a selection of zones. All of them write the rows described here, and all of them are recorded in the change log of the two zones the enrollment relates. The model also has a REST API endpoint of its own, which writes the same rows directly.
+In the UI, enrollments are created, moved, and removed from the zone and from the catalog:
+
+- a zone's add or edit form offers a Catalog Zone field
+- the zone list offers an Edit Catalog Memberships menu for a selection of zones (Add to Catalog and Remove from Catalog), and per-row actions: Add Member Zone on a catalog, Add to Catalog on an unenrolled zone, and Move to Catalog or Remove from Catalog on an enrolled zone
+- a catalog zone's Member Zones panel offers Add, which opens the membership form with that catalog pre-selected. Each row in that panel has Edit and Delete actions for the membership. The panel footer links to the PTR records the catalog publishes for those members.
+
+All of them write the rows described here, and all of them are recorded in the change log of the two zones the enrollment relates. The model also has a REST API endpoint of its own, which writes the same rows directly.
 
 !!! note
     Recording an enrollment against the two zones it relates requires Nautobot 3.2.2 or later, which is where core began writing change records for both sides of a many-to-many relationship. Enrollment behaves the same on earlier releases, but goes unrecorded: the membership is not a change-logged object in its own right, so there is nowhere else for the record to land.
@@ -45,7 +51,7 @@ Renaming a catalog zone publishes nothing new, because a member's owner name is 
 
 Adding a zone to a catalog requires `add_catalogzonemember`, moving it to another catalog requires `change_catalogzonemember`, and removing it requires `delete_catalogzonemember`.
 
-When enrollment is changed from a zone's add or edit form, or from either of the zone list's bulk actions, those permissions are required in addition to the permission needed to create or change the zone itself. `change_dnszone` alone does not authorize enrollment.
+When enrollment is changed from a zone's add or edit form, or from either of the zone list's bulk actions, those permissions are required in addition to the permission needed to create or change the zone itself. `change_dnszone` alone does not authorize enrollment. The membership add, edit, and delete forms, the members panel Add control, and the zone list's per-row actions are governed by the membership permissions alone.
 
 Add to Catalog is offered to anyone holding `add_catalogzonemember`, since enrolling is what it is for. A selection that also moves zones out of another catalog needs `change_catalogzonemember` as well, and is refused in full without it. Remove from Catalog is offered on `delete_catalogzonemember` alone.
 

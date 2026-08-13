@@ -7,6 +7,7 @@
 from django import forms
 from django.utils.html import format_html, format_html_join
 from nautobot.apps.forms import (
+    BootstrapMixin,
     BulkEditNullBooleanSelect,
     DatePicker,
     DynamicModelChoiceField,
@@ -14,6 +15,7 @@ from nautobot.apps.forms import (
     NautobotBulkEditForm,
     NautobotFilterForm,
     NautobotModelForm,
+    ReturnURLForm,
     StaticSelect2,
     StaticSelect2Multiple,
     TagsBulkEditFormMixin,
@@ -588,6 +590,60 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
         "enabled",
         "filename",
     ]
+
+
+class CatalogZoneMemberForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
+    """CatalogZoneMember creation/edit form.
+
+    The member label is system-assigned on create and immutable afterward, so it is omitted from
+    the UI.
+    """
+
+    catalog_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        query_params={
+            "zone_type": DNSZoneTypeChoices.TYPE_CATALOG,
+            "same_dns_view_as": "$member_zone",
+        },
+        label="Catalog Zone",
+    )
+    member_zone = DynamicModelChoiceField(
+        queryset=models.DNSZone.objects.all(),
+        # Catalogs are left out of the picker because `CatalogZoneMember.clean()` refuses them.
+        # `$catalog_zone` only yields a PK, so same_dns_view_as maps that zone to its view.
+        query_params={
+            "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
+            "same_dns_view_as": "$catalog_zone",
+        },
+        label="Member Zone",
+    )
+
+    class Meta:
+        """Meta attributes."""
+
+        model = models.CatalogZoneMember
+        # Not `__all__`: `member_label` is system-assigned on create and immutable afterward, so the
+        # form has nothing to offer for it.
+        fields = ["catalog_zone", "member_zone"]  # pylint: disable=nb-use-fields-all
+
+    def __init__(self, *args, **kwargs):
+        """Hide already-enrolled zones from the picker."""
+        super().__init__(*args, **kwargs)
+
+        editing = self.instance.present_in_database
+        # Set here rather than declared above because `add_query_param` appends: declaring the create-time
+        # value would leave the edit-time one as a second entry the filter has to disambiguate.
+        # Passing the membership's PK keeps its own member_zone selectable while other enrolled zones stay hidden.
+        self.fields["member_zone"].widget.add_query_param(
+            "available_for_catalog_membership", str(self.instance.pk) if editing else "true"
+        )
+
+    def save(self, commit=True):
+        """Write through `validated_save`, the same path as every other enrollment writer."""
+        membership = super().save(commit=False)
+        if commit:
+            membership.validated_save()
+        return membership
 
 
 class NSRecordForm(EnabledBeforeDescriptionMixin, NautobotModelForm):

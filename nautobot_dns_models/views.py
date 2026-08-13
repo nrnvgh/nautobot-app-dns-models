@@ -15,7 +15,7 @@ from nautobot.apps.ui import (
     SectionChoices,
     StatsPanel,
 )
-from nautobot.apps.views import get_obj_from_context
+from nautobot.apps.views import ObjectDestroyViewMixin, ObjectEditViewMixin, get_obj_from_context
 from nautobot.core.ui import object_detail
 from nautobot.core.utils.requests import convert_querydict_to_dict
 
@@ -29,6 +29,7 @@ from rest_framework.decorators import action
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
+    CatalogZoneMemberSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -62,6 +63,7 @@ from nautobot_dns_models.forms import (
     ARecordBulkEditForm,
     ARecordFilterForm,
     ARecordForm,
+    CatalogZoneMemberForm,
     CNAMERecordBulkEditForm,
     CNAMERecordFilterForm,
     CNAMERecordForm,
@@ -113,7 +115,7 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.tables import (
     AAAARecordTable,
     ARecordTable,
-    CatalogMemberPTRTable,
+    CatalogMemberZoneTable,
     CNAMERecordTable,
     DNSRegistrarTable,
     DNSRegistrationTable,
@@ -187,17 +189,19 @@ class CatalogSystemRecordsPanel(ZoneRecordsTablePanel):
         return zone is not None and zone.is_catalog_zone
 
 
-class CatalogMemberPTRTablePanel(ObjectsTablePanel):
-    """Membership rows shown as the PTR records a catalog publishes for them."""
+class CatalogMemberZoneTablePanel(ObjectsTablePanel):
+    """Memberships of a catalog zone, listed as the zones it publishes."""
 
     def __init__(self, **kwargs):
-        """Apply catalog-member PTR table defaults on the zone detail page."""
+        """Apply member-zone table defaults on the catalog detail page."""
         kwargs.setdefault("table_filter", "catalog_zone")
-        kwargs.setdefault("table_title", "Member PTR Records")
-        # The membership is a through model with no views of its own, so the header badge has
-        # nowhere to lead and the panel has no Add control to offer.
-        kwargs.setdefault("enable_related_link", False)
-        kwargs.setdefault("add_button_route", None)
+        kwargs.setdefault("table_title", "Member Zones")
+        kwargs.setdefault("related_list_url_name", "plugins:nautobot_dns_models:dnszone_list")
+        kwargs.setdefault("related_field_name", "catalog")
+        kwargs.setdefault(
+            "footer_content_template_path",
+            "nautobot_dns_models/panels/member_zones_footer.html",
+        )
         super().__init__(**kwargs)
 
     def should_render(self, context):
@@ -428,16 +432,16 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 section=SectionChoices.RIGHT_HALF,
                 table_class=MXRecordTable,
             ),
-            # should_render methods in the two PTR panels ensure only one is visible at a time
+            # should_render methods in the PTR panel and the members panel ensure only one is visible at a time
             ZoneRecordsTablePanel(
                 weight=500,
                 section=SectionChoices.RIGHT_HALF,
                 table_class=PTRRecordTable,
             ),
-            CatalogMemberPTRTablePanel(
+            CatalogMemberZoneTablePanel(
                 weight=500,
                 section=SectionChoices.RIGHT_HALF,
-                table_class=CatalogMemberPTRTable,
+                table_class=CatalogMemberZoneTable,
                 max_display_count=10,
             ),
             ZoneRecordsTablePanel(
@@ -770,6 +774,20 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
 
         selection = get_bulk_queryset_from_view(user=self.request.user, action="change", **key_params)
         return selection.filter(zone_type=DNSZoneTypeChoices.TYPE_CATALOG).exists()
+
+
+class CatalogZoneMemberUIViewSet(ObjectEditViewMixin, ObjectDestroyViewMixin):
+    """Add, edit, and delete pages for a catalog membership.
+
+    The membership is a through model and has no list or detail of its own.
+    """
+
+    default_return_url = "plugins:nautobot_dns_models:dnszone_list"
+    form_class = CatalogZoneMemberForm
+    lookup_field = "pk"
+    object_detail_content = None
+    queryset = CatalogZoneMember.objects.select_related("catalog_zone__dns_view", "member_zone__dns_view")
+    serializer_class = CatalogZoneMemberSerializer
 
 
 class NSRecordUIViewSet(views.NautobotUIViewSet):

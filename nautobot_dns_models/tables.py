@@ -7,6 +7,46 @@ from nautobot.tenancy.tables import TenantColumn
 from nautobot_dns_models import models
 
 
+DNSZONE_BUTTONS = """
+{% if record.is_catalog_zone %}
+    {% if perms.nautobot_dns_models.add_catalogzonemember %}
+        <li>
+            <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_add' %}?catalog_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
+                <span class="mdi mdi-plus-thick me-4" aria-hidden="true"></span>Add Member Zone
+            </a>
+        </li>
+    {% endif %}
+{% else %}
+    {% with membership=record.catalog_membership.all.0 %}
+        {% if not membership %}
+            {% if perms.nautobot_dns_models.add_catalogzonemember %}
+                <li>
+                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_add' %}?member_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
+                        <span class="mdi mdi-folder-plus-outline me-4" aria-hidden="true"></span>Add to Catalog
+                    </a>
+                </li>
+            {% endif %}
+        {% else %}
+            {% if perms.nautobot_dns_models.change_catalogzonemember %}
+                <li>
+                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_edit' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-warning">
+                        <span class="mdi mdi-folder-plus-outline me-4" aria-hidden="true"></span>Move to Catalog
+                    </a>
+                </li>
+            {% endif %}
+            {% if perms.nautobot_dns_models.delete_catalogzonemember %}
+                <li>
+                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_delete' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-danger">
+                        <span class="mdi mdi-folder-minus-outline me-4" aria-hidden="true"></span>Remove from Catalog
+                    </a>
+                </li>
+            {% endif %}
+        {% endif %}
+    {% endwith %}
+{% endif %}
+"""
+
+
 class DNSRecordTable(BaseTable):  # pylint: disable=nb-no-model-found
     """Base table for DNS records list view."""
 
@@ -141,6 +181,7 @@ class DNSZoneTable(BaseTable):
     actions = ButtonsColumn(
         models.DNSZone,
         buttons=("changelog", "edit", "delete"),
+        prepend_template=DNSZONE_BUTTONS,
     )
 
     class Meta(BaseTable.Meta):
@@ -187,37 +228,42 @@ class DNSZoneTable(BaseTable):
         return value.name
 
 
-class CatalogMemberPTRTable(BaseTable):  # pylint: disable=nb-sub-class-name
-    """Membership rows presented as the PTR records a catalog zone publishes for them.
+class CatalogMemberZoneTable(BaseTable):  # pylint: disable=nb-sub-class-name
+    """Membership rows on a catalog zone's Member Zones panel.
 
-    The columns mirror the derived PTR (`<label>.zones` → member zone name). Read-only: the
-    membership is the through model behind `DNSZone.catalogs` rather than an object of its own, so
-    there is nothing to link a row to and enrollment is changed from the member zone.
+    The member zone is the operator-facing object. Published As is the RFC 9432 owner name
+    (`<label>.zones`) relative to the catalog apex.
     """
 
-    name = tables.Column(accessor="member_label", empty_values=(), verbose_name="Name")
-    ptrdname = tables.Column(accessor="member_zone", linkify=True, verbose_name="Ptrdname")
+    member_zone = tables.Column(linkify=True, verbose_name="Member Zone")
+    published_as = tables.Column(accessor="member_label", empty_values=(), verbose_name="Published As")
+    actions = ButtonsColumn(
+        models.CatalogZoneMember,
+        buttons=("edit", "delete"),
+    )
 
     class Meta(BaseTable.Meta):
         """Meta attributes."""
 
         model = models.CatalogZoneMember
         fields = (
-            "name",
-            "ptrdname",
+            "member_zone",
+            "published_as",
+            "actions",
         )
         default_columns = (
-            "name",
-            "ptrdname",
+            "member_zone",
+            "published_as",
+            "actions",
         )
 
-    def render_name(self, record):
+    def render_member_zone(self, value):
+        """Name the zone alone; `DNSZone.__str__` would repeat the view the catalog already implies."""
+        return value.name
+
+    def render_published_as(self, record):
         """RFC 9432 §4.1 owner name relative to the catalog apex."""
         return f"{record.member_label}.zones"
-
-    def render_ptrdname(self, record):
-        """Render the member zone name."""
-        return record.member_zone.name
 
 
 class NSRecordTable(DNSRecordTable):
