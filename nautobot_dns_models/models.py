@@ -564,14 +564,7 @@ class DNSZone(DNSModel):
         if self.present_in_database:
             stored_zone_type = DNSZone.objects.filter(pk=self.pk).values_list("zone_type", flat=True).first()
             if stored_zone_type is not None and stored_zone_type != self.zone_type:
-                raise ValidationError(
-                    {
-                        "zone_type": (
-                            "Zone type cannot be changed after creation. "
-                            "Delete this zone and recreate it with the desired type."
-                        )
-                    }
-                )
+                raise ValidationError({"zone_type": "Zone type cannot be changed after creation."})
 
         # A catalog zone permits no A/AAAA records, so the flag could never fire; reject it rather than
         # silently coercing, so API callers learn the value was refused.
