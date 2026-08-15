@@ -75,4 +75,4 @@ A membership holds both of its zones in the view it was made in, since a catalog
 
 The zone list carries a Catalog Zone column and a filter of the same name, so a catalog's members can be found from the zone list rather than only from the catalog's own page.
 
-A zone's REST API representation carries a read-only `catalog` field naming the catalog it is a member of, or `null` when it is in none. Memberships themselves are created, moved, and removed through the Catalog Zone Membership endpoint.
+A zone's REST API representation carries a read-only `catalog` field naming the catalog it is a member of, or `null` when it is in none. GraphQL reports the same catalog on the same field, and returns `null` there for a catalog zone the requesting user may not view. Memberships themselves are created, moved, and removed through the Catalog Zone Membership endpoint.

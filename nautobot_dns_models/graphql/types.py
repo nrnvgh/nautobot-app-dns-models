@@ -1,12 +1,13 @@
 """GraphQL implementation for the DNS models."""
 
 import graphene
-from nautobot.core.graphql.types import OptimizedNautobotObjectType
+from nautobot.apps.graphql import OptimizedNautobotObjectType, permission_safe_attribute_resolver
 
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
     CNAMERecordFilterSet,
+    DNSZoneFilterSet,
     MXRecordFilterSet,
     NSRecordFilterSet,
     PTRRecordFilterSet,
@@ -18,12 +19,29 @@ from nautobot_dns_models.models import (
     ARecord,
     CNAMERecord,
     DNSRecord,
+    DNSZone,
     MXRecord,
     NSRecord,
     PTRRecord,
     SRVRecord,
     TXTRecord,
 )
+
+
+class DNSZoneType(OptimizedNautobotObjectType):
+    """Graphql Type Object for the DNSZone model."""
+
+    catalog = graphene.Field("nautobot_dns_models.graphql.types.DNSZoneType")
+
+    # `catalog` reads a model property rather than a field or filterset, so it bypasses the resolvers core
+    # generates to enforce object permissions on a related object. GHSA-mfwj-pjgx-22v2 is that omission.
+    resolve_catalog = permission_safe_attribute_resolver("catalog")
+
+    class Meta:
+        """Metadata for the DNSZone."""
+
+        model = DNSZone
+        filterset_class = DNSZoneFilterSet
 
 
 class DNSRecordType(OptimizedNautobotObjectType):
@@ -118,6 +136,7 @@ class SRVRecordType(DNSRecordType):
 
 
 graphql_types = [
+    DNSZoneType,
     NSRecordType,
     ARecordType,
     AAAARecordType,

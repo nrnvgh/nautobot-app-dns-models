@@ -419,12 +419,13 @@ def get_default_view_pk():
     return default_view.pk
 
 
+# No "graphql" feature: the app defines `DNSZoneType` itself, to publish the catalog a zone belongs to.
+# Core registers auto-generated types first and would discard a custom type for a model listed here.
 @extras_features(
     "custom_fields",
     "custom_links",
     "custom_validators",
     "export_templates",
-    "graphql",
     "relationships",
     "webhooks",
 )
