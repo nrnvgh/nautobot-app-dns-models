@@ -1488,6 +1488,7 @@ class CatalogMembershipManagerTest(TestCase):
         self.assertTrue(
             PTRRecord.objects.filter(zone=self.catalog_zone, name=f"{membership.member_label}.zones").exists()
         )
+        self.assertTrue(self.catalog_zone.has_members)
 
     def test_adding_from_the_catalog_end_enrolls_the_zone_too(self):
         """The reverse accessor writes the same row, so it is held to the same rules."""
@@ -1534,6 +1535,7 @@ class CatalogMembershipManagerTest(TestCase):
         self.catalog_zone.members.remove(self.member_zone)
 
         self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+        self.assertFalse(self.catalog_zone.has_members)
 
 
 class CatalogZoneMemberTest(TestCase):
@@ -1645,6 +1647,77 @@ class CatalogZoneMemberTest(TestCase):
         fields = {"catalog_zone": self.catalog_zone, "member_zone": self.member_zone}
         fields.update(overrides)
         membership = CatalogZoneMember(**fields)
+        membership.validated_save()
+        return membership
+
+
+class CatalogEnrollmentViewChangeTest(TestCase):
+    """Tests that a zone taking part in an enrollment stays in the view that enrollment was made in.
+
+    `CatalogZoneMember` refuses a catalog and a member in different views, but nothing re-validates a
+    stored membership when either of its zones moves, so the same rule has to hold from the zone side.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = create_zone("member.example")
+        cls.other_view = DNSView.objects.create(name="Other")
+
+    def test_enrolled_member_cannot_change_view(self):
+        """Moving an enrolled zone would leave its catalog publishing a member from another view."""
+        membership = self._membership()
+
+        self.member_zone.dns_view = self.other_view
+        with self.assertRaises(ValidationError) as context:
+            self.member_zone.validated_save()
+
+        self.assertIn("cannot be moved to another view", str(context.exception.message_dict["dns_view"]))
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.dns_view_id, self.catalog_zone.dns_view_id)
+        self.assertTrue(CatalogZoneMember.objects.filter(pk=membership.pk).exists())
+
+    def test_catalog_with_members_cannot_change_view(self):
+        """Moving a catalog would strand every zone it publishes in the view it left."""
+        self._membership()
+
+        self.catalog_zone.dns_view = self.other_view
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.validated_save()
+
+        self.assertIn("cannot be moved to another view", str(context.exception.message_dict["dns_view"]))
+        self.catalog_zone.refresh_from_db()
+        self.assertEqual(self.catalog_zone.dns_view_id, self.member_zone.dns_view_id)
+
+    def test_unenrolled_zone_can_change_view(self):
+        """A zone in no enrollment has nothing holding it in place."""
+        self.member_zone.dns_view = self.other_view
+        self.member_zone.validated_save()
+
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.dns_view_id, self.other_view.pk)
+
+    def test_empty_catalog_can_change_view(self):
+        """A catalog with no members publishes nothing that a move could strand."""
+        self.catalog_zone.dns_view = self.other_view
+        self.catalog_zone.validated_save()
+
+        self.catalog_zone.refresh_from_db()
+        self.assertEqual(self.catalog_zone.dns_view_id, self.other_view.pk)
+
+    def test_enrolled_member_can_still_be_edited(self):
+        """Only the view is pinned, so enrollment does not freeze the rest of the zone."""
+        self._membership()
+
+        self.member_zone.description = "still enrolled"
+        self.member_zone.validated_save()
+
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.description, "still enrolled")
+
+    def _membership(self):
+        """Enroll the fixture member in the fixture catalog."""
+        membership = CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone)
         membership.validated_save()
         return membership
 

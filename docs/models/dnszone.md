@@ -71,6 +71,8 @@ Enrollment is set from the member zone and from the catalog. A zone's add or edi
 
     As the [permissions guide](https://docs.nautobot.com/projects/core/en/stable/user-guide/administration/guides/permissions/#related-objects-on-forms) notes for related objects generally, a catalog the user cannot view is left out of the field, and submitting the form then reads as a request to remove the zone from its catalog: either withdrawing it or, without `delete_catalogzonemember`, failing with an error about a removal the user did not intend. Withdrawing a zone discards its member label, and re-enrolling mints a new one, which catalog consumers treat as an unrelated zone.
 
+An enrollment holds both of its zones in the view it was made in, since a catalog and its members have to resolve in the same view. A zone enrolled in a catalog cannot be moved to another view, and neither can a catalog that has members. The edit form disables the DNS View field on such a zone; the REST API and bulk edit refuse the change. Withdraw the zone from its catalog, or remove the catalog's members, and its view can be changed again.
+
 The zone list carries a Catalog Zone column and a filter of the same name, so a catalog's members can be found from the zone list rather than only from the catalog's own page.
 
 A zone's REST API representation carries a read-only `catalog` field naming the catalog it is enrolled in, or `null` when it is not enrolled. Enrollments themselves are created, moved, and removed through the Catalog Zone Member endpoint.

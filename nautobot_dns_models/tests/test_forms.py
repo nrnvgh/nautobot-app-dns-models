@@ -234,6 +234,42 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
         self.assertFalse(zone.catalog_membership.exists())
         self.assertFalse(models.PTRRecord.objects.filter(zone=catalog_zone).exists())
 
+    def test_editing_ignores_a_submitted_view_for_a_catalog_with_members(self):
+        """A catalog zone's own form is the one UI path that could otherwise strand the members it publishes.
+
+        The disabled field keeps the stored view, so a hand-built payload cannot move the zone.
+        """
+        member_zone, catalog_zone = self._enrolled_zone()
+        other_view = DNSView.objects.create(name="Other")
+
+        form = forms.DNSZoneForm(
+            instance=catalog_zone,
+            data=self._zone_data(
+                name=catalog_zone.name,
+                zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+                dns_view=other_view.pk,
+            ),
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+
+        catalog_zone.refresh_from_db()
+        self.assertEqual(catalog_zone.dns_view_id, member_zone.dns_view_id)
+
+    def test_editing_ignores_a_submitted_view_for_an_enrolled_zone(self):
+        zone, catalog_zone = self._enrolled_zone()
+        other_view = DNSView.objects.create(name="Other")
+
+        form = forms.DNSZoneForm(
+            instance=zone,
+            data=self._zone_data(name=zone.name, catalog=catalog_zone.pk, dns_view=other_view.pk),
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+
+        zone.refresh_from_db()
+        self.assertEqual(zone.dns_view_id, catalog_zone.dns_view_id)
+
     def test_catalog_is_disabled_when_editing_catalog_zone(self):
         zone = DNSZone.objects.create(name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         form = forms.DNSZoneForm(instance=zone)
@@ -243,6 +279,26 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
         zone = DNSZone.objects.create(name="primary.example")
         form = forms.DNSZoneForm(instance=zone)
         self.assertFalse(form.fields["catalog"].disabled)
+
+    def test_view_is_disabled_when_editing_a_catalog_zone_with_members(self):
+        _, catalog_zone = self._enrolled_zone()
+        form = forms.DNSZoneForm(instance=catalog_zone)
+        self.assertTrue(form.fields["dns_view"].disabled)
+        self.assertIn("A catalog zone with members cannot be moved", form.fields["dns_view"].help_text)
+
+    def test_view_is_disabled_when_editing_an_enrolled_zone(self):
+        zone, _ = self._enrolled_zone()
+        form = forms.DNSZoneForm(instance=zone)
+        self.assertTrue(form.fields["dns_view"].disabled)
+        self.assertIn("A zone enrolled in a catalog zone cannot be moved", form.fields["dns_view"].help_text)
+
+    def test_view_is_enabled_when_editing_a_catalog_zone_without_members(self):
+        form = forms.DNSZoneForm(instance=self._catalog_zone())
+        self.assertFalse(form.fields["dns_view"].disabled)
+
+    def test_view_is_enabled_when_editing_an_unenrolled_zone(self):
+        form = forms.DNSZoneForm(instance=DNSZone.objects.create(name="primary.example"))
+        self.assertFalse(form.fields["dns_view"].disabled)
 
     def _catalog_zone(self, **overrides):
         """Create and return a catalog zone in the view the form payload uses."""
@@ -256,6 +312,71 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
         zone = DNSZone.objects.create(name="member.example")
         models.CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone).validated_save()
         return zone, catalog_zone
+
+
+class DNSZoneBulkEditTestCase(TestCase):
+    """Test the DNSZone bulk edit form, whose view field an enrollment holds its zones away from."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = DNSZone.objects.create(name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = DNSZone.objects.create(name="member.example")
+        cls.unenrolled_zone = DNSZone.objects.create(name="primary.example")
+        cls.other_view = DNSView.objects.create(name="Other")
+
+    def test_refuses_to_move_an_enrolled_zone(self):
+        """The enrolled zone is named, so a selection can be corrected in one pass."""
+        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+
+        form = self._form([self.member_zone, self.unenrolled_zone], self.other_view)
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("Held in their current view by a catalog enrollment", str(form.errors["dns_view"]))
+        self.assertIn("member.example", str(form.errors["dns_view"]))
+        self.assertNotIn("primary.example", str(form.errors["dns_view"]))
+
+    def test_refuses_to_move_a_catalog_with_members(self):
+        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+
+        form = self._form([self.catalog_zone], self.other_view)
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("catalog.example", str(form.errors["dns_view"]))
+
+    def test_allows_the_view_an_enrolled_zone_is_already_in(self):
+        """Only a move is refused, so normalizing a mixed selection onto that view still goes through."""
+        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+        elsewhere = DNSZone.objects.create(name="elsewhere.example", dns_view=self.other_view)
+
+        form = self._form([self.member_zone, elsewhere], self.member_zone.dns_view)
+
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_allows_moving_zones_in_no_enrollment(self):
+        form = self._form([self.unenrolled_zone, self.catalog_zone], self.other_view)
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_allows_a_bulk_edit_that_sets_no_view(self):
+        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+        form = self._form([self.member_zone], None, description="Bulk edit zones")
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_select_all_leaves_the_view_check_to_the_model(self):
+        """A selection claimed wholesale names no zones here, so the job's per-object validation refuses it."""
+        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+
+        form = forms.DNSZoneBulkEditForm(DNSZone, {"dns_view": self.other_view.pk, "_all": "on"}, edit_all=True)
+
+        self.assertTrue(form.is_valid(), form.errors)
+
+    @staticmethod
+    def _form(zones, dns_view, **overrides):
+        """Build a bulk edit form posting `zones` and `dns_view`."""
+        data = {"pk": [zone.pk for zone in zones]}
+        if dns_view is not None:
+            data["dns_view"] = dns_view.pk
+        data.update(overrides)
+        return forms.DNSZoneBulkEditForm(DNSZone, data=data)
 
 
 class DNSRegistrarFormTestCase(TestCase):

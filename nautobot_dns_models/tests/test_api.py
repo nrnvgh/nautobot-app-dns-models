@@ -643,6 +643,27 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         self.assertEqual(member_zone.catalog, catalog_zone)
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_patch_refuses_to_move_an_enrolled_zone_to_another_view(self):
+        """Enrollment is not writable here, so nothing else stops a move that strands a membership."""
+        self.add_permissions("nautobot_dns_models.change_dnszone")
+        catalog_zone = _create_zone(name="api-catalog-view.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = _create_zone(name="api-member-view.example")
+        CatalogZoneMember.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+        other_view = DNSView.objects.create(name="API Other View")
+
+        response = self.client.patch(
+            self._get_detail_url(member_zone),
+            {"dns_view": other_view.pk},
+            format="json",
+            **self.header,
+        )
+
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("cannot be moved to another view", str(response.data["dns_view"]))
+        member_zone.refresh_from_db()
+        self.assertEqual(member_zone.dns_view_id, catalog_zone.dns_view_id)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_list_reads_every_enrollment_at_once(self):
         """Listing zones must not go back to the database for each one's catalog."""
         catalog_zone = _create_zone(name="api-catalog-list.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)

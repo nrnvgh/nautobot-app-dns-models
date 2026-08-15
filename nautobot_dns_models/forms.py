@@ -35,6 +35,21 @@ from nautobot_dns_models.choices import DNSZoneTypeChoices
 EXPIRATION_DATE_INPUT_FORMATS = ("%Y-%m-%d",)
 
 
+def _listed_names(names, limit=5):
+    """List the names in bold, falling back on a count once the list would stop being readable.
+
+    Marked up here rather than in a template because the forms that name the zones responsible for a
+    refused bulk operation report the same sentences from `clean()`, in the shape core gives the
+    objects that block a delete.
+    """
+    names = sorted(names)
+    listed = format_html_join(", ", "<strong>{}</strong>", ((name,) for name in names[:limit]))
+    if len(names) > limit:
+        return format_html("{}, and {} more", listed, len(names) - limit)
+
+    return listed
+
+
 class EnabledBeforeDescriptionMixin:
     """Render the `enabled` field right before `description` on create/edit forms.
 
@@ -321,7 +336,8 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         super().__init__(*args, **kwargs)
 
         if self.instance.present_in_database:
-            self.initial["catalog"] = self.instance.catalog
+            catalog_zone = self.instance.catalog
+            self.initial["catalog"] = catalog_zone
             self.fields["zone_type"].disabled = True
             self.fields["zone_type"].help_text = "Zone type cannot be changed after creation."
 
@@ -330,6 +346,10 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
                 self.fields["auto_create_ptr"].help_text = "Catalog zones cannot enable automatic PTR creation."
                 self.fields["catalog"].disabled = True
                 self.fields["catalog"].help_text = "A catalog zone cannot be a member of another catalog zone."
+                if self.instance.has_members:
+                    self._disable_view_field("A catalog zone with members cannot be moved to another view.")
+            elif catalog_zone is not None:
+                self._disable_view_field("A zone enrolled in a catalog zone cannot be moved to another view.")
 
     def clean(self):
         """Reject an enrollment `CatalogZoneMember` would refuse, so the error lands on the field."""
@@ -359,6 +379,11 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
             self._sync_catalog_membership(zone)
 
         return zone
+
+    def _disable_view_field(self, reason):
+        """Disable the view field, since `DNSZone.clean()` refuses to move an enrolled zone to another view."""
+        self.fields["dns_view"].disabled = True
+        self.fields["dns_view"].help_text = reason
 
     def _sync_catalog_membership(self, zone):
         """Create, move, or remove the membership enrolling `zone` in a catalog.
@@ -454,6 +479,48 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
             "tenant",
         ]
 
+    def clean(self):
+        """Refuse a view an enrollment holds a selected zone away from, naming the zones responsible.
+
+        The bulk edit job runs the selection in one transaction, so leaving these to the model would
+        roll the batch back over the first zone it reached. A selection made with "select all" posts
+        no zones, and is left to the model.
+        """
+        super().clean()
+
+        dns_view = self.cleaned_data.get("dns_view")
+        if dns_view is None:
+            return self.cleaned_data
+
+        moving = [zone for zone in self.cleaned_data.get("pk") or [] if zone.dns_view_id != dns_view.pk]
+        if not moving:
+            return self.cleaned_data
+
+        enrolled_pks = self._enrolled_pks(moving)
+        pinned = [zone.name for zone in moving if zone.pk in enrolled_pks]
+        if pinned:
+            raise forms.ValidationError(
+                {
+                    "dns_view": format_html(
+                        "Held in their current view by a catalog enrollment: {}.", _listed_names(pinned)
+                    )
+                }
+            )
+
+        return self.cleaned_data
+
+    @staticmethod
+    def _enrolled_pks(zones):
+        """Return the primary keys of `zones` that take part in an enrollment, from either side."""
+        pks = [zone.pk for zone in zones]
+        enrolled = set(
+            models.CatalogZoneMember.objects.filter(member_zone__in=pks).values_list("member_zone_id", flat=True)
+        )
+        enrolled.update(
+            models.CatalogZoneMember.objects.filter(catalog_zone__in=pks).values_list("catalog_zone_id", flat=True)
+        )
+        return enrolled
+
 
 class DNSZoneWithCatalogBulkEditForm(DNSZoneBulkEditForm):
     """DNSZone bulk edit form for a selection that includes at least one catalog zone.
@@ -528,7 +595,7 @@ class DNSZoneBulkAssignCatalogForm(forms.Form):
             raise forms.ValidationError(
                 {
                     "catalog": format_html(
-                        "Not in this catalog zone's view: {}.", self._names(zone.name for zone in strangers)
+                        "Not in this catalog zone's view: {}.", _listed_names(zone.name for zone in strangers)
                     )
                 },
             )
@@ -546,27 +613,13 @@ class DNSZoneBulkAssignCatalogForm(forms.Form):
 
         catalogs = [zone.name for zone in self.zones if zone.is_catalog_zone]
         if catalogs:
-            reasons.append(format_html("{} {}.", self.NESTING, self._names(catalogs)))
+            reasons.append(format_html("{} {}.", self.NESTING, _listed_names(catalogs)))
 
         if len(self.dns_view_ids) > 1:
             views = models.DNSView.objects.filter(pk__in=self.dns_view_ids).values_list("name", flat=True)
-            reasons.append(format_html("{} {}.", self.SPANS_VIEWS, self._names(views)))
+            reasons.append(format_html("{} {}.", self.SPANS_VIEWS, _listed_names(views)))
 
         return reasons
-
-    @staticmethod
-    def _names(names, limit=5):
-        """List the names in bold, falling back on a count once the list would stop being readable.
-
-        Marked up here rather than in the template because `clean()` reports the same sentences, in
-        the shape core gives the objects that block a delete.
-        """
-        names = sorted(names)
-        listed = format_html_join(", ", "<strong>{}</strong>", ((name,) for name in names[:limit]))
-        if len(names) > limit:
-            return format_html("{}, and {} more", listed, len(names) - limit)
-
-        return listed
 
 
 class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):

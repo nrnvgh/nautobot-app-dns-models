@@ -539,7 +539,7 @@ class DNSZone(DNSModel):
         return f"{self.name} ({self.dns_view})"
 
     def clean(self):
-        """Normalize the SOA RNAME, keep zone_type immutable, and bar catalog zones from auto-creating PTRs."""
+        """Normalize the SOA RNAME, keep zone_type immutable, hold enrollments to one view, and bar catalog PTR."""
         super().clean()
 
         invalid_rname_message = (
@@ -562,9 +562,12 @@ class DNSZone(DNSModel):
         self.soa_rname = normalized_soa_rname
 
         if self.present_in_database:
-            stored_zone_type = DNSZone.objects.filter(pk=self.pk).values_list("zone_type", flat=True).first()
-            if stored_zone_type is not None and stored_zone_type != self.zone_type:
-                raise ValidationError({"zone_type": "Zone type cannot be changed after creation."})
+            stored = DNSZone.objects.filter(pk=self.pk).values("zone_type", "dns_view_id").first()
+            if stored is not None:
+                if stored["zone_type"] != self.zone_type:
+                    raise ValidationError({"zone_type": "Zone type cannot be changed after creation."})
+                if stored["dns_view_id"] != self.dns_view_id:
+                    self._validate_view_change()
 
         # A catalog zone permits no A/AAAA records, so the flag could never fire; reject it rather than
         # silently coercing, so API callers learn the value was refused.
@@ -625,6 +628,15 @@ class DNSZone(DNSModel):
         return membership.catalog_zone if membership else None
 
     @property
+    def has_members(self):
+        """Return whether any zone is enrolled in this catalog zone, which is always False for other types.
+
+        Unlike `catalog`, this queries on every read: `exists()` builds a fresh queryset, so a
+        `prefetch_related("catalog_memberships")` cache goes unused. Read it once per zone.
+        """
+        return self.catalog_memberships.exists()  # pylint: disable=no-member
+
+    @property
     def is_catalog_zone(self):
         """Return whether this zone is an RFC 9432 catalog zone."""
         return self.zone_type == DNSZoneTypeChoices.TYPE_CATALOG
@@ -649,6 +661,21 @@ class DNSZone(DNSModel):
             if zone:
                 return zone
         return None
+
+    def _validate_view_change(self):
+        """Refuse a view change that would leave a catalog zone and a member of it in different views.
+
+        `CatalogZoneMember` already forbids that pair, but nothing re-validates a stored membership
+        when one of its zones moves, so the rule has to hold from the zone side as well. Zone type is
+        immutable, so only one side of the relation can ever apply to a given zone.
+        """
+        if self.is_catalog_zone:
+            if self.has_members:
+                raise ValidationError({"dns_view": "A catalog zone with members cannot be moved to another view."})
+            return
+
+        if self.catalog is not None:
+            raise ValidationError({"dns_view": "A zone enrolled in a catalog zone cannot be moved to another view."})
 
 
 @extras_features(
