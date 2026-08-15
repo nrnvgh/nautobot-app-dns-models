@@ -51,7 +51,7 @@ email form as follows:
 
 +++ 2.4.0
 
-A zone with a `zone_type` of `Catalog` names the zones enrolled in it, the mechanism [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) defines for provisioning zones to secondary name servers. This app builds a catalog's contents but does not serve or consume one.
+A zone with a `zone_type` of `Catalog` names its member zones, the mechanism [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) defines for provisioning zones to secondary name servers. This app builds a catalog's contents but does not serve or consume one.
 
 Every record in a catalog zone is system-managed, so no record type can be created, edited, or deleted there by hand. Saving a catalog zone writes the records the RFC requires, and repairs them if they have drifted:
 
@@ -63,16 +63,16 @@ The apex NS record is named `@`, which denotes the zone origin per [RFC 1035 §5
 
 The TTL on all of these records is set to 0. Per [RFC 9432 §4.1](https://datatracker.ietf.org/doc/html/rfc9432#section-4.1), the TTL field has no meaning for records in a catalog zone and should be ignored.
 
-Zones are enrolled through [Catalog Zone Membership](catalogzonemembership.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one. A catalog zone is not a registered name, so it cannot be the zone on a [DNS Registration](dnsregistration.md).
+Zones become members through [Catalog Zone Membership](catalogzonemembership.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one. A catalog zone is not a registered name, so it cannot be the zone on a [DNS Registration](dnsregistration.md).
 
-Membership is set from the member zone and from the catalog. A zone's add or edit form offers a Catalog Zone field. The zone list offers an Edit Catalog Memberships menu for a selection of zones, and per-row actions to enroll an unenrolled zone or withdraw an enrolled one. A catalog's Member Zones panel offers Add and per-row Edit and Delete. What they write is a Catalog Zone Membership, governed by [that model's permissions](catalogzonemembership.md#permissions); `change_dnszone` alone does not authorize it.
+Membership is set from the member zone and from the catalog. A zone's add or edit form offers a Catalog Zone field. The zone list offers an Edit Catalog Memberships menu for a selection of zones, and per-row actions to add a zone in no catalog or remove a member zone. A catalog's Member Zones panel offers Add and per-row Edit and Delete. What they write is a Catalog Zone Membership, governed by [that model's permissions](catalogzonemembership.md#permissions); `change_dnszone` alone does not authorize it.
 
 !!! warning "Grant zone editors `view` permission on catalog zones"
 
-    As the [permissions guide](https://docs.nautobot.com/projects/core/en/stable/user-guide/administration/guides/permissions/#related-objects-on-forms) notes for related objects generally, a catalog the user cannot view is left out of the field, and submitting the form then reads as a request to remove the zone from its catalog: either withdrawing it or, without `delete_catalogzonemembership`, failing with an error about a removal the user did not intend. Withdrawing a zone discards its member label, and re-enrolling mints a new one, which catalog consumers treat as an unrelated zone.
+    As the [permissions guide](https://docs.nautobot.com/projects/core/en/stable/user-guide/administration/guides/permissions/#related-objects-on-forms) notes for related objects generally, a catalog the user cannot view is left out of the field, and submitting the form then reads as a request to remove the zone from its catalog: either removing it or, without `delete_catalogzonemembership`, failing with an error about a removal the user did not intend. Removing a zone discards its member label, and adding it again mints a new one, which catalog consumers treat as an unrelated zone.
 
-A membership holds both of its zones in the view it was made in, since a catalog and its members have to resolve in the same view. A zone enrolled in a catalog cannot be moved to another view, and neither can a catalog that has members. The edit form disables the DNS View field on such a zone; the REST API and bulk edit refuse the change. Withdraw the zone from its catalog, or remove the catalog's members, and its view can be changed again.
+A membership holds both of its zones in the view it was made in, since a catalog and its members have to resolve in the same view. A zone that is a member of a catalog cannot be moved to another view, and neither can a catalog that has members. The edit form disables the DNS View field on such a zone; the REST API and bulk edit refuse the change. Remove the zone from its catalog, or remove the catalog's members, and its view can be changed again.
 
 The zone list carries a Catalog Zone column and a filter of the same name, so a catalog's members can be found from the zone list rather than only from the catalog's own page.
 
-A zone's REST API representation carries a read-only `catalog` field naming the catalog it is enrolled in, or `null` when it is not enrolled. Memberships themselves are created, moved, and removed through the Catalog Zone Membership endpoint.
+A zone's REST API representation carries a read-only `catalog` field naming the catalog it is a member of, or `null` when it is in none. Memberships themselves are created, moved, and removed through the Catalog Zone Membership endpoint.
