@@ -675,7 +675,9 @@ class DNSZone(DNSModel):
             return
 
         if self.catalog is not None:
-            raise ValidationError({"dns_view": "A zone enrolled in a catalog zone cannot be moved to another view."})
+            raise ValidationError(
+                {"dns_view": "A zone that is a member of a catalog zone cannot be moved to another view."}
+            )
 
 
 @extras_features(

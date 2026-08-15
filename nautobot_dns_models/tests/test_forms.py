@@ -290,7 +290,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
         zone, _ = self._enrolled_zone()
         form = forms.DNSZoneForm(instance=zone)
         self.assertTrue(form.fields["dns_view"].disabled)
-        self.assertIn("A zone enrolled in a catalog zone cannot be moved", form.fields["dns_view"].help_text)
+        self.assertIn("A zone that is a member of a catalog zone cannot be moved", form.fields["dns_view"].help_text)
 
     def test_view_is_enabled_when_editing_a_catalog_zone_without_members(self):
         form = forms.DNSZoneForm(instance=self._catalog_zone())

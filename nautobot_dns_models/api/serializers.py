@@ -75,7 +75,7 @@ class DNSZoneSerializer(NautobotModelSerializer):
     catalog = PropertyHyperlinkedRelatedField(
         view_name="plugins-api:nautobot_dns_models-api:dnszone-detail",
         read_only=True,
-        help_text="The catalog zone this zone is enrolled in.",
+        help_text="The catalog zone this zone is a member of.",
     )
 
     class Meta:

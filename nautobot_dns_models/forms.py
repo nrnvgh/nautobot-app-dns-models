@@ -349,7 +349,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
                 if self.instance.has_members:
                     self._disable_view_field("A catalog zone with members cannot be moved to another view.")
             elif catalog_zone is not None:
-                self._disable_view_field("A zone enrolled in a catalog zone cannot be moved to another view.")
+                self._disable_view_field("A zone that is a member of a catalog zone cannot be moved to another view.")
 
     def clean(self):
         """Reject a membership `CatalogZoneMembership` would refuse, so the error lands on the field."""
@@ -550,7 +550,7 @@ class DNSZoneBulkAddMembershipForm(forms.Form):
         queryset=models.DNSZone.objects.all(),
         query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
         label="Catalog Zone",
-        help_text="A selected zone already enrolled elsewhere is moved to this catalog.",
+        help_text="A selected zone that is already a member of another catalog is moved to this one.",
     )
 
     NESTING = "A catalog zone cannot belong to another catalog zone, and the selection holds"
