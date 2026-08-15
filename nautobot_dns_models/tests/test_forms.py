@@ -315,7 +315,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
 
 
 class DNSZoneBulkEditTestCase(TestCase):
-    """Test the DNSZone bulk edit form, whose view field an enrollment holds its zones away from."""
+    """Test the DNSZone bulk edit form, whose view field a membership holds its zones away from."""
 
     @classmethod
     def setUpTestData(cls):
@@ -331,7 +331,7 @@ class DNSZoneBulkEditTestCase(TestCase):
         form = self._form([self.member_zone, self.unenrolled_zone], self.other_view)
 
         self.assertFalse(form.is_valid())
-        self.assertIn("Held in their current view by a catalog enrollment", str(form.errors["dns_view"]))
+        self.assertIn("Held in their current view by a catalog membership", str(form.errors["dns_view"]))
         self.assertIn("member.example", str(form.errors["dns_view"]))
         self.assertNotIn("primary.example", str(form.errors["dns_view"]))
 
@@ -352,7 +352,7 @@ class DNSZoneBulkEditTestCase(TestCase):
 
         self.assertTrue(form.is_valid(), form.errors)
 
-    def test_allows_moving_zones_in_no_enrollment(self):
+    def test_allows_moving_zones_in_no_membership(self):
         form = self._form([self.unenrolled_zone, self.catalog_zone], self.other_view)
         self.assertTrue(form.is_valid(), form.errors)
 

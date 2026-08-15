@@ -31,12 +31,12 @@ def validate_catalog_membership(sender, instance, action, reverse, pk_set, **kwa
     """Hold `DNSZone.catalogs.add()` to the same rules as the membership it writes.
 
     The manager bulk-creates its rows, so neither `clean()` nor `save()` runs and every rule
-    enrollment has would otherwise be reachable around. Core validates its own intermediate models
+    membership has would otherwise be reachable around. Core validates its own intermediate models
     from `pre_add` the same way (`nautobot.ipam.signals.vrf_prefix_associated`).
 
     Django sends `pre_add` inside an atomic block it opened without a savepoint, so a refusal
     raised here leaves an enclosing transaction unusable: a caller cannot catch it and carry on
-    querying. Enrollment through `CatalogZoneMember` reports the same faults as ordinary field
+    querying. Enrolling through `CatalogZoneMember` reports the same faults as ordinary field
     errors, which is why that, rather than this manager, is the path the app itself uses.
     """
     if action != "pre_add" or not pk_set:

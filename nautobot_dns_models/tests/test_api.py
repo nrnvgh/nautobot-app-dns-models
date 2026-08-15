@@ -625,7 +625,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         self.assertIsNone(response.data["catalog"])
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
-    def test_patch_leaves_enrollment_alone(self):
+    def test_patch_leaves_membership_alone(self):
         """`catalog` is read-only here, so a payload naming one is ignored rather than acted on."""
         self.add_permissions("nautobot_dns_models.change_dnszone")
         catalog_zone = _create_zone(name="api-catalog-ro.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
@@ -644,7 +644,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_patch_refuses_to_move_an_enrolled_zone_to_another_view(self):
-        """Enrollment is not writable here, so nothing else stops a move that strands a membership."""
+        """The catalog is not writable here, so nothing else stops a move that strands a membership."""
         self.add_permissions("nautobot_dns_models.change_dnszone")
         catalog_zone = _create_zone(name="api-catalog-view.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         member_zone = _create_zone(name="api-member-view.example")
@@ -664,7 +664,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         self.assertEqual(member_zone.dns_view_id, catalog_zone.dns_view_id)
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
-    def test_list_reads_every_enrollment_at_once(self):
+    def test_list_reads_every_membership_at_once(self):
         """Listing zones must not go back to the database for each one's catalog."""
         catalog_zone = _create_zone(name="api-catalog-list.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         # Above the context manager's default repetition threshold, so an unprefetched read trips it.

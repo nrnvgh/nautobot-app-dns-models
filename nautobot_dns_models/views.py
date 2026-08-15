@@ -131,7 +131,7 @@ from nautobot_dns_models.tables import (
 
 
 class ZoneFieldsPanel(ObjectFieldsPanel):
-    """The zone's own fields, minus enrollment fields that cannot apply to this zone type.
+    """The zone's own fields, minus membership fields that cannot apply to this zone type.
 
     A whole-panel `should_render()` cannot drop a single row, so inapplicable fields are removed
     from the data instead. Catalog zones cannot be enrolled in another catalog, so `catalog` is
@@ -544,14 +544,14 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     )
 
     def form_save(self, form, **kwargs):
-        """Refuse an enrollment change the user could not have made on the membership itself.
+        """Refuse a membership change the user could not have made on the membership itself.
 
         The form's `catalog` field writes `CatalogZoneMember` rows, which `change_dnszone` alone
         should not authorize. Object-level constraints are evaluated against the stored row, so a
         new membership can only be tested once it exists; the enclosing transaction takes the zone
         back out with it.
         """
-        operation, membership = self._pending_enrollment(form)
+        operation, membership = self._pending_membership(form)
         if operation is not None:
             self._require_membership_permission(form, operation, membership)
 
@@ -584,7 +584,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     def bulk_assign_catalog(self, request):
         """Enroll a selection of zones in one catalog, confirming the selection first.
 
-        Enrollment writes `CatalogZoneMember` rows, which the bulk edit job cannot reach: it applies
+        Enrolling writes `CatalogZoneMember` rows, which the bulk edit job cannot reach: it applies
         form fields to the zones themselves, and its one path to a related model, `_save_m2m_fields`,
         checks no permission on what it writes. So this is an action of its own in the shape of core's
         `BulkComponentCreateView`: the first POST arrives from the list and renders the form, the
@@ -737,7 +737,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     def _withdraw_from_catalogs(self, memberships):
         """Delete the memberships a selection holds, refusing the batch if one of them is out of reach.
 
-        Enrollment can only test its rows once they exist, but these are already stored, so the
+        Enrolling can only test its rows once they exist, but these are already stored, so the
         constraints are evaluated before anything is written. Deleting through the queryset still
         reaches the `post_delete` receiver that withdraws each published PTR: the receiver rules out
         Django's fast-delete path.
@@ -753,7 +753,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         memberships.delete()
         return len(pks)
 
-    def _pending_enrollment(self, form):
+    def _pending_membership(self, form):
         """Name the membership operation the submitted catalog implies, and the row it acts on."""
         membership = form.instance.catalog_membership.first() if form.instance.present_in_database else None
         catalog_zone = form.cleaned_data.get("catalog")

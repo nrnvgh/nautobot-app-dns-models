@@ -257,7 +257,7 @@ def reenroll_in_catalog(zone):
     and an addition (§5.4).
 
     Does nothing for a zone that is not enrolled. The new row is validated the same way
-    any other enrollment is.
+    any other membership is.
     """
     membership = zone.catalog_membership.first()
     if membership is None:
@@ -539,7 +539,7 @@ class DNSZone(DNSModel):
         return f"{self.name} ({self.dns_view})"
 
     def clean(self):
-        """Normalize the SOA RNAME, keep zone_type immutable, hold enrollments to one view, and bar catalog PTR."""
+        """Normalize the SOA RNAME, keep zone_type immutable, hold memberships to one view, and bar catalog PTR."""
         super().clean()
 
         invalid_rname_message = (
@@ -599,7 +599,7 @@ class DNSZone(DNSModel):
         with transaction.atomic():
             super().save(*args, **kwargs)
             ensure_catalog_zone_records(self)
-            # After the save, so that re-enrollment publishes the new name.
+            # After the save, so that re-enrolling publishes the new name.
             if stored_name is not None and stored_name != self.name:
                 reenroll_in_catalog(self)
 
@@ -770,7 +770,7 @@ class DNSViewPrefixAssignment(BaseModel):
 class CatalogZoneMember(BaseModel):
     """Through model for the `DNSZone.catalogs` relation, enrolling a zone in an RFC 9432 catalog.
 
-    Not an object in its own right: enrollment is a property of the zone, and the change records
+    Not an object in its own right: membership is a property of the zone, and the change records
     for it are written against the two zones by core's M2M side-object logging. The PTR record that
     publishes the membership to consumers is derived from this row rather than managed directly.
     """

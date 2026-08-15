@@ -42,7 +42,7 @@ from nautobot_dns_models.models import (
 from nautobot_dns_models.system_writes import system_write
 
 # Change records against the two objects an M2M relates come from core's
-# `get_change_logged_m2m_through_side_field_names`, which arrived in Nautobot 3.2.2. Enrollment
+# `get_change_logged_m2m_through_side_field_names`, which arrived in Nautobot 3.2.2. Enrolling
 # works on the earlier releases this app supports, but goes unrecorded there.
 M2M_SIDE_CHANGE_LOG_VERSION = version.parse("3.2.2")
 
@@ -1418,12 +1418,12 @@ class CatalogMemberLabelTest(TestCase):
         self.assertNotIn(".", label)
 
     def test_each_call_mints_a_new_identity(self):
-        """A blank-label re-enrollment must not silently resume prior consumer state."""
+        """Re-enrolling with a blank label must not silently resume prior consumer state."""
         self.assertNotEqual(catalog_member_label(), catalog_member_label())
 
 
 class CatalogMembershipChangeLogTest(TestCase):
-    """Tests that enrollment is recorded against the zones it relates, not only the membership row."""
+    """Tests that a membership is recorded against the zones it relates, not only the row itself."""
 
     @skipIf(
         version.parse(settings.VERSION) < M2M_SIDE_CHANGE_LOG_VERSION,
@@ -1480,7 +1480,7 @@ class CatalogMembershipManagerTest(TestCase):
         cls.member_zone = create_zone("member.example")
 
     def test_adding_enrolls_the_zone_and_publishes_it(self):
-        """A manager add is a real enrollment, so it earns a label and a member record."""
+        """A manager add is a real membership, so it earns a label and a member record."""
         self.member_zone.catalogs.add(self.catalog_zone)
 
         membership = self.member_zone.catalog_membership.get()
@@ -1630,13 +1630,13 @@ class CatalogZoneMemberTest(TestCase):
         self.assertEqual(membership.member_label, "shared")
 
     def test_deleting_the_member_zone_removes_the_membership(self):
-        """Enrollment is a property of the member zone, so it should not outlive it."""
+        """Membership is a property of the member zone, so it should not outlive it."""
         membership = self._membership()
         self.member_zone.delete()
         self.assertFalse(CatalogZoneMember.objects.filter(pk=membership.pk).exists())
 
     def test_catalog_zone_cannot_be_deleted_while_it_has_members(self):
-        """Losing a catalog silently unprovisions every member zone, so the operator has to unenroll first."""
+        """Losing a catalog silently unprovisions every member zone, so the members come out first."""
         self._membership()
         with self.assertRaises(ProtectedError):
             self.catalog_zone.delete()
@@ -1651,8 +1651,8 @@ class CatalogZoneMemberTest(TestCase):
         return membership
 
 
-class CatalogEnrollmentViewChangeTest(TestCase):
-    """Tests that a zone taking part in an enrollment stays in the view that enrollment was made in.
+class CatalogMembershipViewChangeTest(TestCase):
+    """Tests that a zone taking part in a membership stays in the view that membership was made in.
 
     `CatalogZoneMember` refuses a catalog and a member in different views, but nothing re-validates a
     stored membership when either of its zones moves, so the same rule has to hold from the zone side.
@@ -1690,7 +1690,7 @@ class CatalogEnrollmentViewChangeTest(TestCase):
         self.assertEqual(self.catalog_zone.dns_view_id, self.member_zone.dns_view_id)
 
     def test_unenrolled_zone_can_change_view(self):
-        """A zone in no enrollment has nothing holding it in place."""
+        """A zone in no membership has nothing holding it in place."""
         self.member_zone.dns_view = self.other_view
         self.member_zone.validated_save()
 
@@ -1706,7 +1706,7 @@ class CatalogEnrollmentViewChangeTest(TestCase):
         self.assertEqual(self.catalog_zone.dns_view_id, self.other_view.pk)
 
     def test_enrolled_member_can_still_be_edited(self):
-        """Only the view is pinned, so enrollment does not freeze the rest of the zone."""
+        """Only the view is pinned, so membership does not freeze the rest of the zone."""
         self._membership()
 
         self.member_zone.description = "still enrolled"
@@ -1812,7 +1812,7 @@ class CatalogMemberRecordSyncTest(TestCase):
         self.assertEqual(PTRRecord.objects.get(zone=other_catalog).ptrdname, "member.example")
 
     def test_deleting_a_membership_withdraws_the_ptr(self):
-        """Unenrolling a zone has to stop a consumer from provisioning it."""
+        """Withdrawing a zone has to stop a consumer from provisioning it."""
         membership = self._membership()
         membership.delete()
         self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())

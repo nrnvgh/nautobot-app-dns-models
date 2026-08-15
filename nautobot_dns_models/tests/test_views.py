@@ -201,7 +201,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         cls.bulk_edit_data = {"description": "Bulk edit views", "enabled": False}
 
     def test_list_names_each_zone_catalog_without_per_zone_queries(self):
-        """The catalog column reads the enrollment from the view's prefetch, not once per row."""
+        """The catalog column reads the membership from the view's prefetch, not once per row."""
         catalog = DNSZone.objects.create(name="catalog-list.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         for index in range(12):
             CatalogZoneMember.objects.create(
@@ -329,7 +329,7 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
         self.assertIn(self.catalog_zone.name, content)
 
     def test_catalog_zone_omits_the_catalog_field(self):
-        """A zone that cannot belong to a catalog has no enrollment row to show."""
+        """A zone that cannot belong to a catalog has no membership row to show."""
         self.assertInHTML("<td>Catalog Zone</td>", self._detail(self.catalog_zone), 0)
 
     def _detail(self, zone):
@@ -348,11 +348,11 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
 
 
 @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
-class ZoneFormEnrollmentPermissionTest(TestCase):
+class ZoneFormMembershipPermissionTest(TestCase):
     """Tests that the zone form's catalog field is governed by the membership's own permissions.
 
     The field writes `CatalogZoneMember` rows, so `change_dnszone` alone must not carry a user
-    through an enrollment they could not have made from the membership's own pages.
+    through a membership they could not have made from the membership's own pages.
     """
 
     @classmethod
@@ -364,7 +364,7 @@ class ZoneFormEnrollmentPermissionTest(TestCase):
         CatalogZoneMember(catalog_zone=cls.catalog_zone, member_zone=cls.enrolled_zone).validated_save()
 
     def setUp(self):
-        """Grant the zone permissions every one of these edits needs before its enrollment is judged."""
+        """Grant the zone permissions every one of these edits needs before its membership is judged."""
         super().setUp()
         self.add_permissions(
             "nautobot_dns_models.view_dnsview",
@@ -412,13 +412,13 @@ class ZoneFormEnrollmentPermissionTest(TestCase):
         self.assertHttpStatus(self._edit(self.enrolled_zone), 302)
         self.assertIsNone(self._catalog_of(self.enrolled_zone))
 
-    def test_editing_an_enrolled_zone_leaves_its_enrollment_alone(self):
+    def test_editing_an_enrolled_zone_leaves_its_membership_alone(self):
         """Resubmitting the catalog a zone already has asks for nothing, so it must demand nothing."""
         self.assertHttpStatus(self._edit(self.enrolled_zone, self.catalog_zone), 302)
         self.assertEqual(self._catalog_of(self.enrolled_zone), self.catalog_zone)
 
     def test_renaming_an_enrolled_zone_needs_no_membership_permission(self):
-        """Withdrawing and re-enrolling on a rename is not an enrollment the user requested.
+        """Withdrawing and re-enrolling on a rename is not a membership change the user requested.
 
         The zone stays in the catalog it was already in. The membership row is replaced because a
         renamed zone is a different zone to a consumer, and that replacement is derived state this
@@ -477,7 +477,7 @@ class ZoneFormEnrollmentPermissionTest(TestCase):
         return DNSZone.objects.get(pk=zone.pk).catalog
 
     def _edit(self, zone, catalog=None):
-        """Post `zone`'s edit form, offering `catalog` in the field that governs its enrollment."""
+        """Post `zone`'s edit form, offering `catalog` in the field that governs its membership."""
         return self.client.post(
             reverse("plugins:nautobot_dns_models:dnszone_edit", args=(zone.pk,)),
             self._zone_data(zone=zone, catalog=catalog),
@@ -1298,7 +1298,7 @@ class ZoneBulkEditPTRControlTest(TestCase):
 class ZoneBulkAssignCatalogTest(TestCase):
     """Tests for enrolling a selection of zones in one catalog from the zone list.
 
-    The action exists because enrollment writes `CatalogZoneMember` rows, which carry permissions of
+    The action exists because enrolling writes `CatalogZoneMember` rows, which carry permissions of
     their own that the bulk edit job has no user to check and no transaction to undo.
     """
 
@@ -1319,7 +1319,7 @@ class ZoneBulkAssignCatalogTest(TestCase):
         cls.list_path = reverse("plugins:nautobot_dns_models:dnszone_list")
 
     def setUp(self):
-        """Grant what reaching the action needs, leaving each test to add the enrollment it exercises."""
+        """Grant what reaching the action needs, leaving each test to add the membership it exercises."""
         super().setUp()
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
 
@@ -1329,7 +1329,7 @@ class ZoneBulkAssignCatalogTest(TestCase):
         self.assertIn(self.assign_path, self._zone_list())
 
     def test_the_list_withholds_the_action_without_permission_to_enroll(self):
-        """`change_dnszone` alone does not authorize enrollment, so it does not offer it either."""
+        """`change_dnszone` alone does not authorize a membership change, so it does not offer it."""
         self.assertNotIn(self.assign_path, self._zone_list())
 
     def test_the_selection_is_confirmed_before_anything_is_written(self):
@@ -1466,7 +1466,7 @@ class ZoneBulkAssignCatalogTest(TestCase):
         self.assertIsNone(self._catalog_of(self.unenrolled_zones[1]))
 
     def test_a_constraint_on_the_membership_is_enforced(self):
-        """An enrollment permission narrowed to one catalog must not reach another."""
+        """A membership permission narrowed to one catalog must not reach another."""
         object_permission = ObjectPermission(
             name="Bulk enroll in one catalog only",
             actions=["add"],
@@ -1513,7 +1513,7 @@ class ZoneBulkAssignCatalogTest(TestCase):
 class ZoneBulkWithdrawCatalogTest(TestCase):
     """Tests for removing a selection of zones from the catalogs holding them.
 
-    The twin of the enrollment action, and separate from it for the same reason: the memberships are
+    The twin of the enroll action, and separate from it for the same reason: the memberships are
     governed apart from the zones, and the membership itself has no list to delete them from.
     """
 
@@ -1549,7 +1549,7 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
         self.assertNotIn(self.withdraw_path, self._zone_list())
 
     def test_the_selection_is_confirmed_before_anything_is_removed(self):
-        """The first pass counts the enrollments at stake and leaves them as they were."""
+        """The first pass counts the memberships at stake and leaves them as they were."""
         self.add_permissions("nautobot_dns_models.delete_catalogzonemember")
 
         body = self._post(pk_list=[zone.pk for zone in self.enrolled_zones])
@@ -1589,7 +1589,7 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
         self._apply([self.enrolled_zones[0], self.free_zone], expect=302)
         self.assertIsNone(self._catalog_of(self.enrolled_zones[0]))
 
-    def test_a_selection_holding_no_enrollments_is_offered_nothing_to_confirm(self):
+    def test_a_selection_holding_no_memberships_is_offered_nothing_to_confirm(self):
         """With nothing to remove, the page says so rather than inviting a write that does nothing."""
         self.add_permissions("nautobot_dns_models.delete_catalogzonemember")
 

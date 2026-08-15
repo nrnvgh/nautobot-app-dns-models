@@ -8,16 +8,16 @@ The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatr
 
 A zone belongs to at most one catalog, and each label is unique within a catalog.
 
-In the UI, enrollments are created, moved, and removed from the zone and from the catalog:
+In the UI, memberships are created, moved, and removed from the zone and from the catalog:
 
 - a zone's add or edit form offers a Catalog Zone field
 - the zone list offers an Edit Catalog Memberships menu for a selection of zones (Add to Catalog and Remove from Catalog), and per-row actions: Add to Catalog on an unenrolled zone, and Remove from Catalog on an enrolled zone
 - a catalog zone's Member Zones panel offers Add, which opens the membership form with that catalog pre-selected. Each row in that panel has Edit and Delete actions for the membership. The panel footer links to the PTR records the catalog publishes for those members.
 
-All of them write the rows described here, and all of them are recorded in the change log of the two zones the enrollment relates. The model also has a REST API endpoint of its own, which writes the same rows directly.
+All of them write the rows described here, and all of them are recorded in the change log of the two zones the membership relates. The model also has a REST API endpoint of its own, which writes the same rows directly.
 
 !!! note
-    Recording an enrollment against the two zones it relates requires Nautobot 3.2.2 or later, which is where core began writing change records for both sides of a many-to-many relationship. Enrollment behaves the same on earlier releases, but goes unrecorded: the membership is not a change-logged object in its own right, so there is nowhere else for the record to land.
+    Recording a membership against the two zones it relates requires Nautobot 3.2.2 or later, which is where core began writing change records for both sides of a many-to-many relationship. Enrolling behaves the same on earlier releases, but goes unrecorded: the membership is not a change-logged object in its own right, so there is nowhere else for the record to land.
 
 Both bulk actions confirm the selection before writing anything, and write it in one transaction, so a zone the batch cannot write takes the rest back with it.
 
@@ -51,7 +51,7 @@ Renaming a catalog zone publishes nothing new, because a member's owner name is 
 
 Adding a zone to a catalog requires `add_catalogzonemember`, moving it to another catalog requires `change_catalogzonemember`, and removing it requires `delete_catalogzonemember`.
 
-When enrollment is changed from a zone's add or edit form, or from either of the zone list's bulk actions, those permissions are required in addition to the permission needed to create or change the zone itself. `change_dnszone` alone does not authorize enrollment. The membership add, edit, and delete forms, the members panel Add control, and the zone list's per-row actions are governed by the membership permissions alone.
+When membership is changed from a zone's add or edit form, or from either of the zone list's bulk actions, those permissions are required in addition to the permission needed to create or change the zone itself. `change_dnszone` alone does not authorize a membership change. The membership add, edit, and delete forms, the members panel Add control, and the zone list's per-row actions are governed by the membership permissions alone.
 
 Add to Catalog is offered to anyone holding `add_catalogzonemember`, since enrolling is what it is for. A selection that also moves zones out of another catalog needs `change_catalogzonemember` as well, and is refused in full without it. Remove from Catalog is offered on `delete_catalogzonemember` alone.
 

@@ -332,7 +332,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         js = ("nautobot_dns_models/js/dns_zone_form.js",)
 
     def __init__(self, *args, **kwargs):
-        """Show the current catalog enrollment and disable fields the model forbids setting for this instance."""
+        """Show the current catalog membership and disable fields the model forbids setting for this instance."""
         super().__init__(*args, **kwargs)
 
         if self.instance.present_in_database:
@@ -352,7 +352,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
                 self._disable_view_field("A zone enrolled in a catalog zone cannot be moved to another view.")
 
     def clean(self):
-        """Reject an enrollment `CatalogZoneMember` would refuse, so the error lands on the field."""
+        """Reject a membership `CatalogZoneMember` would refuse, so the error lands on the field."""
         super().clean()
 
         catalog_zone = self.cleaned_data.get("catalog")
@@ -372,7 +372,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         return self.cleaned_data
 
     def save(self, commit=True):
-        """Write the zone, then bring its catalog enrollment into line with the form."""
+        """Write the zone, then bring its catalog membership into line with the form."""
         zone = super().save(commit=commit)
 
         if commit:
@@ -480,7 +480,7 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         ]
 
     def clean(self):
-        """Refuse a view an enrollment holds a selected zone away from, naming the zones responsible.
+        """Refuse a view a membership holds a selected zone away from, naming the zones responsible.
 
         The bulk edit job runs the selection in one transaction, so leaving these to the model would
         roll the batch back over the first zone it reached. A selection made with "select all" posts
@@ -502,7 +502,7 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
             raise forms.ValidationError(
                 {
                     "dns_view": format_html(
-                        "Held in their current view by a catalog enrollment: {}.", _listed_names(pinned)
+                        "Held in their current view by a catalog membership: {}.", _listed_names(pinned)
                     )
                 }
             )
@@ -511,7 +511,7 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
 
     @staticmethod
     def _enrolled_pks(zones):
-        """Return the primary keys of `zones` that take part in an enrollment, from either side."""
+        """Return the primary keys of `zones` that take part in a membership, from either side."""
         pks = [zone.pk for zone in zones]
         enrolled = set(
             models.CatalogZoneMember.objects.filter(member_zone__in=pks).values_list("member_zone_id", flat=True)
@@ -707,7 +707,7 @@ class CatalogZoneMemberForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
         )
 
     def save(self, commit=True):
-        """Write through `validated_save`, the same path as every other enrollment writer."""
+        """Write through `validated_save`, the same path as every other membership writer."""
         membership = super().save(commit=False)
         if commit:
             membership.validated_save()
