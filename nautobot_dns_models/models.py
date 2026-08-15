@@ -188,7 +188,7 @@ def ensure_catalog_zone_records(zone):
     Idempotent, so running it on every save of a zone or a membership repairs a catalog whose
     records drifted, rather than only populating a brand-new one. Does nothing for other zone types.
     """
-    if zone.zone_type != DNSZoneTypeChoices.TYPE_CATALOG:
+    if not zone.is_catalog_zone:
         return
 
     with system_write():
@@ -275,7 +275,7 @@ def purge_system_managed_records(zones):
     otherwise be permanently undeletable. This cannot be a `pre_delete` receiver: Django raises
     ProtectedError while collecting related objects, which happens before any `pre_delete` is sent.
     """
-    catalog_zone_pks = [zone.pk for zone in zones if zone.zone_type == DNSZoneTypeChoices.TYPE_CATALOG]
+    catalog_zone_pks = [zone.pk for zone in zones if zone.is_catalog_zone]
     if not catalog_zone_pks:
         return
 
@@ -575,7 +575,7 @@ class DNSZone(DNSModel):
 
         # A catalog zone permits no A/AAAA records, so the flag could never fire; reject it rather than
         # silently coercing, so API callers learn the value was refused.
-        if self.zone_type == DNSZoneTypeChoices.TYPE_CATALOG and self.auto_create_ptr:
+        if self.is_catalog_zone and self.auto_create_ptr:
             raise ValidationError({"auto_create_ptr": "Catalog zones cannot enable automatic PTR creation."})
 
     def delete(self, *args, **kwargs):
@@ -816,12 +816,12 @@ class CatalogZoneMember(BaseModel):
         if self.catalog_zone_id and self.catalog_zone_id == self.member_zone_id:
             raise ValidationError({"member_zone": "A zone cannot be a member of itself."})
 
-        if self.catalog_zone_id and self.catalog_zone.zone_type != DNSZoneTypeChoices.TYPE_CATALOG:  # pylint: disable=no-member
+        if self.catalog_zone_id and not self.catalog_zone.is_catalog_zone:
             raise ValidationError({"catalog_zone": "Members can only be added to a catalog zone."})
 
         # While RFC 9432 says nothing about nesting, consumer support for it is the exception. Not supported
         # at this time.
-        if self.member_zone_id and self.member_zone.zone_type == DNSZoneTypeChoices.TYPE_CATALOG:  # pylint: disable=no-member
+        if self.member_zone_id and self.member_zone.is_catalog_zone:
             raise ValidationError({"member_zone": "A catalog zone cannot be a member of another catalog zone."})
 
         if (

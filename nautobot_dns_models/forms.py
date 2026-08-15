@@ -325,7 +325,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
             self.fields["zone_type"].disabled = True
             self.fields["zone_type"].help_text = "Zone type cannot be changed after creation."
 
-            if self.instance.zone_type == DNSZoneTypeChoices.TYPE_CATALOG:
+            if self.instance.is_catalog_zone:
                 self.fields["auto_create_ptr"].disabled = True
                 self.fields["auto_create_ptr"].help_text = "Catalog zones cannot enable automatic PTR creation."
                 self.fields["catalog"].disabled = True
