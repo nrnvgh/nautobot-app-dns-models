@@ -18,7 +18,7 @@ from nautobot.users.models import ObjectPermission
 from netutils.ip import ipaddress_address
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
-from nautobot_dns_models.forms import DNSZoneBulkAssignCatalogForm, DNSZoneWithCatalogBulkEditForm
+from nautobot_dns_models.forms import DNSZoneBulkAddMembershipForm, DNSZoneWithCatalogBulkEditForm
 from nautobot_dns_models.models import (
     CATALOG_APEX_NS_SERVER,
     AAAARecord,
@@ -1295,27 +1295,27 @@ class ZoneBulkEditPTRControlTest(TestCase):
         return extract_page_body(response.content.decode(response.charset))
 
 
-class ZoneBulkAssignCatalogTest(TestCase):
+class ZoneBulkAddMembershipTest(TestCase):
     """Tests for enrolling a selection of zones in one catalog from the zone list.
 
     The action exists because enrolling writes `CatalogZoneMembership` rows, which carry permissions of
     their own that the bulk edit job has no user to check and no transaction to undo.
     """
 
-    ENROLL_WITHHELD = 'name="_apply" class="btn btn-primary" disabled'
+    ADD_WITHHELD = 'name="_apply" class="btn btn-primary" disabled'
     NESTING_REFUSED = "A catalog zone cannot belong to another catalog zone"
     PERMISSION_REFUSED = "Adding to the catalog failed due to object-level permissions violation."
     VIEW_REFUSED = "Not in this catalog zone"
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("assign-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        cls.other_catalog_zone = create_zone("assign-other.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        cls.unenrolled_zones = [create_zone(f"assign-free-{index}.example") for index in range(2)]
-        cls.enrolled_zone = create_zone("assign-enrolled.example")
+        cls.catalog_zone = create_zone("add-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.other_catalog_zone = create_zone("add-other.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.unenrolled_zones = [create_zone(f"add-free-{index}.example") for index in range(2)]
+        cls.enrolled_zone = create_zone("add-enrolled.example")
         CatalogZoneMembership(catalog_zone=cls.other_catalog_zone, member_zone=cls.enrolled_zone).validated_save()
 
-        cls.assign_path = reverse("plugins:nautobot_dns_models:dnszone_bulk_assign_catalog")
+        cls.add_membership_path = reverse("plugins:nautobot_dns_models:dnszone_bulk_add_membership")
         cls.list_path = reverse("plugins:nautobot_dns_models:dnszone_list")
 
     def setUp(self):
@@ -1326,11 +1326,11 @@ class ZoneBulkAssignCatalogTest(TestCase):
     def test_the_list_offers_the_action_to_a_user_who_may_enroll(self):
         """The button is offered on the membership's permission, not the zone's."""
         self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
-        self.assertIn(self.assign_path, self._zone_list())
+        self.assertIn(self.add_membership_path, self._zone_list())
 
     def test_the_list_withholds_the_action_without_permission_to_enroll(self):
         """`change_dnszone` alone does not authorize a membership change, so it does not offer it."""
-        self.assertNotIn(self.assign_path, self._zone_list())
+        self.assertNotIn(self.add_membership_path, self._zone_list())
 
     def test_the_selection_is_confirmed_before_anything_is_written(self):
         """The first pass names the zones back to the user and leaves them as they were."""
@@ -1340,7 +1340,7 @@ class ZoneBulkAssignCatalogTest(TestCase):
 
         for zone in self.unenrolled_zones:
             self.assertIn(zone.name, body)
-        self.assertNotIn(self.ENROLL_WITHHELD, body)
+        self.assertNotIn(self.ADD_WITHHELD, body)
         self.assertIsNone(self._catalog_of(self.unenrolled_zones[0]))
 
     def test_applying_enrolls_the_selected_zones(self):
@@ -1388,12 +1388,12 @@ class ZoneBulkAssignCatalogTest(TestCase):
         """Past five names the report counts the rest, and the names it does give stay marked up."""
         self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
         catalogs = [
-            create_zone(f"assign-many-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG) for index in range(7)
+            create_zone(f"add-many-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG) for index in range(7)
         ]
 
         body = self._post(pk_list=[zone.pk for zone in catalogs])
 
-        self.assertIn("<strong>assign-many-0.example</strong>", body)
+        self.assertIn("<strong>add-many-0.example</strong>", body)
         self.assertIn(", and 2 more.", body)
 
     def test_a_refused_selection_is_offered_no_catalog_to_choose(self):
@@ -1401,20 +1401,20 @@ class ZoneBulkAssignCatalogTest(TestCase):
         self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
         selection = [self.unenrolled_zones[0], self.other_catalog_zone]
 
-        self.assertIn(self.ENROLL_WITHHELD, self._post(pk_list=[zone.pk for zone in selection]))
+        self.assertIn(self.ADD_WITHHELD, self._post(pk_list=[zone.pk for zone in selection]))
 
-        form = DNSZoneBulkAssignCatalogForm(DNSZone.objects.filter(pk__in=[zone.pk for zone in selection]))
+        form = DNSZoneBulkAddMembershipForm(DNSZone.objects.filter(pk__in=[zone.pk for zone in selection]))
         self.assertTrue(form.fields["catalog"].disabled)
 
     def test_both_faults_in_one_selection_are_reported_together(self):
         """Correcting one fault must not uncover the other on the next attempt."""
         self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
-        stranger = create_zone("assign-elsewhere.example", dns_view=DNSView.objects.create(name="Assign Span View"))
+        stranger = create_zone("add-elsewhere.example", dns_view=DNSView.objects.create(name="Add Span View"))
 
         body = self._post(pk_list=[zone.pk for zone in (self.unenrolled_zones[0], self.other_catalog_zone, stranger)])
 
         self.assertIn(self.NESTING_REFUSED, body)
-        self.assertIn(DNSZoneBulkAssignCatalogForm.SPANS_VIEWS, body)
+        self.assertIn(DNSZoneBulkAddMembershipForm.SPANS_VIEWS, body)
 
     def test_the_picker_offers_only_catalogs_in_the_view_the_selection_shares(self):
         """A catalog holds zones from its own view alone, so the rest are never put on offer."""
@@ -1430,20 +1430,20 @@ class ZoneBulkAssignCatalogTest(TestCase):
         self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
         selection = [
             self.unenrolled_zones[0],
-            create_zone("assign-elsewhere.example", dns_view=DNSView.objects.create(name="Assign Span View")),
+            create_zone("add-elsewhere.example", dns_view=DNSView.objects.create(name="Add Span View")),
         ]
 
-        self.assertIn(DNSZoneBulkAssignCatalogForm.SPANS_VIEWS, self._post(pk_list=[zone.pk for zone in selection]))
-        self.assertIn(DNSZoneBulkAssignCatalogForm.SPANS_VIEWS, self._apply(selection, self.catalog_zone, expect=200))
+        self.assertIn(DNSZoneBulkAddMembershipForm.SPANS_VIEWS, self._post(pk_list=[zone.pk for zone in selection]))
+        self.assertIn(DNSZoneBulkAddMembershipForm.SPANS_VIEWS, self._apply(selection, self.catalog_zone, expect=200))
         self.assertIsNone(self._catalog_of(self.unenrolled_zones[0]))
 
     def test_a_catalog_in_another_view_is_refused(self):
         """A catalog can only hold zones from its own view, which the model would reject one at a time."""
         self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
         stranger = create_zone(
-            "assign-stranger.example",
+            "add-stranger.example",
             zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
-            dns_view=DNSView.objects.create(name="Assign Test View"),
+            dns_view=DNSView.objects.create(name="Add Test View"),
         )
 
         body = self._apply(self.unenrolled_zones, stranger, expect=200)
@@ -1457,7 +1457,7 @@ class ZoneBulkAssignCatalogTest(TestCase):
         query = f"?name={self.unenrolled_zones[0].name}"
 
         response = self.client.post(
-            f"{self.assign_path}{query}",
+            f"{self.add_membership_path}{query}",
             {"_all": "on", "_apply": "", "catalog": str(self.catalog_zone.pk)},
         )
         self.assertHttpStatus(response, 302)
@@ -1496,7 +1496,7 @@ class ZoneBulkAssignCatalogTest(TestCase):
 
     def _post(self, pk_list, data=None, expect=200):
         """Post a selection to the action, returning the rendered page for the passes that render one."""
-        response = self.client.post(self.assign_path, {"pk": [str(pk) for pk in pk_list], **(data or {})})
+        response = self.client.post(self.add_membership_path, {"pk": [str(pk) for pk in pk_list], **(data or {})})
         self.assertHttpStatus(response, expect)
         if expect != 200:
             return ""
@@ -1510,7 +1510,7 @@ class ZoneBulkAssignCatalogTest(TestCase):
         return extract_page_body(response.content.decode(response.charset))
 
 
-class ZoneBulkWithdrawCatalogTest(TestCase):
+class ZoneBulkRemoveMembershipTest(TestCase):
     """Tests for removing a selection of zones from the catalogs holding them.
 
     The twin of the enroll action, and separate from it for the same reason: the memberships are
@@ -1522,17 +1522,17 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("withdraw-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        cls.other_catalog_zone = create_zone("withdraw-other.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        cls.enrolled_zones = [create_zone(f"withdraw-member-{index}.example") for index in range(2)]
+        cls.catalog_zone = create_zone("remove-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.other_catalog_zone = create_zone("remove-other.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.enrolled_zones = [create_zone(f"remove-member-{index}.example") for index in range(2)]
         for zone in cls.enrolled_zones:
             CatalogZoneMembership(catalog_zone=cls.catalog_zone, member_zone=zone).validated_save()
-        cls.free_zone = create_zone("withdraw-free.example")
-        cls.elsewhere_zone = create_zone("withdraw-elsewhere.example")
+        cls.free_zone = create_zone("remove-free.example")
+        cls.elsewhere_zone = create_zone("remove-elsewhere.example")
         CatalogZoneMembership(catalog_zone=cls.other_catalog_zone, member_zone=cls.elsewhere_zone).validated_save()
 
         cls.list_path = reverse("plugins:nautobot_dns_models:dnszone_list")
-        cls.withdraw_path = reverse("plugins:nautobot_dns_models:dnszone_bulk_withdraw_catalog")
+        cls.remove_membership_path = reverse("plugins:nautobot_dns_models:dnszone_bulk_remove_membership")
 
     def setUp(self):
         """Grant what reaching the action needs, leaving each test to add the withdrawal it exercises."""
@@ -1542,11 +1542,11 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
     def test_the_list_offers_the_action_to_a_user_who_may_withdraw(self):
         """The button is offered on the membership's permission, not the zone's."""
         self.add_permissions("nautobot_dns_models.delete_catalogzonemembership")
-        self.assertIn(self.withdraw_path, self._zone_list())
+        self.assertIn(self.remove_membership_path, self._zone_list())
 
     def test_the_list_withholds_the_action_without_permission_to_withdraw(self):
         """`change_dnszone` alone does not authorize withdrawal, so it does not offer it either."""
-        self.assertNotIn(self.withdraw_path, self._zone_list())
+        self.assertNotIn(self.remove_membership_path, self._zone_list())
 
     def test_the_selection_is_confirmed_before_anything_is_removed(self):
         """The first pass counts the memberships at stake and leaves them as they were."""
@@ -1601,7 +1601,7 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
     def test_withdrawing_without_permission_is_refused(self):
         """The zone's own change permission does not carry the membership's."""
         response = self.client.post(
-            self.withdraw_path,
+            self.remove_membership_path,
             {"pk": [str(self.enrolled_zones[0].pk)], "_apply": "", "confirm": "True"},
         )
 
@@ -1632,7 +1632,9 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
         self.add_permissions("nautobot_dns_models.delete_catalogzonemembership")
         query = f"?name={self.enrolled_zones[0].name}"
 
-        response = self.client.post(f"{self.withdraw_path}{query}", {"_all": "on", "_apply": "", "confirm": "True"})
+        response = self.client.post(
+            f"{self.remove_membership_path}{query}", {"_all": "on", "_apply": "", "confirm": "True"}
+        )
         self.assertHttpStatus(response, 302)
 
         self.assertIsNone(self._catalog_of(self.enrolled_zones[0]))
@@ -1652,7 +1654,7 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
 
     def _post(self, pk_list, data=None, expect=200):
         """Post a selection to the action, returning the rendered page for the passes that render one."""
-        response = self.client.post(self.withdraw_path, {"pk": [str(pk) for pk in pk_list], **(data or {})})
+        response = self.client.post(self.remove_membership_path, {"pk": [str(pk) for pk in pk_list], **(data or {})})
         self.assertHttpStatus(response, expect)
         if expect != 200:
             return ""

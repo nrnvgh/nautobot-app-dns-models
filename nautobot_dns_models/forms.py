@@ -538,7 +538,7 @@ class DNSZoneWithCatalogBulkEditForm(DNSZoneBulkEditForm):
         self.fields["auto_create_ptr"].help_text = "Catalog zones cannot enable this, and the selection includes one."
 
 
-class DNSZoneBulkAssignCatalogForm(forms.Form):
+class DNSZoneBulkAddMembershipForm(forms.Form):
     """Catalog picker for a selection of zones being enrolled together.
 
     Only the catalog is asked for. The selection is resolved from the request on the pass that renders

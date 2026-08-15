@@ -13,7 +13,7 @@ permission rather than the zone's.
             <ul class="dropdown-menu">
                 {% if perms.nautobot_dns_models.add_catalogzonemembership %}
                     <li>
-                        <a href="{% url 'plugins:nautobot_dns_models:dnszone_bulk_assign_catalog' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
+                        <a href="{% url 'plugins:nautobot_dns_models:dnszone_bulk_add_membership' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
                            class="formaction dropdown-item text-success">
                             <span class="mdi mdi-folder-plus-outline me-4" aria-hidden="true"></span>Add to Catalog
                         </a>
@@ -21,7 +21,7 @@ permission rather than the zone's.
                 {% endif %}
                 {% if perms.nautobot_dns_models.delete_catalogzonemembership %}
                     <li>
-                        <a href="{% url 'plugins:nautobot_dns_models:dnszone_bulk_withdraw_catalog' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
+                        <a href="{% url 'plugins:nautobot_dns_models:dnszone_bulk_remove_membership' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
                            class="formaction dropdown-item text-danger">
                             <span class="mdi mdi-folder-minus-outline me-4" aria-hidden="true"></span>Remove from Catalog
                         </a>

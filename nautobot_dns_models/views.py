@@ -77,7 +77,7 @@ from nautobot_dns_models.forms import (
     DNSViewBulkEditForm,
     DNSViewFilterForm,
     DNSViewForm,
-    DNSZoneBulkAssignCatalogForm,
+    DNSZoneBulkAddMembershipForm,
     DNSZoneBulkEditForm,
     DNSZoneFilterForm,
     DNSZoneForm,
@@ -576,15 +576,15 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     @action(
         detail=False,
         methods=["POST"],
-        url_path="assign-catalog",
-        url_name="bulk_assign_catalog",
+        url_path="add-membership",
+        url_name="bulk_add_membership",
         custom_view_base_action="change",
         custom_view_additional_permissions=["nautobot_dns_models.add_catalogzonemembership"],
     )
-    def bulk_assign_catalog(self, request):
-        """Enroll a selection of zones in one catalog, confirming the selection first.
+    def bulk_add_membership(self, request):
+        """Add a selection of zones to one catalog, confirming the selection first.
 
-        Enrolling writes `CatalogZoneMembership` rows, which the bulk edit job cannot reach: it applies
+        Adding writes `CatalogZoneMembership` rows, which the bulk edit job cannot reach: it applies
         form fields to the zones themselves, and its one path to a related model, `_save_m2m_fields`,
         checks no permission on what it writes. So this is an action of its own in the shape of core's
         `BulkComponentCreateView`: the first POST arrives from the list and renders the form, the
@@ -608,24 +608,24 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             return redirect(self.get_return_url(request))
 
         applying = "_apply" in request.POST
-        form = DNSZoneBulkAssignCatalogForm(zones, request.POST if applying else None)
+        form = DNSZoneBulkAddMembershipForm(zones, request.POST if applying else None)
         restrict_form_fields(form, request.user)
 
         if applying and form.is_valid():
             try:
                 with transaction.atomic():
-                    enrolled, moved = self._enroll_in_catalog(zones, form.cleaned_data["catalog"])
+                    added, moved = self._add_memberships(zones, form.cleaned_data["catalog"])
             except ObjectDoesNotExist:
                 form.add_error(None, "Adding to the catalog failed due to object-level permissions violation.")
             except ValidationError as error:
                 form.add_error(None, error)
             else:
-                messages.success(request, f"Added {enrolled} and moved {moved} zones.")
+                messages.success(request, f"Added {added} and moved {moved} zones.")
                 return redirect(self.get_return_url(request))
 
         return render(
             request,
-            "nautobot_dns_models/dnszone_bulk_assign_catalog.html",
+            "nautobot_dns_models/dnszone_bulk_add_membership.html",
             {
                 "form": form,
                 "obj_type_plural": model._meta.verbose_name_plural,
@@ -642,15 +642,15 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     @action(
         detail=False,
         methods=["POST"],
-        url_path="withdraw-catalog",
-        url_name="bulk_withdraw_catalog",
+        url_path="remove-membership",
+        url_name="bulk_remove_membership",
         custom_view_base_action="change",
         custom_view_additional_permissions=["nautobot_dns_models.delete_catalogzonemembership"],
     )
-    def bulk_withdraw_catalog(self, request):
-        """Withdraw a selection of zones from the catalogs holding them, confirming the selection first.
+    def bulk_remove_membership(self, request):
+        """Remove a selection of zones from the catalogs holding them, confirming the selection first.
 
-        The twin of `bulk_assign_catalog`, and its own action for the same reason: the memberships it
+        The twin of `bulk_add_membership`, and its own action for the same reason: the memberships it
         deletes are governed apart from the zones that carry them. Selecting zones with no catalog is
         not a fault, since a selection is rarely all of one kind; they are counted out and left alone.
         """
@@ -678,18 +678,18 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         if applying and form.is_valid():
             try:
                 with transaction.atomic():
-                    withdrawn = self._withdraw_from_catalogs(memberships)
+                    removed = self._remove_memberships(memberships)
             except ObjectDoesNotExist:
                 form.add_error(None, "Removing from the catalog failed due to object-level permissions violation.")
             else:
-                messages.success(request, f"Removed {withdrawn} zones from their catalogs.")
+                messages.success(request, f"Removed {removed} zones from their catalogs.")
                 return redirect(self.get_return_url(request))
 
         return render(
             request,
-            "nautobot_dns_models/dnszone_bulk_withdraw_catalog.html",
+            "nautobot_dns_models/dnszone_bulk_remove_membership.html",
             {
-                "enrolled_count": memberships.count(),
+                "membership_count": memberships.count(),
                 "form": form,
                 "obj_type_plural": model._meta.verbose_name_plural,
                 "pk_list": pk_list,
@@ -700,10 +700,10 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             },
         )
 
-    def _enroll_in_catalog(self, zones, catalog_zone):
+    def _add_memberships(self, zones, catalog_zone):
         """Write the memberships the selection implies, and answer for them where they differ.
 
-        A zone with no membership is being added and one enrolled elsewhere is being moved, which are
+        A zone with no membership is being added and one already in another catalog is being moved, which are
         separately granted. Object-level constraints are evaluated against stored rows, so each can
         only be tested once it exists; the caller's transaction takes them all back out together.
         """
@@ -734,12 +734,12 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
 
         return len(written["add"]), len(written["change"])
 
-    def _withdraw_from_catalogs(self, memberships):
+    def _remove_memberships(self, memberships):
         """Delete the memberships a selection holds, refusing the batch if one of them is out of reach.
 
-        Enrolling can only test its rows once they exist, but these are already stored, so the
+        Adding can only test its rows once they exist, but these are already stored, so the
         constraints are evaluated before anything is written. Deleting through the queryset still
-        reaches the `post_delete` receiver that withdraws each published PTR: the receiver rules out
+        reaches the `post_delete` receiver that removes each published PTR: the receiver rules out
         Django's fast-delete path.
         """
         pks = list(memberships.values_list("pk", flat=True))
