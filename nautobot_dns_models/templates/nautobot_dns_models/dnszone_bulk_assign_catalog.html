@@ -37,7 +37,7 @@
                 {% if form.selection_errors %}
                     <div class="card border-danger">
                         <div class="card-header bg-danger-subtle border-danger text-body">
-                            <strong>Cannot enroll this selection</strong>
+                            <strong>Cannot add this selection to a catalog</strong>
                         </div>
                         <div class="card-body">
                             <ul class="mb-0">
@@ -68,7 +68,7 @@
         <div class="nb-form-sticky-footer">
             <button type="submit" name="_apply" class="btn btn-primary" {% if form.selection_errors %}disabled{% endif %}>
                 <span aria-hidden="true" class="mdi mdi-check me-4"></span><!--
-                -->Enroll
+                -->Add to Catalog
             </button>
             <a href="{{ return_url }}" class="btn btn-secondary">
                 <span aria-hidden="true" class="mdi mdi-close me-4"></span><!--

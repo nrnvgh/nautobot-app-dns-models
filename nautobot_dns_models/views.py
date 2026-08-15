@@ -616,11 +616,11 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 with transaction.atomic():
                     enrolled, moved = self._enroll_in_catalog(zones, form.cleaned_data["catalog"])
             except ObjectDoesNotExist:
-                form.add_error(None, "Enrollment failed due to object-level permissions violation.")
+                form.add_error(None, "Adding to the catalog failed due to object-level permissions violation.")
             except ValidationError as error:
                 form.add_error(None, error)
             else:
-                messages.success(request, f"Enrolled {enrolled} and moved {moved} zones.")
+                messages.success(request, f"Added {enrolled} and moved {moved} zones.")
                 return redirect(self.get_return_url(request))
 
         return render(
@@ -680,9 +680,9 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 with transaction.atomic():
                     withdrawn = self._withdraw_from_catalogs(memberships)
             except ObjectDoesNotExist:
-                form.add_error(None, "Withdrawal failed due to object-level permissions violation.")
+                form.add_error(None, "Removing from the catalog failed due to object-level permissions violation.")
             else:
-                messages.success(request, f"Withdrew {withdrawn} zones from their catalogs.")
+                messages.success(request, f"Removed {withdrawn} zones from their catalogs.")
                 return redirect(self.get_return_url(request))
 
         return render(

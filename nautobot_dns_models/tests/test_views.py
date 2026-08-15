@@ -1304,7 +1304,7 @@ class ZoneBulkAssignCatalogTest(TestCase):
 
     ENROLL_WITHHELD = 'name="_apply" class="btn btn-primary" disabled'
     NESTING_REFUSED = "A catalog zone cannot belong to another catalog zone"
-    PERMISSION_REFUSED = "Enrollment failed due to object-level permissions violation."
+    PERMISSION_REFUSED = "Adding to the catalog failed due to object-level permissions violation."
     VIEW_REFUSED = "Not in this catalog zone"
 
     @classmethod
@@ -1517,7 +1517,7 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
     governed apart from the zones, and the membership itself has no list to delete them from.
     """
 
-    PERMISSION_REFUSED = "Withdrawal failed due to object-level permissions violation."
+    PERMISSION_REFUSED = "Removing from the catalog failed due to object-level permissions violation."
     REMOVE_WITHHELD = 'name="_apply" class="btn btn-danger" disabled'
 
     @classmethod
@@ -1554,7 +1554,7 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
 
         body = self._post(pk_list=[zone.pk for zone in self.enrolled_zones])
 
-        self.assertIn("2 of them enrolled in a catalog zone", body)
+        self.assertIn("2 of them in a catalog zone", body)
         self.assertNotIn(self.REMOVE_WITHHELD, body)
         # The applying pass is only reachable from this page if it carries the confirmation with it.
         self.assertIn('name="confirm"', body)
@@ -1584,7 +1584,7 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
         self.add_permissions("nautobot_dns_models.delete_catalogzonemember")
 
         body = self._post(pk_list=[self.enrolled_zones[0].pk, self.free_zone.pk])
-        self.assertIn("2 DNS Zones selected, 1 of them enrolled", body)
+        self.assertIn("2 DNS Zones selected, 1 of them in a catalog zone", body)
 
         self._apply([self.enrolled_zones[0], self.free_zone], expect=302)
         self.assertIsNone(self._catalog_of(self.enrolled_zones[0]))
@@ -1595,7 +1595,7 @@ class ZoneBulkWithdrawCatalogTest(TestCase):
 
         body = self._post(pk_list=[self.free_zone.pk, self.catalog_zone.pk])
 
-        self.assertIn("2 DNS Zones selected, 0 of them enrolled", body)
+        self.assertIn("2 DNS Zones selected, 0 of them in a catalog zone", body)
         self.assertIn(self.REMOVE_WITHHELD, body)
 
     def test_withdrawing_without_permission_is_refused(self):
