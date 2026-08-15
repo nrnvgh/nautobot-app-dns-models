@@ -1,17 +1,17 @@
 {% extends 'generic/object_list.html' %}
 
 {% comment %}
-Enrolling and withdrawing write a Catalog Zone Member, so the menu is offered on that model's
+Enrolling and withdrawing write a Catalog Zone Membership, so the menu is offered on that model's
 permission rather than the zone's.
 {% endcomment %}
 {% block bulk_buttons %}
-    {% if perms.nautobot_dns_models.add_catalogzonemember or perms.nautobot_dns_models.delete_catalogzonemember %}
+    {% if perms.nautobot_dns_models.add_catalogzonemembership or perms.nautobot_dns_models.delete_catalogzonemembership %}
         <div class="btn-group dropup">
             <button type="button" class="btn btn-sm btn-warning dropdown-toggle" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                 <span class="mdi mdi-pencil" aria-hidden="true"></span> Edit Catalog Memberships <span class="mdi mdi-chevron-down"></span>
             </button>
             <ul class="dropdown-menu">
-                {% if perms.nautobot_dns_models.add_catalogzonemember %}
+                {% if perms.nautobot_dns_models.add_catalogzonemembership %}
                     <li>
                         <a href="{% url 'plugins:nautobot_dns_models:dnszone_bulk_assign_catalog' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
                            class="formaction dropdown-item text-success">
@@ -19,7 +19,7 @@ permission rather than the zone's.
                         </a>
                     </li>
                 {% endif %}
-                {% if perms.nautobot_dns_models.delete_catalogzonemember %}
+                {% if perms.nautobot_dns_models.delete_catalogzonemembership %}
                     <li>
                         <a href="{% url 'plugins:nautobot_dns_models:dnszone_bulk_withdraw_catalog' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
                            class="formaction dropdown-item text-danger">

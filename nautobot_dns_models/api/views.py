@@ -5,7 +5,7 @@ from nautobot.apps.api import NautobotModelViewSet
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
-    CatalogZoneMemberSerializer,
+    CatalogZoneMembershipSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -21,7 +21,7 @@ from nautobot_dns_models.api.serializers import (
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
-    CatalogZoneMemberFilterSet,
+    CatalogZoneMembershipFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -37,7 +37,7 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
-    CatalogZoneMember,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -92,19 +92,19 @@ class DNSZoneViewSet(NautobotModelViewSet):
     """DNSZone API ViewSet."""
 
     # The prefetch is what keeps the serializer's `catalog` field off a per-zone query when listing.
-    queryset = DNSZone.objects.prefetch_related("catalog_membership__catalog_zone")
+    queryset = DNSZone.objects.prefetch_related("catalog_memberships__catalog_zone")
     serializer_class = DNSZoneSerializer
     filterset_class = DNSZoneFilterSet
 
     lookup_field = "pk"
 
 
-class CatalogZoneMemberViewSet(NautobotModelViewSet):
-    """CatalogZoneMember API ViewSet."""
+class CatalogZoneMembershipViewSet(NautobotModelViewSet):
+    """CatalogZoneMembership API ViewSet."""
 
-    queryset = CatalogZoneMember.objects.select_related("catalog_zone__dns_view", "member_zone__dns_view")
-    serializer_class = CatalogZoneMemberSerializer
-    filterset_class = CatalogZoneMemberFilterSet
+    queryset = CatalogZoneMembership.objects.select_related("catalog_zone__dns_view", "member_zone__dns_view")
+    serializer_class = CatalogZoneMembershipSerializer
+    filterset_class = CatalogZoneMembershipFilterSet
 
     lookup_field = "pk"
 

@@ -1,6 +1,6 @@
-# Catalog Zone Member Model
+# Catalog Zone Membership Model
 
-The Catalog Zone Member model enrolls a DNS zone in an [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) catalog zone. It is the model behind the zone's catalog membership rather than an object in its own right: it has add, edit, and delete forms, but no list or detail page of its own. The PTR record that publishes the membership to consumers is derived from it rather than managed directly.
+The Catalog Zone Membership model enrolls a DNS zone in an [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) catalog zone. It is the model behind the zone's catalog membership rather than an object in its own right: it has add, edit, and delete forms, but no list or detail page of its own. The PTR record that publishes the membership to consumers is derived from it rather than managed directly.
 
 - `catalog_zone` (DNSZone): The catalog zone publishing this membership. Must have a `zone_type` of `Catalog`.
 - `member_zone` (DNSZone): The zone published by the catalog. Must be in the same DNS view as the catalog zone, and cannot itself be a catalog zone.
@@ -49,10 +49,10 @@ Renaming a catalog zone publishes nothing new, because a member's owner name is 
 
 ## Permissions
 
-Adding a zone to a catalog requires `add_catalogzonemember`, moving it to another catalog requires `change_catalogzonemember`, and removing it requires `delete_catalogzonemember`.
+Adding a zone to a catalog requires `add_catalogzonemembership`, moving it to another catalog requires `change_catalogzonemembership`, and removing it requires `delete_catalogzonemembership`.
 
 When membership is changed from a zone's add or edit form, or from either of the zone list's bulk actions, those permissions are required in addition to the permission needed to create or change the zone itself. `change_dnszone` alone does not authorize a membership change. The membership add, edit, and delete forms, the members panel Add control, and the zone list's per-row actions are governed by the membership permissions alone.
 
-Add to Catalog is offered to anyone holding `add_catalogzonemember`, since enrolling is what it is for. A selection that also moves zones out of another catalog needs `change_catalogzonemember` as well, and is refused in full without it. Remove from Catalog is offered on `delete_catalogzonemember` alone.
+Add to Catalog is offered to anyone holding `add_catalogzonemembership`, since enrolling is what it is for. A selection that also moves zones out of another catalog needs `change_catalogzonemembership` as well, and is refused in full without it. Remove from Catalog is offered on `delete_catalogzonemembership` alone.
 
 Object-level constraints are honored by both. A permission narrowed to one catalog reaches only the memberships of that catalog, and a batch reaching past it is refused in full rather than in part.

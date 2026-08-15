@@ -120,20 +120,20 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
     # non-catalog zones out of the picker, including the filter form's Advanced tab, since the
     # widget lists whatever the REST endpoint returns rather than the queryset.
     catalog = NaturalKeyOrPKMultipleChoiceFilter(
-        field_name="catalog_membership__catalog_zone",
+        field_name="catalog_memberships__catalog_zone",
         queryset=models.DNSZone.objects.all(),
         query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
         to_field_name="name",
         label="Catalog zone (name or ID)",
     )
-    # Used by CatalogZoneMemberForm so the member-zone picker can follow `$catalog_zone` even though
+    # Used by CatalogZoneMembershipForm so the member-zone picker can follow `$catalog_zone` even though
     # DynamicModelChoiceField only substitutes that field's PK, not its dns_view.
     same_dns_view_as = django_filters.ModelChoiceFilter(
         queryset=models.DNSZone.objects.all(),
         method="filter_same_dns_view_as",
         label="Same DNS view as",
     )
-    # Pass "true" when creating a membership, or a CatalogZoneMember PK when editing so that
+    # Pass "true" when creating a membership, or a CatalogZoneMembership PK when editing so that
     # membership's current member_zone remains selectable while other enrolled zones stay hidden.
     available_for_catalog_membership = django_filters.CharFilter(
         method="filter_available_for_catalog_membership",
@@ -156,10 +156,10 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
         Without `coo` (RFC 9432 §4.3.1), a zone may belong to only one catalog. Offering already-
         enrolled zones in the create picker can only fail the unique constraint on `member_zone`.
         """
-        unassigned = Q(catalog_membership__isnull=True)
+        unassigned = Q(catalog_memberships__isnull=True)
         if value and value != "true":
             member_zone_id = (
-                models.CatalogZoneMember.objects.filter(pk=value).values_list("member_zone_id", flat=True).first()
+                models.CatalogZoneMembership.objects.filter(pk=value).values_list("member_zone_id", flat=True).first()
             )
             if member_zone_id is not None:
                 return queryset.filter(unassigned | Q(pk=member_zone_id)).distinct()
@@ -167,8 +167,8 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
         return queryset.filter(unassigned)
 
 
-class CatalogZoneMemberFilterSet(NautobotFilterSet):
-    """Filter for CatalogZoneMember."""
+class CatalogZoneMembershipFilterSet(NautobotFilterSet):
+    """Filter for CatalogZoneMembership."""
 
     q = SearchFilter(
         filter_predicates={
@@ -181,7 +181,7 @@ class CatalogZoneMemberFilterSet(NautobotFilterSet):
     class Meta:
         """Meta attributes for filter."""
 
-        model = models.CatalogZoneMember
+        model = models.CatalogZoneMembership
         fields = "__all__"
 
 

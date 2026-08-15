@@ -85,13 +85,13 @@ class DNSZoneSerializer(NautobotModelSerializer):
         fields = "__all__"
 
 
-class CatalogZoneMemberSerializer(ValidatedModelSerializer):
-    """CatalogZoneMember Serializer."""
+class CatalogZoneMembershipSerializer(ValidatedModelSerializer):
+    """CatalogZoneMembership Serializer."""
 
     class Meta:
         """Meta attributes."""
 
-        model = models.CatalogZoneMember
+        model = models.CatalogZoneMembership
         fields = "__all__"
         # Omit the UniqueTogetherValidator for (catalog_zone, member_label), which would make member_label
         # required. full_clean() validates the same constraint.

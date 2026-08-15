@@ -168,7 +168,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
         cls.dns_view = DNSView.objects.get(name="Default")
 
     def test_can_enroll_a_new_zone_in_a_catalog(self):
-        """Enrolling at creation saves the operator a second trip through Catalog Zone Members."""
+        """Enrolling at creation saves the operator a second trip through Catalog Zone Memberships."""
         catalog_zone = self._catalog_zone()
         form = forms.DNSZoneForm(data=self._zone_data(catalog=catalog_zone.pk))
         self.assertTrue(form.is_valid(), form.errors)
@@ -213,14 +213,14 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
     def test_editing_moves_the_zone_to_another_catalog(self):
         """The membership is reused, so the member label a consumer keys on survives the move."""
         zone, _ = self._enrolled_zone()
-        member_label = zone.catalog_membership.get().member_label
+        member_label = zone.catalog_memberships.get().member_label
         other_catalog = DNSZone.objects.create(name="other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
 
         form = forms.DNSZoneForm(instance=zone, data=self._zone_data(name=zone.name, catalog=other_catalog.pk))
         self.assertTrue(form.is_valid(), form.errors)
         form.save()
 
-        membership = zone.catalog_membership.get()
+        membership = zone.catalog_memberships.get()
         self.assertEqual(membership.catalog_zone, other_catalog)
         self.assertEqual(membership.member_label, member_label)
 
@@ -231,7 +231,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         form.save()
 
-        self.assertFalse(zone.catalog_membership.exists())
+        self.assertFalse(zone.catalog_memberships.exists())
         self.assertFalse(models.PTRRecord.objects.filter(zone=catalog_zone).exists())
 
     def test_editing_ignores_a_submitted_view_for_a_catalog_with_members(self):
@@ -310,7 +310,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
         """Create a zone already enrolled in a catalog, returning both."""
         catalog_zone = self._catalog_zone()
         zone = DNSZone.objects.create(name="member.example")
-        models.CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone).validated_save()
+        models.CatalogZoneMembership(catalog_zone=catalog_zone, member_zone=zone).validated_save()
         return zone, catalog_zone
 
 
@@ -326,7 +326,7 @@ class DNSZoneBulkEditTestCase(TestCase):
 
     def test_refuses_to_move_an_enrolled_zone(self):
         """The enrolled zone is named, so a selection can be corrected in one pass."""
-        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+        models.CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
 
         form = self._form([self.member_zone, self.unenrolled_zone], self.other_view)
 
@@ -336,7 +336,7 @@ class DNSZoneBulkEditTestCase(TestCase):
         self.assertNotIn("primary.example", str(form.errors["dns_view"]))
 
     def test_refuses_to_move_a_catalog_with_members(self):
-        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+        models.CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
 
         form = self._form([self.catalog_zone], self.other_view)
 
@@ -345,7 +345,7 @@ class DNSZoneBulkEditTestCase(TestCase):
 
     def test_allows_the_view_an_enrolled_zone_is_already_in(self):
         """Only a move is refused, so normalizing a mixed selection onto that view still goes through."""
-        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+        models.CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
         elsewhere = DNSZone.objects.create(name="elsewhere.example", dns_view=self.other_view)
 
         form = self._form([self.member_zone, elsewhere], self.member_zone.dns_view)
@@ -357,13 +357,13 @@ class DNSZoneBulkEditTestCase(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
 
     def test_allows_a_bulk_edit_that_sets_no_view(self):
-        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+        models.CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
         form = self._form([self.member_zone], None, description="Bulk edit zones")
         self.assertTrue(form.is_valid(), form.errors)
 
     def test_select_all_leaves_the_view_check_to_the_model(self):
         """A selection claimed wholesale names no zones here, so the job's per-object validation refuses it."""
-        models.CatalogZoneMember(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
+        models.CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone).validated_save()
 
         form = forms.DNSZoneBulkEditForm(DNSZone, {"dns_view": self.other_view.pk, "_all": "on"}, edit_all=True)
 

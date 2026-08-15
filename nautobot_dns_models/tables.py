@@ -8,18 +8,18 @@ from nautobot_dns_models import models
 
 DNSZONE_BUTTONS = """
 {% if not record.is_catalog_zone %}
-    {% with membership=record.catalog_membership.all.0 %}
+    {% with membership=record.catalog_memberships.all.0 %}
         {% if not membership %}
-            {% if perms.nautobot_dns_models.add_catalogzonemember %}
+            {% if perms.nautobot_dns_models.add_catalogzonemembership %}
                 <li>
-                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_add' %}?member_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
+                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemembership_add' %}?member_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
                         <span class="mdi mdi-folder-plus-outline me-4" aria-hidden="true"></span>Add to Catalog
                     </a>
                 </li>
             {% endif %}
-        {% elif perms.nautobot_dns_models.delete_catalogzonemember %}
+        {% elif perms.nautobot_dns_models.delete_catalogzonemembership %}
             <li>
-                <a href="{% url 'plugins:nautobot_dns_models:catalogzonemember_delete' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-danger">
+                <a href="{% url 'plugins:nautobot_dns_models:catalogzonemembership_delete' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-danger">
                     <span class="mdi mdi-folder-minus-outline me-4" aria-hidden="true"></span>Remove from Catalog
                 </a>
             </li>
@@ -158,7 +158,7 @@ class DNSZoneTable(BaseTable):
     catalog = tables.Column(
         linkify=True,
         verbose_name="Catalog Zone",
-        order_by="catalog_membership__catalog_zone__name",
+        order_by="catalog_memberships__catalog_zone__name",
     )
     actions = ButtonsColumn(
         models.DNSZone,
@@ -220,14 +220,14 @@ class CatalogMemberZoneTable(BaseTable):  # pylint: disable=nb-sub-class-name
     member_zone = tables.Column(linkify=True, verbose_name="Member Zone")
     published_as = tables.Column(accessor="member_label", empty_values=(), verbose_name="Published As")
     actions = ButtonsColumn(
-        models.CatalogZoneMember,
+        models.CatalogZoneMembership,
         buttons=("edit", "delete"),
     )
 
     class Meta(BaseTable.Meta):
         """Meta attributes."""
 
-        model = models.CatalogZoneMember
+        model = models.CatalogZoneMembership
         fields = (
             "member_zone",
             "published_as",

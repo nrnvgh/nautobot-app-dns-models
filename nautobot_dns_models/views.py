@@ -30,7 +30,7 @@ from rest_framework.decorators import action
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
-    CatalogZoneMemberSerializer,
+    CatalogZoneMembershipSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -64,7 +64,7 @@ from nautobot_dns_models.forms import (
     ARecordBulkEditForm,
     ARecordFilterForm,
     ARecordForm,
-    CatalogZoneMemberForm,
+    CatalogZoneMembershipForm,
     CNAMERecordBulkEditForm,
     CNAMERecordFilterForm,
     CNAMERecordForm,
@@ -101,7 +101,7 @@ from nautobot_dns_models.forms import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
-    CatalogZoneMember,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -225,11 +225,11 @@ class CatalogMemberZoneTablePanel(ObjectsTablePanel):
         picker empty.
         """
         request = context["request"]
-        if not request.user.has_perm("nautobot_dns_models.add_catalogzonemember"):
+        if not request.user.has_perm("nautobot_dns_models.add_catalogzonemembership"):
             return None
 
         obj = get_obj_from_context(context)
-        add_route = reverse("plugins:nautobot_dns_models:catalogzonemember_add")
+        add_route = reverse("plugins:nautobot_dns_models:catalogzonemembership_add")
         return_url = context.get("return_url", obj.get_absolute_url())
         return f"{add_route}?catalog_zone={obj.pk}&return_url={return_url}"
 
@@ -384,7 +384,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     serializer_class = DNSZoneSerializer
     lookup_field = "pk"
     # The prefetch is what keeps the table's `catalog` column off a per-zone query when listing.
-    queryset = DNSZone.objects.prefetch_related("catalog_membership__catalog_zone")
+    queryset = DNSZone.objects.prefetch_related("catalog_memberships__catalog_zone")
     table_class = DNSZoneTable
 
     object_detail_content = ObjectDetailContent(
@@ -546,7 +546,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     def form_save(self, form, **kwargs):
         """Refuse a membership change the user could not have made on the membership itself.
 
-        The form's `catalog` field writes `CatalogZoneMember` rows, which `change_dnszone` alone
+        The form's `catalog` field writes `CatalogZoneMembership` rows, which `change_dnszone` alone
         should not authorize. Object-level constraints are evaluated against the stored row, so a
         new membership can only be tested once it exists; the enclosing transaction takes the zone
         back out with it.
@@ -558,10 +558,10 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         zone = super().form_save(form, **kwargs)
 
         if operation in ("add", "change"):
-            # Read the row itself: this viewset prefetches `catalog_membership`, so the zone's own
+            # Read the row itself: this viewset prefetches `catalog_memberships`, so the zone's own
             # manager would answer from the cache the request was rendered with.
             self._require_membership_permission(
-                form, operation, CatalogZoneMember.objects.filter(member_zone=zone).first()
+                form, operation, CatalogZoneMembership.objects.filter(member_zone=zone).first()
             )
 
         return zone
@@ -579,12 +579,12 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         url_path="assign-catalog",
         url_name="bulk_assign_catalog",
         custom_view_base_action="change",
-        custom_view_additional_permissions=["nautobot_dns_models.add_catalogzonemember"],
+        custom_view_additional_permissions=["nautobot_dns_models.add_catalogzonemembership"],
     )
     def bulk_assign_catalog(self, request):
         """Enroll a selection of zones in one catalog, confirming the selection first.
 
-        Enrolling writes `CatalogZoneMember` rows, which the bulk edit job cannot reach: it applies
+        Enrolling writes `CatalogZoneMembership` rows, which the bulk edit job cannot reach: it applies
         form fields to the zones themselves, and its one path to a related model, `_save_m2m_fields`,
         checks no permission on what it writes. So this is an action of its own in the shape of core's
         `BulkComponentCreateView`: the first POST arrives from the list and renders the form, the
@@ -645,7 +645,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         url_path="withdraw-catalog",
         url_name="bulk_withdraw_catalog",
         custom_view_base_action="change",
-        custom_view_additional_permissions=["nautobot_dns_models.delete_catalogzonemember"],
+        custom_view_additional_permissions=["nautobot_dns_models.delete_catalogzonemembership"],
     )
     def bulk_withdraw_catalog(self, request):
         """Withdraw a selection of zones from the catalogs holding them, confirming the selection first.
@@ -671,7 +671,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             messages.warning(request, "No zones were selected.")
             return redirect(self.get_return_url(request))
 
-        memberships = CatalogZoneMember.objects.filter(member_zone__in=zones)
+        memberships = CatalogZoneMembership.objects.filter(member_zone__in=zones)
         applying = "_apply" in request.POST
         form = ConfirmationForm(request.POST if applying else None)
 
@@ -710,13 +710,13 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         written = {"add": [], "change": []}
         memberships = {
             membership.member_zone_id: membership
-            for membership in CatalogZoneMember.objects.filter(member_zone__in=zones)
+            for membership in CatalogZoneMembership.objects.filter(member_zone__in=zones)
         }
 
         for zone in zones:
             membership = memberships.get(zone.pk)
             if membership is None:
-                membership = CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone)
+                membership = CatalogZoneMembership(catalog_zone=catalog_zone, member_zone=zone)
                 operation = "add"
             elif membership.catalog_zone_id != catalog_zone.pk:
                 membership.catalog_zone = catalog_zone
@@ -728,7 +728,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             written[operation].append(membership.pk)
 
         for operation, pks in written.items():
-            permitted = CatalogZoneMember.objects.restrict(self.request.user, operation).filter(pk__in=pks)
+            permitted = CatalogZoneMembership.objects.restrict(self.request.user, operation).filter(pk__in=pks)
             if permitted.count() != len(pks):
                 raise ObjectDoesNotExist
 
@@ -746,7 +746,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         if not pks:
             return 0
 
-        permitted = CatalogZoneMember.objects.restrict(self.request.user, "delete").filter(pk__in=pks)
+        permitted = CatalogZoneMembership.objects.restrict(self.request.user, "delete").filter(pk__in=pks)
         if permitted.count() != len(pks):
             raise ObjectDoesNotExist
 
@@ -755,7 +755,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
 
     def _pending_membership(self, form):
         """Name the membership operation the submitted catalog implies, and the row it acts on."""
-        membership = form.instance.catalog_membership.first() if form.instance.present_in_database else None
+        membership = form.instance.catalog_memberships.first() if form.instance.present_in_database else None
         catalog_zone = form.cleaned_data.get("catalog")
 
         if membership is None:
@@ -771,7 +771,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
 
     def _require_membership_permission(self, form, operation, membership):
         """Stop the save, reporting on the field where the catalog was chosen."""
-        if self.request.user.has_perm(f"nautobot_dns_models.{operation}_catalogzonemember", membership):
+        if self.request.user.has_perm(f"nautobot_dns_models.{operation}_catalogzonemembership", membership):
             return
 
         message = {
@@ -797,18 +797,18 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         return selection.filter(zone_type=DNSZoneTypeChoices.TYPE_CATALOG).exists()
 
 
-class CatalogZoneMemberUIViewSet(ObjectEditViewMixin, ObjectDestroyViewMixin):
+class CatalogZoneMembershipUIViewSet(ObjectEditViewMixin, ObjectDestroyViewMixin):
     """Add, edit, and delete pages for a catalog membership.
 
     The membership is a through model and has no list or detail of its own.
     """
 
     default_return_url = "plugins:nautobot_dns_models:dnszone_list"
-    form_class = CatalogZoneMemberForm
+    form_class = CatalogZoneMembershipForm
     lookup_field = "pk"
     object_detail_content = None
-    queryset = CatalogZoneMember.objects.select_related("catalog_zone__dns_view", "member_zone__dns_view")
-    serializer_class = CatalogZoneMemberSerializer
+    queryset = CatalogZoneMembership.objects.select_related("catalog_zone__dns_view", "member_zone__dns_view")
+    serializer_class = CatalogZoneMembershipSerializer
 
 
 class NSRecordUIViewSet(views.NautobotUIViewSet):

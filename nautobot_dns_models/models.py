@@ -230,7 +230,7 @@ def _ensure_member_records(zone):
     """
     expected = {
         f"{membership.member_label}.zones": membership.member_zone.name
-        for membership in zone.catalog_memberships.select_related("member_zone")
+        for membership in zone.member_memberships.select_related("member_zone")
     }
 
     published = set()
@@ -259,13 +259,13 @@ def reenroll_in_catalog(zone):
     Does nothing for a zone that is not enrolled. The new row is validated the same way
     any other membership is.
     """
-    membership = zone.catalog_membership.first()
+    membership = zone.catalog_memberships.first()
     if membership is None:
         return
 
     catalog_zone = membership.catalog_zone
     membership.delete()
-    CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone).validated_save()
+    CatalogZoneMembership(catalog_zone=catalog_zone, member_zone=zone).validated_save()
 
 
 def purge_system_managed_records(zones):
@@ -510,7 +510,7 @@ class DNSZone(DNSModel):
     )
     catalogs = models.ManyToManyField(
         to="self",
-        through="CatalogZoneMember",
+        through="CatalogZoneMembership",
         through_fields=("member_zone", "catalog_zone"),
         symmetrical=False,
         related_name="members",
@@ -618,13 +618,13 @@ class DNSZone(DNSModel):
         A unique constraint holds a zone to one membership, but `member_zone` is a ForeignKey rather
         than a OneToOneField, so the reverse accessor is still a manager. Reading it with a bare
         `all()` is what lets a caller serializing many zones pay for this once: narrowing the manager
-        builds a fresh queryset, which ignores any `prefetch_related("catalog_membership__catalog_zone")`
+        builds a fresh queryset, which ignores any `prefetch_related("catalog_memberships__catalog_zone")`
         and goes back to the database per zone.
         """
         if self.is_catalog_zone:
             return None
 
-        membership = next(iter(self.catalog_membership.all()), None)  # pylint: disable=no-member
+        membership = next(iter(self.catalog_memberships.all()), None)  # pylint: disable=no-member
         return membership.catalog_zone if membership else None
 
     @property
@@ -632,9 +632,9 @@ class DNSZone(DNSModel):
         """Return whether any zone is enrolled in this catalog zone, which is always False for other types.
 
         Unlike `catalog`, this queries on every read: `exists()` builds a fresh queryset, so a
-        `prefetch_related("catalog_memberships")` cache goes unused. Read it once per zone.
+        `prefetch_related("member_memberships")` cache goes unused. Read it once per zone.
         """
-        return self.catalog_memberships.exists()  # pylint: disable=no-member
+        return self.member_memberships.exists()  # pylint: disable=no-member
 
     @property
     def is_catalog_zone(self):
@@ -665,7 +665,7 @@ class DNSZone(DNSModel):
     def _validate_view_change(self):
         """Refuse a view change that would leave a catalog zone and a member of it in different views.
 
-        `CatalogZoneMember` already forbids that pair, but nothing re-validates a stored membership
+        `CatalogZoneMembership` already forbids that pair, but nothing re-validates a stored membership
         when one of its zones moves, so the rule has to hold from the zone side as well. Zone type is
         immutable, so only one side of the relation can ever apply to a given zone.
         """
@@ -767,7 +767,7 @@ class DNSViewPrefixAssignment(BaseModel):
 
 
 @extras_features("graphql")
-class CatalogZoneMember(BaseModel):
+class CatalogZoneMembership(BaseModel):
     """Through model for the `DNSZone.catalogs` relation, enrolling a zone in an RFC 9432 catalog.
 
     Not an object in its own right: membership is a property of the zone, and the change records
@@ -778,14 +778,14 @@ class CatalogZoneMember(BaseModel):
     catalog_zone = ForeignKeyWithAutoRelatedName(
         DNSZone,
         on_delete=models.PROTECT,
-        related_name="catalog_memberships",
+        related_name="member_memberships",
         help_text="The catalog zone publishing this membership.",
         verbose_name="Catalog Zone",
     )
     member_zone = ForeignKeyWithAutoRelatedName(
         DNSZone,
         on_delete=models.CASCADE,
-        related_name="catalog_membership",
+        related_name="catalog_memberships",
         help_text="The zone published by the catalog zone.",
         verbose_name="Member Zone",
     )
@@ -803,25 +803,25 @@ class CatalogZoneMember(BaseModel):
     )
 
     class Meta:
-        """Meta attributes for CatalogZoneMember."""
+        """Meta attributes for CatalogZoneMembership."""
 
         constraints = [
             # A member zone belongs to at most one catalog, which also makes the
             # (catalog_zone, member_zone) pair unique without a second constraint.
             models.UniqueConstraint(
                 fields=["member_zone"],
-                name="catalog_zone_member_unique_member_zone",
+                name="catalog_zone_membership_unique_member_zone",
                 violation_error_message="This zone already belongs to a catalog zone.",
             ),
             models.UniqueConstraint(
                 fields=["catalog_zone", "member_label"],
-                name="catalog_zone_member_unique_label",
+                name="catalog_zone_membership_unique_label",
                 violation_error_message="This label is already used by another member of the catalog zone.",
             ),
         ]
         ordering = ["catalog_zone", "member_label"]
-        verbose_name = "Catalog Zone Member"
-        verbose_name_plural = "Catalog Zone Members"
+        verbose_name = "Catalog Zone Membership"
+        verbose_name_plural = "Catalog Zone Memberships"
 
     def __str__(self):
         """Stringify instance."""
@@ -863,7 +863,7 @@ class CatalogZoneMember(BaseModel):
         the stored one and would reject this change as though a user had made it.
         """
         stored = (
-            CatalogZoneMember.objects.filter(pk=self.pk).values("catalog_zone_id", "member_zone_id").first()
+            CatalogZoneMembership.objects.filter(pk=self.pk).values("catalog_zone_id", "member_zone_id").first()
             if self.present_in_database
             else None
         )
@@ -904,7 +904,9 @@ class CatalogZoneMember(BaseModel):
             )
 
         if self.present_in_database:
-            stored_label = CatalogZoneMember.objects.filter(pk=self.pk).values_list("member_label", flat=True).first()
+            stored_label = (
+                CatalogZoneMembership.objects.filter(pk=self.pk).values_list("member_label", flat=True).first()
+            )
             if stored_label is not None and stored_label != self.member_label:
                 raise ValidationError(
                     {

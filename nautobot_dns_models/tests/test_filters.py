@@ -1,7 +1,7 @@
 """Test DNSZone Filter."""
 
 # One suite per filterset, which puts this module over pylint's 1000-line default. Splitting it would
-# separate the DNSZone catalog filters from the CatalogZoneMember suite that exercises the same feature.
+# separate the DNSZone catalog filters from the CatalogZoneMembership suite that exercises the same feature.
 # pylint: disable=too-many-lines
 
 from datetime import date
@@ -16,7 +16,7 @@ from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
-    CatalogZoneMemberFilterSet,
+    CatalogZoneMembershipFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -32,7 +32,7 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
-    CatalogZoneMember,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -408,7 +408,7 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         """Match member zones by the catalog they are enrolled in, named or by ID."""
         catalog = DNSZone.objects.get(name="Catalog One")
         enrolled = DNSZone.objects.get(name="Test One")
-        CatalogZoneMember.objects.create(catalog_zone=catalog, member_zone=enrolled)
+        CatalogZoneMembership.objects.create(catalog_zone=catalog, member_zone=enrolled)
 
         self.assertEqual(list(self.filterset({"catalog": [catalog.name]}, self.queryset).qs), [enrolled])
         self.assertEqual(list(self.filterset({"catalog": [str(catalog.pk)]}, self.queryset).qs), [enrolled])
@@ -426,11 +426,11 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(self.filterset({"enabled": "false"}, self.queryset).qs.count(), 1)
 
 
-class CatalogZoneMemberFilterTestCase(FilterTestCases.FilterTestCase):
-    """CatalogZoneMember Filter Test Case."""
+class CatalogZoneMembershipFilterTestCase(FilterTestCases.FilterTestCase):
+    """CatalogZoneMembership Filter Test Case."""
 
-    queryset = CatalogZoneMember.objects.all()
-    filterset = CatalogZoneMemberFilterSet
+    queryset = CatalogZoneMembership.objects.all()
+    filterset = CatalogZoneMembershipFilterSet
 
     generic_filter_tests = [
         ["catalog_zone"],
@@ -440,7 +440,7 @@ class CatalogZoneMemberFilterTestCase(FilterTestCases.FilterTestCase):
 
     @classmethod
     def setUpTestData(cls):
-        """Setup test data for CatalogZoneMember Model."""
+        """Setup test data for CatalogZoneMembership Model."""
         cls.catalog_zones = [
             DNSZone.objects.create(name=f"catalog-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
             for index in range(3)
@@ -449,7 +449,7 @@ class CatalogZoneMemberFilterTestCase(FilterTestCases.FilterTestCase):
         member_zones = [DNSZone.objects.create(name=f"member-{index}.example") for index in range(3)]
 
         for index, (catalog_zone, member_zone) in enumerate(zip(cls.catalog_zones, member_zones)):
-            CatalogZoneMember.objects.create(
+            CatalogZoneMembership.objects.create(
                 catalog_zone=catalog_zone, member_zone=member_zone, member_label=f"label{index}"
             )
 

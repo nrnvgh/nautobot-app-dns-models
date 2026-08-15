@@ -352,7 +352,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
                 self._disable_view_field("A zone enrolled in a catalog zone cannot be moved to another view.")
 
     def clean(self):
-        """Reject a membership `CatalogZoneMember` would refuse, so the error lands on the field."""
+        """Reject a membership `CatalogZoneMembership` would refuse, so the error lands on the field."""
         super().clean()
 
         catalog_zone = self.cleaned_data.get("catalog")
@@ -392,13 +392,13 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         `post_delete` receiver, so neither case needs handling here.
         """
         catalog_zone = self.cleaned_data.get("catalog")
-        membership = zone.catalog_membership.first()
+        membership = zone.catalog_memberships.first()
 
         if catalog_zone is None:
             if membership is not None:
                 membership.delete()
         elif membership is None:
-            models.CatalogZoneMember(catalog_zone=catalog_zone, member_zone=zone).validated_save()
+            models.CatalogZoneMembership(catalog_zone=catalog_zone, member_zone=zone).validated_save()
         elif membership.catalog_zone_id != catalog_zone.pk:
             membership.catalog_zone = catalog_zone
             membership.validated_save()
@@ -514,10 +514,10 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         """Return the primary keys of `zones` that take part in a membership, from either side."""
         pks = [zone.pk for zone in zones]
         enrolled = set(
-            models.CatalogZoneMember.objects.filter(member_zone__in=pks).values_list("member_zone_id", flat=True)
+            models.CatalogZoneMembership.objects.filter(member_zone__in=pks).values_list("member_zone_id", flat=True)
         )
         enrolled.update(
-            models.CatalogZoneMember.objects.filter(catalog_zone__in=pks).values_list("catalog_zone_id", flat=True)
+            models.CatalogZoneMembership.objects.filter(catalog_zone__in=pks).values_list("catalog_zone_id", flat=True)
         )
         return enrolled
 
@@ -574,7 +574,7 @@ class DNSZoneBulkAssignCatalogForm(forms.Form):
             self.fields["catalog"].widget.add_query_param("dns_view", str(next(iter(self.dns_view_ids))))
 
     def clean(self):
-        """Reject a pairing `CatalogZoneMember` would refuse, naming the zones responsible.
+        """Reject a pairing `CatalogZoneMembership` would refuse, naming the zones responsible.
 
         The write is atomic, so leaving these to the model would roll the batch back with an error
         naming a single zone. Reported here, the selection can be corrected in one pass.
@@ -660,8 +660,8 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
     ]
 
 
-class CatalogZoneMemberForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
-    """CatalogZoneMember creation/edit form.
+class CatalogZoneMembershipForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
+    """CatalogZoneMembership creation/edit form.
 
     The member label is system-assigned on create and immutable afterward, so it is omitted from
     the UI.
@@ -677,7 +677,7 @@ class CatalogZoneMemberForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
     )
     member_zone = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.all(),
-        # Catalogs are left out of the picker because `CatalogZoneMember.clean()` refuses them.
+        # Catalogs are left out of the picker because `CatalogZoneMembership.clean()` refuses them.
         # `$catalog_zone` only yields a PK, so same_dns_view_as maps that zone to its view.
         query_params={
             "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
@@ -689,7 +689,7 @@ class CatalogZoneMemberForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
     class Meta:
         """Meta attributes."""
 
-        model = models.CatalogZoneMember
+        model = models.CatalogZoneMembership
         # Not `__all__`: `member_label` is system-assigned on create and immutable afterward, so the
         # form has nothing to offer for it.
         fields = ["catalog_zone", "member_zone"]  # pylint: disable=nb-use-fields-all

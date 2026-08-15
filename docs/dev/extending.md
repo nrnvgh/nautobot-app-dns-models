@@ -69,7 +69,7 @@ erDiagram
         boolean auto_create_ptr
     }
 
-    CatalogZoneMember {
+    CatalogZoneMembership {
         DNSZone catalog_zone FK
         DNSZone member_zone FK
         charfield member_label
@@ -137,11 +137,11 @@ erDiagram
     DNSZone }o--|| DNSView: "belongs to"
     DNSZone }o--o| tenancy_TenantModel: "belongs to"
 
-    DNSZone ||--o{ CatalogZoneMember: "catalog_zone"
-    DNSZone ||--o| CatalogZoneMember: "member_zone"
+    DNSZone ||--o{ CatalogZoneMembership: "catalog_zone"
+    DNSZone ||--o| CatalogZoneMembership: "member_zone"
     DNSZone ||..o| NSRecord: "auto-creates apex NS (when zone_type is catalog)"
     DNSZone ||..o| TXTRecord: "auto-creates version (when zone_type is catalog)"
-    CatalogZoneMember ||..|| PTRRecord: "publishes as member (system-managed)"
+    CatalogZoneMembership ||..|| PTRRecord: "publishes as member (system-managed)"
 
     DNSView ||--o{ DNSViewPrefixAssignment: "assigns"
     ipam_PrefixModel ||--o{ DNSViewPrefixAssignment: "assigned via"
