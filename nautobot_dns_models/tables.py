@@ -6,7 +6,6 @@ from nautobot.tenancy.tables import TenantColumn
 
 from nautobot_dns_models import models
 
-
 DNSZONE_BUTTONS = """
 {% if not record.is_catalog_zone %}
     {% with membership=record.catalog_membership.all.0 %}
