@@ -54,6 +54,8 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
     description = "Nautobot DNS Models."
     base_url = "dns"
     required_settings = []
+    min_version = "3.2.2"
+    max_version = "3.9999"
     default_settings = {}
     docs_view_name = "plugins:nautobot_dns_models:docs"
     searchable_models = [

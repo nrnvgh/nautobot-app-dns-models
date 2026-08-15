@@ -1,10 +1,7 @@
 """Test DNSZone."""
 # pylint: disable=too-many-lines
 
-from unittest import skipIf
-
 from constance.test import override_config
-from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
@@ -14,7 +11,6 @@ from nautobot.apps.testing import ModelTestCases, TestCase
 from nautobot.extras.models import ObjectChange, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from netutils.ip import ipaddress_address
-from packaging import version
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import (
@@ -40,11 +36,6 @@ from nautobot_dns_models.models import (
     dns_wire_label_length,
 )
 from nautobot_dns_models.system_writes import system_write
-
-# Change records against the two objects an M2M relates come from core's
-# `get_change_logged_m2m_through_side_field_names`, which arrived in Nautobot 3.2.2. Enrolling
-# works on the earlier releases this app supports, but goes unrecorded there.
-M2M_SIDE_CHANGE_LOG_VERSION = version.parse("3.2.2")
 
 
 def create_zone(name, **kwargs):
@@ -1425,10 +1416,6 @@ class CatalogMemberLabelTest(TestCase):
 class CatalogMembershipChangeLogTest(TestCase):
     """Tests that a membership is recorded against the zones it relates, not only the row itself."""
 
-    @skipIf(
-        version.parse(settings.VERSION) < M2M_SIDE_CHANGE_LOG_VERSION,
-        f"Nautobot {M2M_SIDE_CHANGE_LOG_VERSION} records changes against both sides of an M2M; this one does not.",
-    )
     def test_enrolling_records_a_change_against_both_zones(self):
         """Declaring the membership as an M2M through earns core's side-object change records."""
         catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)

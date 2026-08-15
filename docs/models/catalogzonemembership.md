@@ -14,10 +14,7 @@ In the UI, memberships are created, moved, and removed from the zone and from th
 - the zone list offers an Edit Catalog Memberships menu for a selection of zones (Add to Catalog and Remove from Catalog), and per-row actions: Add to Catalog for zones not in a catalog, and Remove from Catalog on member zones
 - a catalog zone's Member Zones panel offers Add, which opens the membership form with that catalog pre-selected. Each row in that panel has Edit and Delete actions for the membership. The panel footer links to the PTR records the catalog publishes for those members.
 
-All of them write the rows described here, and all of them are recorded in the change log of the two zones the membership relates. The model also has a REST API endpoint of its own, which writes the same rows directly.
-
-!!! note
-    Recording a membership against the two zones it relates requires Nautobot 3.2.2 or later, which is where core began writing change records for both sides of a many-to-many relationship. Membership works the same on earlier releases, but goes unrecorded: the membership is not a change-logged object in its own right, so there is nowhere else for the record to land.
+All of them write the rows described here, and all of them are recorded in the change log of the two zones the membership relates, since the membership is not a change-logged object in its own right. The model also has a REST API endpoint of its own, which writes the same rows directly.
 
 Both bulk actions confirm the selection before writing anything, and write it in one transaction, so a zone the batch cannot write takes the rest back with it.
 
