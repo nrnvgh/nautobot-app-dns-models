@@ -1182,33 +1182,21 @@ class DNSZoneTypeTest(TestCase):
 
 
 class CatalogZoneRecordGatingTest(TestCase):
-    """Tests for the record types a zone accepts and for the immutability of system-managed records."""
+    """Tests for which zone types accept user-managed records and for system-managed immutability."""
 
     @classmethod
     def setUpTestData(cls):
         cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.primary_zone = create_zone("primary.example")
 
-    def test_primary_zone_supports_every_record_type(self):
-        """Every record type this app models remains user-creatable in a primary zone."""
-        for record_model in dns_record_models():
-            with self.subTest(record_model=record_model.__name__):
-                self.assertTrue(self.primary_zone.supports_record_type(record_model))
-
-    def test_primary_zone_supports_user_records(self):
+    def test_primary_zone_type_allows_records(self):
         """A primary zone is the ordinary case: users manage its records directly."""
-        self.assertTrue(self.primary_zone.supports_user_records())
+        self.assertTrue(DNSZone.zone_type_allows_records(self.primary_zone.zone_type))
         self.assertFalse(self.primary_zone.is_catalog_zone)
 
-    def test_catalog_zone_supports_no_record_type(self):
-        """A catalog zone offers no user-creatable record type, so it renders no add affordances."""
-        for record_model in dns_record_models():
-            with self.subTest(record_model=record_model.__name__):
-                self.assertFalse(self.catalog_zone.supports_record_type(record_model))
-
-    def test_catalog_zone_holds_only_system_managed_records(self):
+    def test_catalog_zone_type_allows_no_records(self):
         """A catalog maintains its own records and is identified as a catalog zone."""
-        self.assertFalse(self.catalog_zone.supports_user_records())
+        self.assertFalse(DNSZone.zone_type_allows_records(self.catalog_zone.zone_type))
         self.assertTrue(self.catalog_zone.is_catalog_zone)
 
     def test_record_fixtures_cover_every_record_model(self):
@@ -1218,11 +1206,10 @@ class CatalogZoneRecordGatingTest(TestCase):
             set(dns_record_models()),
         )
 
-    def test_unknown_zone_type_supports_no_record_type(self):
+    def test_unknown_zone_type_allows_no_records(self):
         """A zone type missing from the registry denies everything rather than defaulting to open."""
         zone = DNSZone(name="future.example", zone_type="future")
-        self.assertFalse(zone.supports_record_type(ARecord))
-        self.assertFalse(zone.supports_user_records())
+        self.assertFalse(DNSZone.zone_type_allows_records(zone.zone_type))
         self.assertFalse(zone.is_catalog_zone)
 
     def test_rejects_user_created_record_in_catalog_zone(self):

@@ -44,31 +44,6 @@ APEX_RECORD_NAME = "@"
 # an absolute domain name here, so master-file syntax is the renderer's to add.
 CATALOG_APEX_NS_SERVER = "invalid"
 
-# Record models users may create in a zone, keyed by zone type: True for every model, False for
-# none, or a frozenset of the specific models permitted. A zone type absent from this map permits
-# nothing. A catalog zone (RFC 9432) holds only the records this app maintains; it gains an
-# NSRecord-only frozenset once apex records can be stored.
-ZONE_TYPE_USER_RECORDS = {
-    DNSZoneTypeChoices.TYPE_PRIMARY: True,
-    DNSZoneTypeChoices.TYPE_CATALOG: False,
-}
-
-
-def zone_type_allows(zone_type, record_model):
-    """Return whether users may manage `record_model` records in a zone of `zone_type`."""
-    allowed = ZONE_TYPE_USER_RECORDS.get(zone_type, False)
-    if isinstance(allowed, bool):
-        return allowed
-    return record_model in allowed
-
-
-def zone_type_allows_user_records(zone_type):
-    """Return whether a zone of `zone_type` permits users to manage any record types."""
-    allowed = ZONE_TYPE_USER_RECORDS.get(zone_type, False)
-    if isinstance(allowed, bool):
-        return allowed
-    return bool(allowed)
-
 
 def dns_wire_label_length(label):
     """Return the wire-format (IDNA/Punycode) length of a DNS label."""
@@ -604,13 +579,10 @@ class DNSZone(DNSModel):
             if stored_name is not None and stored_name != self.name:
                 reenroll_in_catalog(self)
 
-    def supports_record_type(self, record_model):
-        """Return whether a user may create `record_model` records in this zone."""
-        return zone_type_allows(self.zone_type, record_model)
-
-    def supports_user_records(self):
-        """Return whether this zone permits users to manage any record types."""
-        return zone_type_allows_user_records(self.zone_type)
+    @classmethod
+    def zone_type_allows_records(cls, zone_type):
+        """Return whether users may manage records in a zone of `zone_type`."""
+        return zone_type == DNSZoneTypeChoices.TYPE_PRIMARY
 
     @property
     def catalog(self):
@@ -646,7 +618,7 @@ class DNSZone(DNSModel):
     def find_reverse_zone_for_ptrdname(cls, ptrdname, dns_view=None):
         """Return the most-specific reverse DNSZone whose name matches a tail of `ptrdname`, otherwise None."""
         permitted_zone_types = [
-            zone_type for zone_type in ZONE_TYPE_USER_RECORDS if zone_type_allows(zone_type, PTRRecord)
+            zone_type for zone_type, _ in DNSZoneTypeChoices.CHOICES if cls.zone_type_allows_records(zone_type)
         ]
         labels = ptrdname.split(".")
         for i in range(1, len(labels)):
@@ -937,7 +909,7 @@ class DNSRecordQuerySet(RestrictedQuerySet):
             # A zone type absent from the registry allows nothing, so leaving it out of this list
             # correctly protects its records.
             permitted_zone_types = [
-                zone_type for zone_type in ZONE_TYPE_USER_RECORDS if zone_type_allows(zone_type, self.model)
+                zone_type for zone_type, _ in DNSZoneTypeChoices.CHOICES if DNSZone.zone_type_allows_records(zone_type)
             ]
             protected = self.exclude(zone__zone_type__in=permitted_zone_types)
             if protected.exists():
@@ -990,7 +962,7 @@ class DNSRecord(DNSModel):
 
     def delete(self, *args, **kwargs):
         """Refuse to delete a system-managed record."""
-        if not system_write_in_progress() and not self.zone.supports_record_type(type(self)):
+        if not system_write_in_progress() and not DNSZone.zone_type_allows_records(self.zone.zone_type):
             raise ProtectedError(SYSTEM_MANAGED_DELETE_ERROR, [self])
         return super().delete(*args, **kwargs)
 
@@ -1033,17 +1005,17 @@ class DNSRecord(DNSModel):
 
     def _enforce_zone_type_allows_record(self) -> None:
         """Reject a user write of a record type the zone's type does not make available to users."""
-        if system_write_in_progress() or self.zone.supports_record_type(type(self)):  # pylint: disable=no-member
+        if system_write_in_progress() or DNSZone.zone_type_allows_records(self.zone.zone_type):  # pylint: disable=no-member
             return
 
         zone_type_label = self.zone.get_zone_type_display().lower()  # pylint: disable=no-member
-        if ZONE_TYPE_USER_RECORDS.get(self.zone.zone_type, False) is False:  # pylint: disable=no-member
-            message = (
-                f"Records in a {zone_type_label} zone are system-managed and cannot be created or edited directly."
-            )
-        else:
-            message = f"{self._meta.verbose_name_plural} are not permitted in a {zone_type_label} zone."
-        raise ValidationError({"zone": message})
+        raise ValidationError(
+            {
+                "zone": (
+                    f"Records in a {zone_type_label} zone are system-managed and cannot be created or edited directly."
+                )
+            }
+        )
 
     class Meta:
         """Meta attributes for DnsRecord."""

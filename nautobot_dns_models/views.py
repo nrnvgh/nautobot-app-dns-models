@@ -179,7 +179,7 @@ class ZoneRecordsTablePanel(ObjectsTablePanel):
             return False
         if self.system_managed:
             return zone.is_catalog_zone
-        return zone.supports_record_type(self.table_class.Meta.model)
+        return DNSZone.zone_type_allows_records(zone.zone_type)
 
 
 class ZoneRegistrationPanel(ObjectsTablePanel):
@@ -244,7 +244,7 @@ class RecordStatsPanel(StatsPanel):
     def should_render(self, context):
         """Render only where the zone permits users to manage records."""
         zone = get_obj_from_context(context)
-        return zone is not None and zone.supports_user_records()
+        return zone is not None and DNSZone.zone_type_allows_records(zone.zone_type)
 
 
 class AddRecordButton(object_detail.Button):
@@ -262,7 +262,7 @@ class AddRecordButton(object_detail.Button):
             return False
 
         zone = get_obj_from_context(context)
-        return zone is not None and zone.supports_record_type(self.record_model)
+        return zone is not None and DNSZone.zone_type_allows_records(zone.zone_type)
 
 
 class AddRecordsDropdownButton(object_detail.DropdownButton):
