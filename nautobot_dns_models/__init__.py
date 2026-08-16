@@ -96,7 +96,7 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
     }
 
     def ready(self):
-        """Install the receiver that withdraws a catalog member record when its membership is deleted."""
+        """Install the app's signal receivers."""
         super().ready()
 
         import nautobot_dns_models.signals  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import

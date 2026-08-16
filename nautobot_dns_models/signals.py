@@ -7,7 +7,7 @@ from nautobot_dns_models.models import CatalogZoneMembership, DNSZone, ensure_ca
 
 
 @receiver(post_delete, sender=CatalogZoneMembership)
-def remove_catalog_member_record(sender, instance, **kwargs):  # pylint: disable=unused-argument
+def remove_catalog_member_ptr(sender, instance, **kwargs):  # pylint: disable=unused-argument
     """Withdraw the PTR that published a membership once the membership is gone.
 
     A receiver rather than a `CatalogZoneMembership.delete()` override because `member_zone` cascades:
@@ -48,7 +48,7 @@ def validate_catalog_membership(sender, instance, action, reverse, pk_set, **kwa
 
 @receiver(m2m_changed, sender=CatalogZoneMembership)
 def publish_added_catalog_members(sender, instance, action, reverse, pk_set, **kwargs):  # pylint: disable=unused-argument
-    """Publish member records for memberships the manager wrote, as `save()` does for its own."""
+    """Publish member PTR records for memberships the manager wrote, as `save()` does for its own."""
     if action != "post_add" or not pk_set:
         return
 

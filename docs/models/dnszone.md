@@ -65,7 +65,7 @@ The TTL on all of these records is set to 0. Per [RFC 9432 §4.1](https://datatr
 
 Zones become members through [Catalog Zone Membership](catalogzonemembership.md) rather than by creating PTR records. `auto_create_ptr` cannot be enabled on a catalog zone, since no A or AAAA record can exist in one. A catalog zone is not a registered name, so it cannot be the zone on a [DNS Registration](dnsregistration.md).
 
-Membership is set from the member zone and from the catalog. A zone's add or edit form offers a Catalog Zone field. The zone list offers an Edit Catalog Memberships menu for a selection of zones, and per-row actions to add a zone in no catalog or remove a member zone. A catalog's Member Zones panel offers Add and per-row Edit and Delete. What they write is a Catalog Zone Membership, governed by [that model's permissions](catalogzonemembership.md#permissions); `change_dnszone` alone does not authorize it.
+Membership is set from the member zone and from the catalog. A zone's add or edit form offers a Catalog Zone field. The zone list offers an Edit Catalog Memberships menu for a selection of zones, and per-row actions to add a zone in no catalog or remove a member zone. A catalog zone's Member Zones panel offers Add and per-row Edit and Delete. What they write is a Catalog Zone Membership, governed by [that model's permissions](catalogzonemembership.md#permissions); `change_dnszone` alone does not authorize it.
 
 !!! warning "Grant zone editors `view` permission on catalog zones"
 
@@ -73,6 +73,6 @@ Membership is set from the member zone and from the catalog. A zone's add or edi
 
 A membership holds both of its zones in the view it was made in, since a catalog and its members have to resolve in the same view. A zone that is a member of a catalog cannot be moved to another view, and neither can a catalog that has members. The edit form disables the DNS View field on such a zone; the REST API and bulk edit refuse the change. Remove the zone from its catalog, or remove the catalog's members, and its view can be changed again.
 
-The zone list carries a Catalog Zone column and a filter of the same name, so a catalog's members can be found from the zone list rather than only from the catalog's own page.
+The zone list carries a Catalog Zone column and a filter of the same name, so a catalog zone's members can be found from the zone list rather than only from its own page.
 
 A zone's REST API representation carries a read-only `catalog` field naming the catalog it is a member of, or `null` when it is in none. GraphQL reports the same catalog on the same field, and returns `null` there for a catalog zone the requesting user may not view. Memberships themselves are created, moved, and removed through the Catalog Zone Membership endpoint.

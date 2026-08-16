@@ -42,7 +42,7 @@ Those PTR records are system-managed. They cannot be created, edited, or deleted
 
 Renaming a member zone removes its entry from the catalog and creates a new one: the membership row is deleted and another is created, which issues a new label. The change log of the catalog zone reads that way too: the member PTR at the old label is recorded as a deletion, and the one at the new label as a creation. The membership row itself carries no change record, so those two records are where the history of a rename is legible.
 
-Renaming a catalog zone publishes nothing new, because a member's owner name is stored relative to the catalog's apex rather than as a fully qualified name.
+Renaming a catalog zone publishes nothing new, because a member's owner name is stored relative to the catalog zone's apex rather than as a fully qualified name.
 
 ## Permissions
 

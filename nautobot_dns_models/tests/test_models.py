@@ -1454,7 +1454,7 @@ class CatalogMembershipManagerTest(TestCase):
         cls.member_zone = create_zone("member.example")
 
     def test_adding_enrolls_the_zone_and_publishes_it(self):
-        """A manager add is a real membership, so it earns a label and a member record."""
+        """A manager add is a real membership, so it earns a label and a member PTR."""
         self.member_zone.catalogs.add(self.catalog_zone)
 
         membership = self.member_zone.catalog_memberships.get()
@@ -1502,7 +1502,7 @@ class CatalogMembershipManagerTest(TestCase):
 
         self.assertIn("same view", str(context.exception))
 
-    def test_removing_withdraws_the_member_record(self):
+    def test_removing_withdraws_the_member_ptr(self):
         """Removal deletes the through row, which the post_delete receiver already answers for."""
         self.catalog_zone.members.add(self.member_zone)
 
@@ -1816,7 +1816,7 @@ class CatalogMemberRecordSyncTest(TestCase):
         )
 
     def test_saving_the_catalog_zone_restores_a_missing_member_ptr(self):
-        """The reconciler is the repair path for member records as much as for the version record."""
+        """The reconciler is the repair path for member PTRs as much as for the version record."""
         membership = self._membership()
         with system_write():
             PTRRecord.objects.filter(zone=self.catalog_zone).delete()

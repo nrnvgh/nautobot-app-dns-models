@@ -163,7 +163,7 @@ def ensure_catalog_zone_records(zone):
     with system_write():
         _ensure_apex_ns_record(zone)
         _ensure_version_record(zone)
-        _ensure_member_records(zone)
+        _ensure_member_ptr_records(zone)
 
 
 def _ensure_apex_ns_record(zone):
@@ -190,7 +190,7 @@ def _ensure_version_record(zone):
         TXTRecord(name="version", text="2", zone=zone, _ttl=0).validated_save()
 
 
-def _ensure_member_records(zone):
+def _ensure_member_ptr_records(zone):
     """Rebuild the member PTR records from the catalog's memberships.
 
     RFC 9432 §4.1 publishes each member at `<label>.zones.$CATZ` as a PTR to the member zone name,
@@ -204,7 +204,7 @@ def _ensure_member_records(zone):
 
     published = set()
     for record in PTRRecord.objects.filter(zone=zone):
-        # Every PTR in a catalog zone is a member record, so one that matches no current membership
+        # Every PTR in a catalog zone is a member PTR, so one that matches no current membership
         # belongs to a membership that changed or went away. A repeated owner name is a second RR in
         # the RRset, which breaks the catalog outright.
         if record.name in published or expected.get(record.name) != record.ptrdname:
