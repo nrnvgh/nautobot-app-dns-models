@@ -593,16 +593,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         model = self.get_queryset().model
         select_all = bool(request.POST.get("_all"))
         pk_list = list(request.POST.getlist("pk"))
-        zones = get_bulk_queryset_from_view(
-            user=request.user,
-            action="change",
-            content_type=ContentType.objects.get_for_model(model),
-            edit_all=select_all,
-            filter_query_params=convert_querydict_to_dict(request.GET),
-            pk_list=pk_list,
-            saved_view_id=request.GET.get("saved_view", ""),
-        )
-
+        zones = self._get_selected_zones(request)
         if not zones.exists():
             messages.warning(request, "No zones were selected.")
             return redirect(self.get_return_url(request))
@@ -657,16 +648,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         model = self.get_queryset().model
         select_all = bool(request.POST.get("_all"))
         pk_list = list(request.POST.getlist("pk"))
-        zones = get_bulk_queryset_from_view(
-            user=request.user,
-            action="change",
-            content_type=ContentType.objects.get_for_model(model),
-            edit_all=select_all,
-            filter_query_params=convert_querydict_to_dict(request.GET),
-            pk_list=pk_list,
-            saved_view_id=request.GET.get("saved_view", ""),
-        )
-
+        zones = self._get_selected_zones(request)
         if not zones.exists():
             messages.warning(request, "No zones were selected.")
             return redirect(self.get_return_url(request))
@@ -700,13 +682,20 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             },
         )
 
-    def _add_memberships(self, zones, catalog_zone):
-        """Write the memberships the selection implies, and answer for them where they differ.
+    def _get_selected_zones(self, request):
+        """Return the zones the list selected for a bulk membership action."""
+        return get_bulk_queryset_from_view(
+            user=request.user,
+            action="change",
+            content_type=ContentType.objects.get_for_model(self.get_queryset().model),
+            edit_all=bool(request.POST.get("_all")),
+            filter_query_params=convert_querydict_to_dict(request.GET),
+            pk_list=list(request.POST.getlist("pk")),
+            saved_view_id=request.GET.get("saved_view", ""),
+        )
 
-        A zone with no membership is being added and one already in another catalog is being moved, which are
-        separately granted. Object-level constraints are evaluated against stored rows, so each can
-        only be tested once it exists; the caller's transaction takes them all back out together.
-        """
+    def _add_memberships(self, zones, catalog_zone):
+        """Write the memberships the selection implies, returning how many were added and how many moved."""
         written = {"add": [], "change": []}
         memberships = {
             membership.member_zone_id: membership
