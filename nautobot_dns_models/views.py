@@ -20,9 +20,8 @@ from nautobot.apps.views import ObjectDestroyViewMixin, ObjectEditViewMixin, get
 from nautobot.core.ui import object_detail
 from nautobot.core.utils.requests import convert_querydict_to_dict
 
-# Not re-exported through `nautobot.apps`, but resolving a bulk selection means honouring pk_list,
-# "select all" with its filters, saved views, and the user's object permissions together. This is the
-# helper the bulk edit view and its job both use to do that.
+# Not re-exported through `nautobot.apps`, but this is the helper core's own bulk edit view and job
+# use to resolve a selection: pk_list, "select all" with its filters, saved views, and permissions.
 from nautobot.core.views.utils import get_bulk_queryset_from_view
 from nautobot.ipam.tables import PrefixTable
 from rest_framework.decorators import action
@@ -133,9 +132,8 @@ from nautobot_dns_models.tables import (
 class ZoneFieldsPanel(ObjectFieldsPanel):
     """The zone's own fields, minus membership fields that cannot apply to this zone type.
 
-    A whole-panel `should_render()` cannot drop a single row, so inapplicable fields are removed
-    from the data instead. Catalog zones cannot be enrolled in another catalog, so `catalog` is
-    dropped there.
+    A whole-panel `should_render()` cannot drop a single row, so `catalog` is dropped from the data
+    on a catalog zone instead.
     """
 
     def get_data(self, context):
@@ -149,24 +147,28 @@ class ZoneFieldsPanel(ObjectFieldsPanel):
 
 
 class ZoneRecordsTablePanel(ObjectsTablePanel):
-    """A table of one record type on the zone detail page.
-
-    User-managed panels appear where that type is creatable, with Add/Edit controls. System-managed
-    panels (`system_managed=True`) appear on catalog zones only, without write controls.
-    """
+    """A table of one record type on the zone detail page, shown according to what the zone's type allows."""
 
     def __init__(self, **kwargs):
-        """Apply the defaults shared by every zone-records panel on the zone detail page."""
+        """Instantiate a zone-records panel.
+
+        Keyword Args:
+            system_managed (bool): Show this panel on catalog zones only, without write controls.
+                Defaults to False, which shows it wherever the record type is user-creatable.
+            **kwargs: Passed to `ObjectsTablePanel`.
+        """
         self.system_managed = kwargs.pop("system_managed", False)
         table_class = kwargs.get("table_class") or self.table_class
         kwargs.setdefault("table_title", table_class.Meta.model._meta.verbose_name_plural)
         kwargs.setdefault("table_filter", "zone")
         kwargs.setdefault("max_display_count", 5)
+
         if self.system_managed:
             kwargs.setdefault("add_button_route", None)
             kwargs.setdefault("exclude_columns", ["zone", "actions"])
         else:
             kwargs.setdefault("exclude_columns", ["zone"])
+
         super().__init__(**kwargs)
 
     def should_render(self, context):
@@ -177,8 +179,10 @@ class ZoneRecordsTablePanel(ObjectsTablePanel):
         zone = get_obj_from_context(context)
         if zone is None:
             return False
+
         if self.system_managed:
             return zone.is_catalog_zone
+
         return DNSZone.zone_type_allows_records(zone.zone_type)
 
 
@@ -195,7 +199,7 @@ class ZoneRegistrationPanel(ObjectsTablePanel):
 
 
 class CatalogMemberZoneTablePanel(ObjectsTablePanel):
-    """Memberships of a catalog zone, listed as the zones it publishes."""
+    """Memberships of a catalog zone, listed as its member zones."""
 
     def __init__(self, **kwargs):
         """Apply member-zone table defaults on the catalog detail page."""
@@ -551,15 +555,15 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         new membership can only be tested once it exists; the enclosing transaction takes the zone
         back out with it.
         """
-        operation, membership = self._pending_membership(form)
+        operation, current_membership = self._get_pending_membership_change(form)
         if operation is not None:
-            self._require_membership_permission(form, operation, membership)
+            self._require_membership_permission(form, operation, current_membership)
 
         zone = super().form_save(form, **kwargs)
 
         if operation in ("add", "change"):
-            # Read the row itself: this viewset prefetches `catalog_memberships`, so the zone's own
-            # manager would answer from the cache the request was rendered with.
+            # Read the row from the database: the zone carries the memberships it was loaded with,
+            # which predate the row this save wrote.
             self._require_membership_permission(
                 form, operation, CatalogZoneMembership.objects.filter(member_zone=zone).first()
             )
@@ -567,7 +571,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         return zone
 
     def get_form_class(self, **kwargs):
-        """Offer the bulk PTR control only where every selected zone could accept it."""
+        """Disable the bulk PTR control when the selection includes a catalog zone."""
         if self.action == "bulk_update" and self._selection_includes_catalog_zone():
             return DNSZoneWithCatalogBulkEditForm
 
@@ -584,11 +588,9 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     def bulk_add_membership(self, request):
         """Add a selection of zones to one catalog, confirming the selection first.
 
-        Adding writes `CatalogZoneMembership` rows, which the bulk edit job cannot reach: it applies
-        form fields to the zones themselves, and its one path to a related model, `_save_m2m_fields`,
-        checks no permission on what it writes. So this is an action of its own in the shape of core's
-        `BulkComponentCreateView`: the first POST arrives from the list and renders the form, the
-        second carries `_apply` and writes the batch inside one transaction.
+        Bulk edit only writes fields on the zone. Adding a membership is a write on a different
+        model, and bulk edit would not check permission on that write. The list sends the
+        selection here to confirm; submitting the form applies it in one transaction.
         """
         model = self.get_queryset().model
         select_all = bool(request.POST.get("_all"))
@@ -641,9 +643,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     def bulk_remove_membership(self, request):
         """Remove a selection of zones from the catalogs holding them, confirming the selection first.
 
-        The twin of `bulk_add_membership`, and its own action for the same reason: the memberships it
-        deletes are governed apart from the zones that carry them. Selecting zones with no catalog is
-        not a fault, since a selection is rarely all of one kind; they are counted out and left alone.
+        Zones with no catalog are left alone.
         """
         model = self.get_queryset().model
         select_all = bool(request.POST.get("_all"))
@@ -724,13 +724,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         return len(written["add"]), len(written["change"])
 
     def _remove_memberships(self, memberships):
-        """Delete the memberships a selection holds, refusing the batch if one of them is out of reach.
-
-        Adding can only test its rows once they exist, but these are already stored, so the
-        constraints are evaluated before anything is written. Deleting through the queryset still
-        reaches the `post_delete` receiver that removes each published PTR: the receiver rules out
-        Django's fast-delete path.
-        """
+        """Delete the memberships a selection holds, refusing the batch if one of them is out of reach."""
         pks = list(memberships.values_list("pk", flat=True))
         if not pks:
             return 0
@@ -742,7 +736,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         memberships.delete()
         return len(pks)
 
-    def _pending_membership(self, form):
+    def _get_pending_membership_change(self, form):
         """Name the membership operation the submitted catalog implies, and the row it acts on."""
         membership = form.instance.catalog_memberships.first() if form.instance.present_in_database else None
         catalog_zone = form.cleaned_data.get("catalog")
@@ -759,7 +753,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         return None, None
 
     def _require_membership_permission(self, form, operation, membership):
-        """Stop the save, reporting on the field where the catalog was chosen."""
+        """Refuse the save unless the user may perform this membership operation, reporting on the catalog field."""
         if self.request.user.has_perm(f"nautobot_dns_models.{operation}_catalogzonemembership", membership):
             return
 
@@ -772,17 +766,8 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         raise ValidationError(message)
 
     def _selection_includes_catalog_zone(self):
-        """Report whether the zones this bulk edit would reach include a catalog zone.
-
-        `perform_bulk_update` records the selection on the view before the form is built, on the pass
-        that renders it and the pass that validates it alike, so both see the same answer. Without it
-        the form was reached some other way and is offered whole.
-        """
-        key_params = getattr(self, "key_params", None)
-        if not key_params:
-            return False
-
-        selection = get_bulk_queryset_from_view(user=self.request.user, action="change", **key_params)
+        """Report whether the zones this bulk edit would reach include a catalog zone."""
+        selection = get_bulk_queryset_from_view(user=self.request.user, action="change", **self.key_params)
         return selection.filter(zone_type=DNSZoneTypeChoices.TYPE_CATALOG).exists()
 
 

@@ -1,8 +1,5 @@
 """Models for Nautobot DNS Models."""
 
-# Past pylint's 1000-line default. Splitting this into a package (zones, records, catalog) is the
-# real fix, but it has to route the runtime references between zones and records around a circular
-# import, so it is deferred rather than folded into the catalog zone work.
 # pylint: disable=too-many-lines
 
 import base64
@@ -34,14 +31,12 @@ UINT32_MAX = 2**32 - 1
 
 SYSTEM_MANAGED_DELETE_ERROR = "System-managed records cannot be deleted directly."
 
-# Owner name standing for the zone apex, following the master-file convention of RFC 1035 §5.1.
-# Stored rather than left empty because `DNSRecord.name` is not blank.
+# Zone apex per RFC 1035 §5.1.
 APEX_RECORD_NAME = "@"
 
 # RFC 9432 §4 requires an NS RRset in a catalog zone so that it is a syntactically valid zone, and
-# recommends a single RR naming "invalid.". Consumers never resolve it, so the value is pinned here
-# rather than offered as a choice. Stored without the trailing dot the RFC writes: a name server is
-# an absolute domain name here, so master-file syntax is the renderer's to add.
+# recommends a single RR naming "invalid.". Stored without the trailing dot the RFC writes: a name
+# server is an absolute domain name here, and the dot is presentation syntax rather than data.
 CATALOG_APEX_NS_SERVER = "invalid"
 
 
@@ -93,8 +88,7 @@ def catalog_member_label():
     RFC 9432 §4.1 lets a producer pick any unique label and treats it as the member's identity
     for consumer state: the label is generated once, stored, and must not change. A fresh UUID
     encoded as unpadded lowercase base32 yields 26 DNS-safe characters (a-z, 2-7), well inside
-    the 63-octet label limit. Delete-and-re-add with a blank label therefore mints a new identity
-    and resets consumer state, so a recreated membership does not silently resume prior state.
+    the 63-octet label limit.
     """
     return base64.b32encode(uuid.uuid4().bytes).decode("ascii").rstrip("=").lower()
 
@@ -161,7 +155,7 @@ def ensure_catalog_zone_records(zone):
     throughout.
 
     Idempotent, so running it on every save of a zone or a membership repairs a catalog whose
-    records drifted, rather than only populating a brand-new one. Does nothing for other zone types.
+    records drifted, rather than only populating a brand-new one.
     """
     if not zone.is_catalog_zone:
         return
@@ -175,8 +169,8 @@ def ensure_catalog_zone_records(zone):
 def _ensure_apex_ns_record(zone):
     """Hold the apex NS RRset RFC 9432 §4 requires at the single `invalid.` RR it recommends.
 
-    Without it the zone a renderer builds from these records has no NS RRset, which is not a valid
-    DNS zone and which an authoritative server will refuse to load.
+    Without it these records describe a zone with no NS RRset, which is not a valid DNS zone and
+    which no authoritative server will load.
     """
     ns_records = NSRecord.objects.filter(zone=zone)
     ns_records.exclude(name=APEX_RECORD_NAME, server=CATALOG_APEX_NS_SERVER).delete()
@@ -231,8 +225,7 @@ def reenroll_in_catalog(zone):
     publishes the renamed zone at a new one, which a consumer processes as a removal
     and an addition (§5.4).
 
-    Does nothing for a zone that is not enrolled. The new row is validated the same way
-    any other membership is.
+    Does nothing for a zone that is not enrolled.
     """
     membership = zone.catalog_memberships.first()
     if membership is None:
@@ -394,8 +387,6 @@ def get_default_view_pk():
     return default_view.pk
 
 
-# No "graphql" feature: the app defines `DNSZoneType` itself, to publish the catalog a zone belongs to.
-# Core registers auto-generated types first and would discard a custom type for a model listed here.
 @extras_features(
     "custom_fields",
     "custom_links",
@@ -533,8 +524,6 @@ class DNSZone(DNSModel):
                 raise ValidationError({"soa_rname": invalid_rname_message})
             self._validate_dns_label(normalized_soa_rname, field="soa_rname")
 
-        # Keep the in-memory instance canonical for callers of clean() or full_clean()
-        # that do not immediately save it.
         self.soa_rname = normalized_soa_rname
 
         if self.present_in_database:
@@ -545,8 +534,6 @@ class DNSZone(DNSModel):
                 if stored["dns_view_id"] != self.dns_view_id:
                     self._validate_view_change()
 
-        # A catalog zone permits no A/AAAA records, so the flag could never fire; reject it rather than
-        # silently coercing, so API callers learn the value was refused.
         if self.is_catalog_zone and self.auto_create_ptr:
             raise ValidationError({"auto_create_ptr": "Catalog zones cannot enable automatic PTR creation."})
 
@@ -588,11 +575,9 @@ class DNSZone(DNSModel):
     def catalog(self):
         """Return the catalog zone this zone is enrolled in, or None if it is not enrolled.
 
-        A unique constraint holds a zone to one membership, but `member_zone` is a ForeignKey rather
-        than a OneToOneField, so the reverse accessor is still a manager. Reading it with a bare
-        `all()` is what lets a caller serializing many zones pay for this once: narrowing the manager
-        builds a fresh queryset, which ignores any `prefetch_related("catalog_memberships__catalog_zone")`
-        and goes back to the database per zone.
+        A unique constraint holds a zone to one membership, but the reverse accessor is still a
+        manager, so this reads it with a bare `all()`: narrowing it would build a fresh queryset,
+        ignore any `prefetch_related("catalog_memberships__catalog_zone")`, and query per zone.
         """
         if self.is_catalog_zone:
             return None
@@ -602,10 +587,10 @@ class DNSZone(DNSModel):
 
     @property
     def has_members(self):
-        """Return whether any zone is enrolled in this catalog zone, which is always False for other types.
+        """Return whether any zone belongs to this catalog zone, which is False for other zone types.
 
         Unlike `catalog`, this queries on every read: `exists()` builds a fresh queryset, so a
-        `prefetch_related("member_memberships")` cache goes unused. Read it once per zone.
+        prefetch cache goes unused.
         """
         return self.member_memberships.exists()  # pylint: disable=no-member
 
@@ -638,9 +623,9 @@ class DNSZone(DNSModel):
     def _validate_view_change(self):
         """Refuse a view change that would leave a catalog zone and a member of it in different views.
 
-        `CatalogZoneMembership` already forbids that pair, but nothing re-validates a stored membership
-        when one of its zones moves, so the rule has to hold from the zone side as well. Zone type is
-        immutable, so only one side of the relation can ever apply to a given zone.
+        A membership checks that its two zones share a view only when it is written, so a later
+        move of either zone has to be refused here. The zone's type decides which check applies,
+        and it cannot change.
         """
         if self.is_catalog_zone:
             if self.has_members:
@@ -745,9 +730,8 @@ class DNSViewPrefixAssignment(BaseModel):
 class CatalogZoneMembership(BaseModel):
     """Through model for the `DNSZone.catalogs` relation, enrolling a zone in an RFC 9432 catalog.
 
-    Not an object in its own right: membership is a property of the zone, and the change records
-    for it are written against the two zones by core's M2M side-object logging. The PTR record that
-    publishes the membership to consumers is derived from this row rather than managed directly.
+    The PTR record that publishes the membership to consumers is derived from this row rather than
+    managed directly.
     """
 
     catalog_zone = ForeignKeyWithAutoRelatedName(
@@ -829,13 +813,12 @@ class CatalogZoneMembership(BaseModel):
         self._validate_member_label()
 
     def save(self, *args, **kwargs):
-        """Generate the label if needed, then bring the catalog's member records back into line.
+        """Fill in or reissue the member label, then update the PTR records of every affected catalog.
 
-        Atomic for the reason `DNSZone.save()` is: a membership whose PTR cannot be written would
-        leave the catalog claiming something other than what Nautobot holds.
+        Atomic: if writing a PTR fails, the membership must not be stored.
 
-        The label is reminted here rather than in `clean()`, which refuses a label that differs from
-        the stored one and would reject this change as though a user had made it.
+        `clean()` rejects any label that differs from the stored one, so a new label cannot be
+        issued there and is generated here instead.
         """
         stored = (
             CatalogZoneMembership.objects.filter(pk=self.pk).values("catalog_zone_id", "member_zone_id").first()
@@ -900,14 +883,11 @@ class DNSRecordQuerySet(RestrictedQuerySet):
         """Refuse to delete system-managed records.
 
         Overridden here as well as on the model because Nautobot's bulk delete job calls
-        `QuerySet.delete()` directly and never reaches `Model.delete()`. Neither guard can be a
-        `pre_delete` receiver: that signal fires inside the collector's atomic block, so raising
-        from it leaves the request transaction unusable and the caller sees a 500 instead of the
-        error.
+        `QuerySet.delete()` directly, bypassing `Model.delete()`. Neither guard can be a
+        `pre_delete` receiver: that signal fires inside the collector's atomic block, where raising
+        breaks the request transaction and the caller gets a 500 instead of the error.
         """
         if not system_write_in_progress():
-            # A zone type absent from the registry allows nothing, so leaving it out of this list
-            # correctly protects its records.
             permitted_zone_types = [
                 zone_type for zone_type, _ in DNSZoneTypeChoices.CHOICES if DNSZone.zone_type_allows_records(zone_type)
             ]

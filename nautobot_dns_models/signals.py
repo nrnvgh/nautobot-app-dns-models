@@ -42,7 +42,7 @@ def validate_catalog_membership(sender, instance, action, reverse, pk_set, **kwa
     if action != "pre_add" or not pk_set:
         return
 
-    for membership in _pending_memberships(instance, reverse, pk_set):
+    for membership in _build_pending_memberships(instance, reverse, pk_set):
         membership.full_clean()
 
 
@@ -56,7 +56,7 @@ def publish_added_catalog_members(sender, instance, action, reverse, pk_set, **k
         ensure_catalog_zone_records(catalog_zone)
 
 
-def _pending_memberships(instance, reverse, pk_set):
+def _build_pending_memberships(instance, reverse, pk_set):
     """Build the unsaved memberships an `add()` is about to write, whichever end it was called on."""
     zones = DNSZone.objects.filter(pk__in=pk_set)
     if reverse:

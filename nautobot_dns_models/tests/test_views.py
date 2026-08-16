@@ -20,7 +20,6 @@ from netutils.ip import ipaddress_address
 from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.forms import DNSZoneBulkAddMembershipForm, DNSZoneWithCatalogBulkEditForm
 from nautobot_dns_models.models import (
-    CATALOG_APEX_NS_SERVER,
     AAAARecord,
     ARecord,
     CatalogZoneMembership,
@@ -248,12 +247,14 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
         self.assertEqual(self.RECORD_PANELS & self._panel_headings(self.catalog_zone), {"NS RECORDS", "TXT RECORDS"})
 
     def test_catalog_zone_shows_the_version_record(self):
-        """The record the renderer will serve, rather than a restatement of the schema version."""
-        self.assertIn("version", self._detail(self.catalog_zone))
+        """The catalog's RFC 9432 version record."""
+        record = TXTRecord.objects.get(zone=self.catalog_zone)
+        self.assertIn(record.get_absolute_url(), self._detail(self.catalog_zone))
 
     def test_catalog_zone_shows_the_apex_ns_record(self):
-        """The NS RRset is part of what a renderer serves, so the page accounts for it."""
-        self.assertIn(CATALOG_APEX_NS_SERVER, self._detail(self.catalog_zone))
+        """The apex NS RRset is part of a catalog zone's required contents, so the page accounts for it."""
+        record = NSRecord.objects.get(zone=self.catalog_zone)
+        self.assertIn(record.get_absolute_url(), self._detail(self.catalog_zone))
 
     def test_catalog_zone_offers_no_write_controls_for_the_version_record(self):
         """Every write the selection and action columns start is one the model refuses."""

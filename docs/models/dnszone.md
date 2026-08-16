@@ -59,7 +59,7 @@ Every record in a catalog zone is system-managed, so no record type can be creat
 - `version` TXT record, holding `2`, the only schema version RFC 9432 defines
 - one PTR record per member, at `<member_label>.zones`, pointing at the member zone name
 
-The apex NS record is named `@`, which denotes the zone origin per [RFC 1035 §5.1](https://datatracker.ietf.org/doc/html/rfc1035#section-5.1). Its `server` omits the trailing dot the RFC writes, leaving zone file syntax to whoever renders the zone.
+The apex NS record is named `@`, which denotes the zone origin per [RFC 1035 §5.1](https://datatracker.ietf.org/doc/html/rfc1035#section-5.1). Its `server` omits the trailing dot the RFC writes, since that dot is zone file syntax rather than part of the name.
 
 The TTL on all of these records is set to 0. Per [RFC 9432 §4.1](https://datatracker.ietf.org/doc/html/rfc9432#section-4.1), the TTL field has no meaning for records in a catalog zone and should be ignored.
 
