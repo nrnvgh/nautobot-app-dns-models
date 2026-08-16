@@ -642,7 +642,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_patch_refuses_to_move_an_enrolled_zone_to_another_view(self):
-        """The catalog is not writable here, so nothing else stops a move that strands a membership."""
+        """A PATCH moving an enrolled zone's `dns_view` is refused, leaving the zone where it was."""
         self.add_permissions("nautobot_dns_models.change_dnszone")
         catalog_zone = _create_zone(name="api-catalog-view.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         member_zone = _create_zone(name="api-member-view.example")

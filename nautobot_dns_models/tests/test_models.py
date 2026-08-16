@@ -1190,12 +1190,12 @@ class CatalogZoneRecordGatingTest(TestCase):
         cls.primary_zone = create_zone("primary.example")
 
     def test_primary_zone_type_allows_records(self):
-        """A primary zone is the ordinary case: users manage its records directly."""
+        """A primary zone's type allows user records, and the zone does not report as a catalog zone."""
         self.assertTrue(DNSZone.zone_type_allows_records(self.primary_zone.zone_type))
         self.assertFalse(self.primary_zone.is_catalog_zone)
 
     def test_catalog_zone_type_allows_no_records(self):
-        """A catalog maintains its own records and is identified as a catalog zone."""
+        """A catalog zone's type allows no user records, and the zone reports as a catalog zone."""
         self.assertFalse(DNSZone.zone_type_allows_records(self.catalog_zone.zone_type))
         self.assertTrue(self.catalog_zone.is_catalog_zone)
 
@@ -1566,7 +1566,7 @@ class CatalogZoneMembershipTest(TestCase):
         self.assertIn("cannot be a member of another catalog zone", str(context.exception.message_dict["member_zone"]))
 
     def test_rejects_self_membership(self):
-        """Reported on its own rather than as the less obvious complaint that a catalog cannot be a member."""
+        """A catalog naming itself is refused as self-membership, not as the nesting complaint."""
         with self.assertRaises(ValidationError) as context:
             self._membership(member_zone=self.catalog_zone)
         self.assertIn("cannot be a member of itself", str(context.exception.message_dict["member_zone"]))
@@ -1596,7 +1596,7 @@ class CatalogZoneMembershipTest(TestCase):
         self.assertIn("already used by another member", str(context.exception))
 
     def test_allows_the_same_label_in_a_different_catalog(self):
-        """Labels are scoped to their catalog, so uniqueness beyond it would be a restriction the RFC does not make."""
+        """Labels are scoped to their catalog, so another catalog may reuse one."""
         self._membership(member_label="shared")
         other_catalog = create_zone("other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
         other_member = create_zone("second.example")
