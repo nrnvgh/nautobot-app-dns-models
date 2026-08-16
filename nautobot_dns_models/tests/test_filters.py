@@ -1,7 +1,5 @@
 """Test DNSZone Filter."""
 
-# One suite per filterset, which puts this module over pylint's 1000-line default. Splitting it would
-# separate the DNSZone catalog filters from the CatalogZoneMembership suite that exercises the same feature.
 # pylint: disable=too-many-lines
 
 from datetime import date
@@ -396,16 +394,16 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(self.filterset(params, self.queryset).qs.count(), 0)
 
     def test_zone_type(self):
-        """Test filtering by zone_type.
+        """Test filtering by `zone_type`.
 
-        zone_type is not covered by generic_filter_tests because those require at least three
+        `zone_type` is not covered by `generic_filter_tests` because those require at least three
         distinct values and only two zone types exist.
         """
         self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_CATALOG]}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_PRIMARY]}, self.queryset).qs.count(), 3)
 
     def test_catalog(self):
-        """Match member zones by the catalog they are enrolled in, named or by ID."""
+        """`catalog` matches member zones by their catalog zone's name or ID."""
         catalog = DNSZone.objects.get(name="Catalog One")
         enrolled = DNSZone.objects.get(name="Test One")
         CatalogZoneMembership.objects.create(catalog_zone=catalog, member_zone=enrolled)
@@ -414,7 +412,7 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(list(self.filterset({"catalog": [str(catalog.pk)]}, self.queryset).qs), [enrolled])
 
     def test_available_for_catalog_membership(self):
-        """Offer the zones holding no membership, plus the member zone of the membership being edited."""
+        """`available_for_catalog_membership` returns unenrolled zones, plus the edited membership's member zone."""
         catalog = DNSZone.objects.get(name="Catalog One")
         enrolled = DNSZone.objects.get(name="Test One")
         membership = CatalogZoneMembership.objects.create(catalog_zone=catalog, member_zone=enrolled)
@@ -428,7 +426,7 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertIn(enrolled, editing)
         self.assertEqual(editing.count(), total)
 
-        # A PK naming no membership keeps every enrolled zone hidden.
+        # A PK that matches no membership hides every enrolled zone
         unknown = self.filterset({"available_for_catalog_membership": str(catalog.pk)}, self.queryset).qs
         self.assertNotIn(enrolled, unknown)
         self.assertEqual(unknown.count(), total - 1)
