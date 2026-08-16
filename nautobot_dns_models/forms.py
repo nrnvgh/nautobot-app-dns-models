@@ -392,7 +392,9 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         `post_delete` receiver, so neither case needs handling here.
         """
         catalog_zone = self.cleaned_data.get("catalog")
-        membership = zone.catalog_memberships.first()
+        # Read the row from the database: the zone carries the memberships it was loaded with, and
+        # renaming it has already replaced the row by the time this runs.
+        membership = models.CatalogZoneMembership.objects.filter(member_zone=zone).first()
 
         if catalog_zone is None:
             if membership is not None:

@@ -436,6 +436,24 @@ class ZoneFormMembershipPermissionTest(TestCase):
         self.assertHttpStatus(response, 302)
         self.assertEqual(self._catalog_of(self.enrolled_zone), self.catalog_zone)
 
+    def test_renaming_and_moving_in_one_submission_is_accepted(self):
+        """A rename replaces the membership row, and the move must then act on the replacement.
+
+        `DNSZone.save()` re-enrolls a renamed zone before the form syncs the catalog, so the row the
+        form started with is gone by then. Acting on it enrolls the zone twice.
+        """
+        self.add_permissions("nautobot_dns_models.change_catalogzonemembership")
+        data = self._zone_data(zone=self.enrolled_zone, catalog=self.other_catalog_zone)
+        data["name"] = "renamed-and-moved.example"
+
+        response = self.client.post(
+            reverse("plugins:nautobot_dns_models:dnszone_edit", args=(self.enrolled_zone.pk,)), data
+        )
+
+        self.assertHttpStatus(response, 302)
+        self.assertEqual(DNSZone.objects.get(pk=self.enrolled_zone.pk).name, "renamed-and-moved.example")
+        self.assertEqual(self._catalog_of(self.enrolled_zone), self.other_catalog_zone)
+
     def test_creating_an_enrolled_zone_requires_add_permission(self):
         """The zone is written before the membership is judged, so the refusal must take it back out."""
         response = self.client.post(
