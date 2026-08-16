@@ -576,13 +576,13 @@ class DNSZone(DNSModel):
         """Return the catalog zone this zone is enrolled in, or None if it is not enrolled.
 
         A unique constraint holds a zone to one membership, but the reverse accessor is still a
-        manager, so this reads it with a bare `all()`: narrowing it would build a fresh queryset,
-        ignore any `prefetch_related("catalog_memberships__catalog_zone")`, and query per zone.
+        manager. `first()` answers from any `prefetch_related("catalog_memberships__catalog_zone")`
+        rather than querying, because `CatalogZoneMembership` is ordered.
         """
         if self.is_catalog_zone:
             return None
 
-        membership = next(iter(self.catalog_memberships.all()), None)  # pylint: disable=no-member
+        membership = self.catalog_memberships.first()  # pylint: disable=no-member
         return membership.catalog_zone if membership else None
 
     @property
