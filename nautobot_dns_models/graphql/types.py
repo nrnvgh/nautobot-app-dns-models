@@ -1,7 +1,8 @@
 """GraphQL implementation for the DNS models."""
 
 import graphene
-from nautobot.apps.graphql import OptimizedNautobotObjectType, permission_safe_attribute_resolver
+import graphene_django_optimizer as gql_optimizer
+from nautobot.apps.graphql import OptimizedNautobotObjectType, permission_safe_resolver
 
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
@@ -33,9 +34,17 @@ class DNSZoneType(OptimizedNautobotObjectType):
 
     catalog = graphene.Field("nautobot_dns_models.graphql.types.DNSZoneType")
 
-    # `catalog` is a model property rather than a FK or filterset, so it bypasses the auto-generated
-    # permission-enforcing resolvers; wrap it so a catalog zone the user may not view is returned as null.
-    resolve_catalog = permission_safe_attribute_resolver("catalog")
+    @gql_optimizer.resolver_hints(prefetch_related="catalog_memberships__catalog_zone", only="zone_type")
+    @permission_safe_resolver
+    def resolve_catalog(self, info):  # pylint: disable=unused-argument
+        """Return the catalog zone this zone belongs to, or null if the user may not view it.
+
+        `catalog` is a property rather than a FK or filterset, so it bypasses the auto-generated
+        permission-enforcing resolvers. `resolver_hints` stays outermost so the optimizer still carries
+        the hints; without them, listing zones reads the membership, the catalog zone, and this zone's
+        otherwise deferred `zone_type` once per zone.
+        """
+        return self.catalog
 
     class Meta:
         """Metadata for the DNSZone."""

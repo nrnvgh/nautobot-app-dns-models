@@ -3,7 +3,7 @@
 from graphene_django.settings import graphene_settings
 from graphql import parse, validate
 from nautobot.apps.graphql import execute_query
-from nautobot.apps.testing import TestCase
+from nautobot.apps.testing import AssertNoRepeatedQueries, TestCase
 
 from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import CatalogZoneMembership, DNSZone
@@ -47,6 +47,17 @@ class DNSZoneTestCase(GraphQLQueryMixin, TestCase):
     ZONES_QUERY = """
         query ($name: [String]) {
             dns_zones(name: $name) {
+                name
+                catalog {
+                    name
+                }
+            }
+        }
+    """
+
+    ALL_ZONES_QUERY = """
+        query {
+            dns_zones {
                 name
                 catalog {
                     name
@@ -115,6 +126,21 @@ class DNSZoneTestCase(GraphQLQueryMixin, TestCase):
 
         self.assertEqual(zones[0]["name"], "member.example")
         self.assertIsNone(zones[0]["catalog"])
+
+    def test_catalog_reads_every_membership_at_once(self):
+        """Selecting `catalog` for a list of zones must not read the membership table once per zone."""
+        self.add_permissions("nautobot_dns_models.view_dnszone")
+        # Above the context manager's default repetition threshold, so an unprefetched read trips it.
+        for index in range(12):
+            CatalogZoneMembership.objects.create(
+                catalog_zone=self.catalog_zone,
+                member_zone=create_zone(f"list-member-{index}.example"),
+            )
+
+        with AssertNoRepeatedQueries(self):
+            zones = self.run_query(self.ALL_ZONES_QUERY)["dns_zones"]
+
+        self.assertEqual(sum(1 for zone in zones if zone["catalog"]), CatalogZoneMembership.objects.count())
 
     def test_members_omits_a_zone_that_cannot_be_viewed(self):
         """`members` is core's, but the app defining its own type is what keeps core's enforcing resolver."""
