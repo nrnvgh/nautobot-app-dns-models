@@ -413,6 +413,26 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(list(self.filterset({"catalog": [catalog.name]}, self.queryset).qs), [enrolled])
         self.assertEqual(list(self.filterset({"catalog": [str(catalog.pk)]}, self.queryset).qs), [enrolled])
 
+    def test_available_for_catalog_membership(self):
+        """Offer the zones holding no membership, plus the member zone of the membership being edited."""
+        catalog = DNSZone.objects.get(name="Catalog One")
+        enrolled = DNSZone.objects.get(name="Test One")
+        membership = CatalogZoneMembership.objects.create(catalog_zone=catalog, member_zone=enrolled)
+        total = self.queryset.count()
+
+        creating = self.filterset({"available_for_catalog_membership": "true"}, self.queryset).qs
+        self.assertNotIn(enrolled, creating)
+        self.assertEqual(creating.count(), total - 1)
+
+        editing = self.filterset({"available_for_catalog_membership": str(membership.pk)}, self.queryset).qs
+        self.assertIn(enrolled, editing)
+        self.assertEqual(editing.count(), total)
+
+        # A PK naming no membership keeps every enrolled zone hidden.
+        unknown = self.filterset({"available_for_catalog_membership": str(catalog.pk)}, self.queryset).qs
+        self.assertNotIn(enrolled, unknown)
+        self.assertEqual(unknown.count(), total - 1)
+
     def test_search(self):
         """Test filtering by Q search value."""
         self.assertEqual(self.filterset({"q": "Test One"}, self.queryset).qs.count(), 1)

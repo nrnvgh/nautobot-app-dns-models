@@ -158,11 +158,9 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
         """
         unassigned = Q(catalog_memberships__isnull=True)
         if value and value != "true":
-            member_zone_id = (
-                models.CatalogZoneMembership.objects.filter(pk=value).values_list("member_zone_id", flat=True).first()
-            )
-            if member_zone_id is not None:
-                return queryset.filter(unassigned | Q(pk=member_zone_id)).distinct()
+            # Both halves share one join, and the unique constraint on `member_zone` keeps it from
+            # matching a zone twice.
+            return queryset.filter(unassigned | Q(catalog_memberships=value))
 
         return queryset.filter(unassigned)
 
