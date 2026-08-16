@@ -153,8 +153,6 @@ class DNSZoneTable(BaseTable):
     tenant = TenantColumn()
     dns_view = tables.Column(linkify=True)
     enabled = BooleanColumn()
-    # `catalog` is a property, so `BaseTable` cannot derive the prefetch from it and sorting has to
-    # name the underlying path. `DNSZoneUIViewSet` supplies the matching prefetch.
     catalog = tables.Column(
         linkify=True,
         verbose_name="Catalog Zone",
@@ -211,11 +209,7 @@ class DNSZoneTable(BaseTable):
 
 
 class CatalogMemberZoneTable(BaseTable):  # pylint: disable=nb-sub-class-name
-    """Membership rows on a catalog zone's Member Zones panel.
-
-    The member zone is the operator-facing object. Published As is the RFC 9432 owner name
-    (`<label>.zones`) relative to the catalog apex.
-    """
+    """Membership rows on a catalog zone's Member Zones panel, listed by member zone."""
 
     member_zone = tables.Column(linkify=True, verbose_name="Member Zone")
     published_as = tables.Column(accessor="member_label", empty_values=(), verbose_name="Published As")

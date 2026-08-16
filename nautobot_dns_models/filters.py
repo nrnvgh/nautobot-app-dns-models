@@ -115,10 +115,6 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
             "soa_rname": "icontains",
         }
     )
-    # `catalog` is a property rather than a field, so the filter spans the membership itself. A zone
-    # holds at most one membership, so the join cannot repeat a zone. `query_params` is what keeps
-    # non-catalog zones out of the picker, including the filter form's Advanced tab, since the
-    # widget lists whatever the REST endpoint returns rather than the queryset.
     catalog = NaturalKeyOrPKMultipleChoiceFilter(
         field_name="catalog_memberships__catalog_zone",
         queryset=models.DNSZone.objects.all(),
@@ -126,15 +122,13 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
         to_field_name="name",
         label="Catalog zone (name or ID)",
     )
-    # Used by CatalogZoneMembershipForm so the member-zone picker can follow `$catalog_zone` even though
-    # DynamicModelChoiceField only substitutes that field's PK, not its dns_view.
+    # Used by both of CatalogZoneMembershipForm's pickers to scope one end to the other's view.
     same_dns_view_as = django_filters.ModelChoiceFilter(
         queryset=models.DNSZone.objects.all(),
         method="filter_same_dns_view_as",
         label="Same DNS view as",
     )
-    # Pass "true" when creating a membership, or a CatalogZoneMembership PK when editing so that
-    # membership's current member_zone remains selectable while other enrolled zones stay hidden.
+    # "true" when creating a membership, or the membership's PK when editing.
     available_for_catalog_membership = django_filters.CharFilter(
         method="filter_available_for_catalog_membership",
         label="Available for catalog membership",

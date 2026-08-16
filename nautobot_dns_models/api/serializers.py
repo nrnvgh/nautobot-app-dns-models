@@ -93,8 +93,6 @@ class CatalogZoneMembershipSerializer(ValidatedModelSerializer):
 
         model = models.CatalogZoneMembership
         fields = "__all__"
-        # Omit the UniqueTogetherValidator for (catalog_zone, member_label), which would make member_label
-        # required. full_clean() validates the same constraint.
         validators = []
 
 
