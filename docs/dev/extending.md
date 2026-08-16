@@ -129,7 +129,11 @@ erDiagram
     DNSRecord ||--o{ CNAMERecord: implements
     DNSRecord ||--o{ MXRecord: implements
     DNSRecord ||--o{ TXTRecord: implements
+    %% Must precede the PTRRecord implements edge, which it otherwise crosses.
+    CatalogZoneMembership ||..|| PTRRecord: "publishes member PTR (system-managed)"
     DNSRecord ||--o{ PTRRecord: implements
+    %% Must precede the NSRecord implements edge, which it otherwise crosses.
+    DNSZone ||..o| NSRecord: "auto-creates apex NS (when zone_type is catalog)"
     DNSRecord ||--o{ NSRecord: implements
     DNSRecord ||--o{ SRVRecord: implements
 
@@ -139,9 +143,7 @@ erDiagram
 
     DNSZone ||--o{ CatalogZoneMembership: "catalog_zone"
     DNSZone ||--o| CatalogZoneMembership: "member_zone"
-    DNSZone ||..o| NSRecord: "auto-creates apex NS (when zone_type is catalog)"
     DNSZone ||..o| TXTRecord: "auto-creates version TXT (when zone_type is catalog)"
-    CatalogZoneMembership ||..|| PTRRecord: "publishes member PTR (system-managed)"
 
     DNSView ||--o{ DNSViewPrefixAssignment: "assigns"
     ipam_PrefixModel ||--o{ DNSViewPrefixAssignment: "assigned via"
