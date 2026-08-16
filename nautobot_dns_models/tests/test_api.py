@@ -1,8 +1,6 @@
 """Unit tests for nautobot_dns_models."""
 # pylint: disable=too-many-lines
 
-# pylint: disable=too-many-lines
-
 from datetime import date
 
 from constance.test import override_config
