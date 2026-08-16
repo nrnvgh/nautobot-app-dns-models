@@ -674,7 +674,7 @@ class CatalogZoneMembershipForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
 
         model = models.CatalogZoneMembership
         # Not `__all__`: `member_label` has nothing to offer on this form.
-        fields = ["catalog_zone", "member_zone"]  # pylint: disable=nb-use-fields-all
+        fields = ["catalog_zone", "member_zone"]
 
     def __init__(self, *args, **kwargs):
         """Hide zones that already belong to a catalog from the picker."""
