@@ -147,8 +147,8 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
     def filter_available_for_catalog_membership(self, queryset, name, value):  # pylint: disable=unused-argument
         """Return zones not enrolled in a catalog, optionally keeping one membership's member eligible.
 
-        Without `coo` (RFC 9432 §4.3.1), a zone may belong to only one catalog. Offering already-
-        enrolled zones in the create picker can only fail the unique constraint on `member_zone`.
+        A zone may belong to only one catalog, so offering an already-enrolled zone in the create
+        picker can only fail the unique constraint on `member_zone`.
         """
         unassigned = Q(catalog_memberships__isnull=True)
         if value and value != "true":

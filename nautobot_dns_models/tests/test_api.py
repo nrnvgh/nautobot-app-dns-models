@@ -697,7 +697,7 @@ class CatalogZoneMembershipAPITestCase(APIViewTestCases.APIViewTestCase):
             _create_zone(name=f"catalog-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
             for index in range(2)
         ]
-        # One per membership, since a zone may belong to only one catalog without `coo`.
+        # One per membership, since a zone may belong to only one catalog.
         member_zones = [_create_zone(name=f"member-{index}.example") for index in range(6)]
 
         for member_zone in member_zones[:3]:
@@ -771,7 +771,7 @@ class CatalogZoneMembershipAPITestCase(APIViewTestCases.APIViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_duplicate_member_zone_rejected(self):
-        """Without `coo`, a zone belongs to one catalog, which is the other constraint DRF is no longer checking."""
+        """A zone belongs to one catalog, which is the other constraint DRF is no longer checking."""
         self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
         existing = self._get_queryset().first()
         response = self.client.post(

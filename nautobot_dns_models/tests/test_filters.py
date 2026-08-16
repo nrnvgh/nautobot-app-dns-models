@@ -465,7 +465,7 @@ class CatalogZoneMembershipFilterTestCase(FilterTestCases.FilterTestCase):
             DNSZone.objects.create(name=f"catalog-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
             for index in range(3)
         ]
-        # One per membership, since a zone may belong to only one catalog without `coo`.
+        # One per membership, since a zone may belong to only one catalog.
         member_zones = [DNSZone.objects.create(name=f"member-{index}.example") for index in range(3)]
 
         for index, (catalog_zone, member_zone) in enumerate(zip(cls.catalog_zones, member_zones)):
