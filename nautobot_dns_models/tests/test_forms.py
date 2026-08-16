@@ -331,7 +331,7 @@ class DNSZoneBulkEditTestCase(TestCase):
         form = self._form([self.member_zone, self.unenrolled_zone], self.other_view)
 
         self.assertFalse(form.is_valid())
-        self.assertIn("Held in their current view by a catalog membership", str(form.errors["dns_view"]))
+        self.assertIn("Cannot be moved to another view", str(form.errors["dns_view"]))
         self.assertIn("member.example", str(form.errors["dns_view"]))
         self.assertNotIn("primary.example", str(form.errors["dns_view"]))
 

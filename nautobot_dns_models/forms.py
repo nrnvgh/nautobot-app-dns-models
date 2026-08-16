@@ -1,7 +1,5 @@
 """Forms for nautobot_dns_models."""
 
-# One form per model, plus the bulk and filter variants of each, which puts this module over pylint's
-# 1000-line default. Splitting it would follow the same seams as models.py and is deferred with it.
 # pylint: disable=too-many-lines
 
 from django import forms
@@ -35,12 +33,11 @@ from nautobot_dns_models.choices import DNSZoneTypeChoices
 EXPIRATION_DATE_INPUT_FORMATS = ("%Y-%m-%d",)
 
 
-def _listed_names(names, limit=5):
+def _bolded_names(names, limit=5):
     """List the names in bold, falling back on a count once the list would stop being readable.
 
-    Marked up here rather than in a template because the forms that name the zones responsible for a
-    refused bulk operation report the same sentences from `clean()`, in the shape core gives the
-    objects that block a delete.
+    The markup lives here because these names are raised from `clean()`, where no template is
+    involved. The bolded, truncated shape follows core's listing of the objects that block a delete.
     """
     names = sorted(names)
     listed = format_html_join(", ", "<strong>{}</strong>", ((name,) for name in names[:limit]))
@@ -319,10 +316,9 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
 
         model = models.DNSZone
         fields = "__all__"
-        # `catalogs` is the relation behind the singular `catalog` control above. Left in, a blank
-        # submission would reach `set([])` and withdraw the zone from its catalog without asking.
-        # Named here rather than by enumerating the rest: the point is to drop this one relation, and
-        # a new field should still arrive on the form of its own accord.
+        # `catalogs` is the M2M behind the `catalog` control. Left in, a blank submission would
+        # clear the membership. `nb-use-fields-all` keeps `fields` at `"__all__"` here, so it comes
+        # off with `exclude`.
         exclude = ["catalogs"]  # pylint: disable=modelform-uses-exclude
         widgets = {"zone_type": StaticSelect2()}
 
@@ -381,16 +377,12 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         return zone
 
     def _disable_view_field(self, reason):
-        """Disable the view field, since `DNSZone.clean()` refuses to move an enrolled zone to another view."""
+        """Disable the view field. The model refuses to move a member zone to another view."""
         self.fields["dns_view"].disabled = True
         self.fields["dns_view"].help_text = reason
 
     def _sync_catalog_membership(self, zone):
-        """Create, move, or remove the membership enrolling `zone` in a catalog.
-
-        Moving one keeps its member label, and removing one withdraws the catalog's PTR through the
-        `post_delete` receiver, so neither case needs handling here.
-        """
+        """Create, move, or remove the membership for `zone`."""
         catalog_zone = self.cleaned_data.get("catalog")
         # Read the row from the database: the zone carries the memberships it was loaded with, and
         # renaming it has already replaced the row by the time this runs.
@@ -482,11 +474,9 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         ]
 
     def clean(self):
-        """Refuse a view a membership holds a selected zone away from, naming the zones responsible.
+        """Refuse a view change for zones on either side of a catalog membership, naming them.
 
-        The bulk edit job runs the selection in one transaction, so leaving these to the model would
-        roll the batch back over the first zone it reached. A selection made with "select all" posts
-        no zones, and is left to the model.
+        A selection made with "select all" posts no zones, and is left to the model.
         """
         super().clean()
 
@@ -504,7 +494,8 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
             raise forms.ValidationError(
                 {
                     "dns_view": format_html(
-                        "Held in their current view by a catalog membership: {}.", _listed_names(pinned)
+                        "Cannot be moved to another view while in a catalog membership: {}.",
+                        _bolded_names(pinned),
                     )
                 }
             )
@@ -527,13 +518,12 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
 class DNSZoneWithCatalogBulkEditForm(DNSZoneBulkEditForm):
     """DNSZone bulk edit form for a selection that includes at least one catalog zone.
 
-    A catalog zone refuses `auto_create_ptr`, and the bulk edit job runs the whole selection in one
-    transaction, so offering the control would only earn an error and no edits at all.
-    `DNSZoneUIViewSet.get_form_class` chooses this form once it knows the selection.
+    A catalog zone refuses `auto_create_ptr`. Applying that value to the selection would
+    roll the batch back.
     """
 
     def __init__(self, *args, **kwargs):
-        """Withdraw the control no catalog zone in the selection could accept."""
+        """Disable automatic PTR creation; a catalog zone in the selection cannot accept it."""
         super().__init__(*args, **kwargs)
 
         self.fields["auto_create_ptr"].disabled = True
@@ -541,12 +531,7 @@ class DNSZoneWithCatalogBulkEditForm(DNSZoneBulkEditForm):
 
 
 class DNSZoneBulkAddMembershipForm(forms.Form):
-    """Catalog picker for a selection of zones being enrolled together.
-
-    Only the catalog is asked for. The selection is resolved from the request on the pass that renders
-    this form and the pass that applies it alike, so nothing about which zones are written depends on
-    what the browser sends back.
-    """
+    """Catalog picker for a selection of zones being added to one catalog."""
 
     catalog = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.all(),
@@ -567,11 +552,11 @@ class DNSZoneBulkAddMembershipForm(forms.Form):
         self.selection_errors = self._judge_selection()
 
         if self.selection_errors:
-            # No catalog could take this selection, so the control is shown refused rather than
-            # inviting a choice that the applying pass would then have to take back.
+            # No catalog could take this selection, so the control is disabled rather than inviting
+            # a choice the form would only reject.
             self.fields["catalog"].disabled = True
         elif self.dns_view_ids:
-            # Scoped here rather than declared above because the view is only known once the
+            # Set here rather than in the field's `query_params`: the view is only known once the
             # selection is.
             self.fields["catalog"].widget.add_query_param("dns_view", str(next(iter(self.dns_view_ids))))
 
@@ -590,14 +575,13 @@ class DNSZoneBulkAddMembershipForm(forms.Form):
         if catalog_zone is None:
             return self.cleaned_data
 
-        # Unreachable from the scoped picker, and still the only thing standing between a crafted
-        # post and a membership the model would refuse one zone at a time.
-        strangers = [zone for zone in self.zones if zone.dns_view_id != catalog_zone.dns_view_id]
-        if strangers:
+        # Unreachable from the scoped picker, but a crafted post can still reach it.
+        invalid_zones = [zone for zone in self.zones if zone.dns_view_id != catalog_zone.dns_view_id]
+        if invalid_zones:
             raise forms.ValidationError(
                 {
                     "catalog": format_html(
-                        "Not in this catalog zone's view: {}.", _listed_names(zone.name for zone in strangers)
+                        "Not in this catalog zone's view: {}.", _bolded_names(zone.name for zone in invalid_zones)
                     )
                 },
             )
@@ -607,19 +591,17 @@ class DNSZoneBulkAddMembershipForm(forms.Form):
     def _judge_selection(self):
         """Name every reason the selection could take no catalog at all, before one is asked for.
 
-        Both faults are reported together so that correcting one does not uncover the other on the
-        next attempt, and each ends in the evidence, since a selection made with "select all" is
-        never listed back to the user.
+        Both faults are reported together so that correcting one does not uncover the other.
         """
         reasons = []
 
         catalogs = [zone.name for zone in self.zones if zone.is_catalog_zone]
         if catalogs:
-            reasons.append(format_html("{} {}.", self.NESTING, _listed_names(catalogs)))
+            reasons.append(format_html("{} {}.", self.NESTING, _bolded_names(catalogs)))
 
         if len(self.dns_view_ids) > 1:
             views = models.DNSView.objects.filter(pk__in=self.dns_view_ids).values_list("name", flat=True)
-            reasons.append(format_html("{} {}.", self.SPANS_VIEWS, _listed_names(views)))
+            reasons.append(format_html("{} {}.", self.SPANS_VIEWS, _bolded_names(views)))
 
         return reasons
 
@@ -665,8 +647,7 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
 class CatalogZoneMembershipForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
     """CatalogZoneMembership creation/edit form.
 
-    The member label is system-assigned on create and immutable afterward, so it is omitted from
-    the UI.
+    The member label is system-assigned on create and immutable afterward, so it is omitted.
     """
 
     catalog_zone = DynamicModelChoiceField(
@@ -692,18 +673,16 @@ class CatalogZoneMembershipForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
         """Meta attributes."""
 
         model = models.CatalogZoneMembership
-        # Not `__all__`: `member_label` is system-assigned on create and immutable afterward, so the
-        # form has nothing to offer for it.
+        # Not `__all__`: `member_label` has nothing to offer on this form.
         fields = ["catalog_zone", "member_zone"]  # pylint: disable=nb-use-fields-all
 
     def __init__(self, *args, **kwargs):
-        """Hide already-enrolled zones from the picker."""
+        """Hide zones that already belong to a catalog from the picker."""
         super().__init__(*args, **kwargs)
 
         editing = self.instance.present_in_database
-        # Set here rather than declared above because `add_query_param` appends: declaring the create-time
-        # value would leave the edit-time one as a second entry the filter has to disambiguate.
-        # Passing the membership's PK keeps its own member_zone selectable while other enrolled zones stay hidden.
+        # Set here rather than in the field's `query_params`: `add_query_param` appends, so a
+        # declared default would be sent alongside this value and the last one would silently win.
         self.fields["member_zone"].widget.add_query_param(
             "available_for_catalog_membership", str(self.instance.pk) if editing else "true"
         )
