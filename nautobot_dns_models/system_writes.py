@@ -5,11 +5,10 @@ A catalog zone (RFC 9432) contains only records this app creates and maintains, 
 legitimately owns those records needs a way to identify itself, and neither `full_clean()` nor
 `QuerySet.delete()` accepts custom keyword arguments, so the marker travels out of band.
 
-The shape follows `nautobot.dcim.component_creation.SkipAutoComponentCreation` and
-`nautobot.extras.signals.change_context_state`: a `contextvars.ContextVar` rather than a
-thread-local, so the flag is scoped per asyncio task and per Celery invocation. As core notes for
-its own flag, a value set in one OS thread is not visible in a separately spawned thread; code
-fanning work out to a thread pool must enter the block inside each worker.
+The flag is a `contextvars.ContextVar` rather than a thread-local, following
+`nautobot.dcim.component_creation.SkipAutoComponentCreation`, so it is scoped per asyncio task and
+per Celery invocation. A value set in one OS thread is not visible in a separately spawned thread,
+so code fanning work out to a thread pool must enter the block inside each worker.
 """
 
 import contextlib

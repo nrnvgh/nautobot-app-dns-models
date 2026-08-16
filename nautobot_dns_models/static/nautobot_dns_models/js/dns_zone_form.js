@@ -1,9 +1,9 @@
 /**
- * DNS Zone Form - disable the controls a Catalog zone cannot use.
+ * DNS Zone Form - disable the controls a catalog zone cannot use.
  *
- * A catalog zone can neither auto-create PTR records nor belong to another catalog, and the model
- * refuses both. On create, zone_type is still editable, so the controls must track the select.
- * On edit, zone_type is already disabled server-side and this script exits early.
+ * A catalog zone can neither auto-create PTR records nor be a member of another catalog zone, and
+ * the model refuses both. On create, zone_type is still editable, so the controls must track the
+ * select. On edit, zone_type is already disabled server-side and this script exits early.
  */
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -21,8 +21,8 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         // Nautobot render_field wraps each control in div.mb-10 with an optional span.form-text.
-        const container = field.closest(".mb-10, .form-group, .mb-3, .field");
-        const helpElement = container ? container.querySelector(".form-text, .help-block") : null;
+        const container = field.closest(".mb-10");
+        const helpElement = container ? container.querySelector(".form-text") : null;
 
         return {
             field: field,

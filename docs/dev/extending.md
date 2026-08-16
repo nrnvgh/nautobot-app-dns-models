@@ -140,8 +140,8 @@ erDiagram
     DNSZone ||--o{ CatalogZoneMembership: "catalog_zone"
     DNSZone ||--o| CatalogZoneMembership: "member_zone"
     DNSZone ||..o| NSRecord: "auto-creates apex NS (when zone_type is catalog)"
-    DNSZone ||..o| TXTRecord: "auto-creates version (when zone_type is catalog)"
-    CatalogZoneMembership ||..|| PTRRecord: "publishes as member (system-managed)"
+    DNSZone ||..o| TXTRecord: "auto-creates version TXT (when zone_type is catalog)"
+    CatalogZoneMembership ||..|| PTRRecord: "publishes member PTR (system-managed)"
 
     DNSView ||--o{ DNSViewPrefixAssignment: "assigns"
     ipam_PrefixModel ||--o{ DNSViewPrefixAssignment: "assigned via"

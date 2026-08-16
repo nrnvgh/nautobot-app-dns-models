@@ -33,8 +33,8 @@ class DNSZoneType(OptimizedNautobotObjectType):
 
     catalog = graphene.Field("nautobot_dns_models.graphql.types.DNSZoneType")
 
-    # `catalog` reads a model property rather than a field or filterset, so it bypasses the resolvers core
-    # generates to enforce object permissions on a related object. GHSA-mfwj-pjgx-22v2 is that omission.
+    # `catalog` is a model property rather than a FK or filterset, so it bypasses the auto-generated
+    # permission-enforcing resolvers; wrap it so a catalog zone the user may not view is returned as null.
     resolve_catalog = permission_safe_attribute_resolver("catalog")
 
     class Meta:
