@@ -1610,11 +1610,29 @@ class CatalogZoneMembershipTest(TestCase):
         self.assertFalse(CatalogZoneMembership.objects.filter(pk=membership.pk).exists())
 
     def test_catalog_zone_cannot_be_deleted_while_it_has_members(self):
-        """Losing a catalog silently unprovisions every member zone, so the members come out first."""
+        """Losing a catalog silently unprovisions every member zone, so the members come out first.
+
+        Deleting a zone clears its own records before Django collects, so a refusal has to take them
+        back: a catalog missing its version record is not a catalog at all (RFC 9432 §4.2.1).
+        """
         self._membership()
         with self.assertRaises(ProtectedError):
             self.catalog_zone.delete()
         self.assertTrue(DNSZone.objects.filter(pk=self.catalog_zone.pk).exists())
+        self._assert_catalog_records_survived()
+
+    def test_refused_bulk_delete_of_a_catalog_zone_keeps_its_records(self):
+        """Nautobot's bulk delete job calls `QuerySet.delete()`, which clears those records the same way."""
+        self._membership()
+        with self.assertRaises(ProtectedError):
+            DNSZone.objects.filter(pk=self.catalog_zone.pk).delete()
+        self.assertTrue(DNSZone.objects.filter(pk=self.catalog_zone.pk).exists())
+        self._assert_catalog_records_survived()
+
+    def _assert_catalog_records_survived(self):
+        """Assert the catalog still publishes the version record and the PTR naming its member."""
+        self.assertTrue(TXTRecord.objects.filter(name="version", zone=self.catalog_zone).exists())
+        self.assertTrue(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
 
     def _membership(self, **overrides):
         """Create and return a validated membership, defaulting to the fixture zones."""

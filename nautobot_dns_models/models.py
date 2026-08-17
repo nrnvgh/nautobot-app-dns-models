@@ -256,9 +256,13 @@ class DNSZoneQuerySet(RestrictedQuerySet):
     """QuerySet for DNSZone."""
 
     def delete(self):
-        """Clear system-managed records first, so bulk zone deletion is not blocked by PROTECT."""
-        purge_system_managed_records(self)
-        return super().delete()
+        """Clear system-managed records first, so bulk zone deletion is not blocked by PROTECT.
+
+        Atomic for the reason `DNSZone.delete()` is.
+        """
+        with transaction.atomic():
+            purge_system_managed_records(self)
+            return super().delete()
 
 
 class DNSModel(PrimaryModel):
@@ -538,9 +542,15 @@ class DNSZone(DNSModel):
             raise ValidationError({"auto_create_ptr": "Catalog zones cannot enable automatic PTR creation."})
 
     def delete(self, *args, **kwargs):
-        """Clear system-managed records first, so a catalog zone is not held open by its own records."""
-        purge_system_managed_records([self])
-        return super().delete(*args, **kwargs)
+        """Clear system-managed records first, so a catalog zone is not held open by its own records.
+
+        Atomic because another relation can still refuse the delete, and a catalog stripped of the
+        records it was cleared of is no longer a catalog (RFC 9432 §4.2.1). Not every caller opens a
+        transaction of its own: the REST API deletes a single object in autocommit.
+        """
+        with transaction.atomic():
+            purge_system_managed_records([self])
+            return super().delete(*args, **kwargs)
 
     def save(self, *args, **kwargs):
         """Normalize the RNAME, then write the records this zone's type requires, repairing them if lost.
