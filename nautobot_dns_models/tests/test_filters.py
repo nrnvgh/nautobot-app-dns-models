@@ -431,6 +431,11 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertNotIn(enrolled, unknown)
         self.assertEqual(unknown.count(), total - 1)
 
+        # A value that is not a PK at all filters rather than raising from `UUIDField`
+        malformed = self.filterset({"available_for_catalog_membership": "not-a-uuid"}, self.queryset).qs
+        self.assertNotIn(enrolled, malformed)
+        self.assertEqual(malformed.count(), total - 1)
+
     def test_search(self):
         """Test filtering by Q search value."""
         self.assertEqual(self.filterset({"q": "Test One"}, self.queryset).qs.count(), 1)

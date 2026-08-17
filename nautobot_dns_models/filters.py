@@ -6,6 +6,7 @@ import django_filters
 from django.db.models import CharField, F, Q, Value
 from django.db.models.functions import Coalesce, Concat
 from nautobot.apps.filters import NautobotFilterSet, SearchFilter, TenancyModelFilterSetMixin
+from nautobot.apps.utils import is_uuid
 from nautobot.core.filters import MultiValueCharFilter, NaturalKeyOrPKMultipleChoiceFilter
 from netaddr import IPAddress as NetIPAddress
 
@@ -151,11 +152,13 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
         picker can only fail the unique constraint on `member_zone`.
         """
         unassigned = Q(catalog_memberships__isnull=True)
-        if value and value != "true":
+        if value and value != "true" and is_uuid(value):
             # Both halves share one join, and the unique constraint on `member_zone` keeps it from
             # matching a zone twice.
             return queryset.filter(unassigned | Q(catalog_memberships=value))
 
+        # A hand-written query string can carry anything, and `UUIDField` raises on a malformed PK
+        # rather than matching nothing, so anything but a PK exempts no membership.
         return queryset.filter(unassigned)
 
 
