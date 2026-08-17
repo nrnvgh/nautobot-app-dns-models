@@ -3,7 +3,12 @@
 from django.db.models.signals import m2m_changed, post_delete
 from django.dispatch import receiver
 
-from nautobot_dns_models.models import CatalogZoneMembership, DNSZone, ensure_catalog_zone_records
+from nautobot_dns_models.models import (
+    CatalogZoneMembership,
+    DNSZone,
+    publish_member_ptr_record,
+    withdraw_member_ptr_record,
+)
 
 
 @receiver(post_delete, sender=CatalogZoneMembership)
@@ -17,13 +22,12 @@ def remove_catalog_member_ptr(sender, instance, **kwargs):  # pylint: disable=un
 
     Stage 2 ruled out `pre_delete` for the immutability guards because raising inside the
     collector's atomic block poisons the request transaction. That finding does not apply here:
-    this receiver only rewrites records, and `catalog_zone` being PROTECT means the catalog it
-    dereferences is always still there.
+    this receiver only rewrites records.
 
     This covers `DNSZone.catalogs.remove()` and `.clear()` as well, since both delete the through
     rows through a queryset, which sends this signal for each one.
     """
-    ensure_catalog_zone_records(instance.catalog_zone)
+    withdraw_member_ptr_record(instance.catalog_zone_id, instance.member_label)
 
 
 @receiver(m2m_changed, sender=CatalogZoneMembership)
@@ -52,8 +56,8 @@ def publish_added_catalog_members(sender, instance, action, reverse, pk_set, **k
     if action != "post_add" or not pk_set:
         return
 
-    for catalog_zone in _affected_catalog_zones(instance, reverse, pk_set):
-        ensure_catalog_zone_records(catalog_zone)
+    for membership in _added_memberships(instance, reverse, pk_set):
+        publish_member_ptr_record(membership)
 
 
 def _build_pending_memberships(instance, reverse, pk_set):
@@ -64,8 +68,9 @@ def _build_pending_memberships(instance, reverse, pk_set):
     return [CatalogZoneMembership(catalog_zone=zone, member_zone=instance) for zone in zones]
 
 
-def _affected_catalog_zones(instance, reverse, pk_set):
-    """Return the catalogs whose published records an `add()` changed."""
+def _added_memberships(instance, reverse, pk_set):
+    """Return the membership rows an `add()` just wrote, whichever end it was called on."""
+    memberships = CatalogZoneMembership.objects.select_related("catalog_zone", "member_zone")
     if reverse:
-        return [instance]
-    return DNSZone.objects.filter(pk__in=pk_set)
+        return memberships.filter(catalog_zone=instance, member_zone_id__in=pk_set)
+    return memberships.filter(member_zone=instance, catalog_zone_id__in=pk_set)

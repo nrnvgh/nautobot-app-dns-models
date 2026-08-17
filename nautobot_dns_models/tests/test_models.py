@@ -4,7 +4,7 @@
 from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
 from django.db.models import ProtectedError
 from nautobot.apps.change_logging import web_request_context
 from nautobot.apps.testing import ModelTestCases, TestCase
@@ -47,6 +47,21 @@ def create_zone(name, **kwargs):
         soa_rname=f"admin@{name}",
         **kwargs,
     )
+
+
+class _RowCounter:
+    """Count the rows the database returns, for a cost that query counting cannot see."""
+
+    def __init__(self):
+        """Start the count at nothing."""
+        self.rows = 0
+
+    def __call__(self, execute, sql, params, many, context):
+        """Run the query, then add on however many rows came back."""
+        result = execute(sql, params, many, context)
+        if sql.lstrip().upper().startswith("SELECT"):
+            self.rows += max(context["cursor"].rowcount, 0)
+        return result
 
 
 # Helper for generating unicode labels of a specific IDNA-encoded length
@@ -1773,7 +1788,7 @@ class CatalogMemberRecordSyncTest(TestCase):
         )
 
     def test_renaming_one_member_leaves_the_other_members_alone(self):
-        """A rename reconciles the whole catalog, so the members it did not touch keep their labels."""
+        """A rename withdraws and republishes the zone it renamed, so the other members keep their labels."""
         first = self._membership()
         second = self._membership(member_zone=create_zone("second.example"))
         second_pk = second.pk
@@ -1822,7 +1837,7 @@ class CatalogMemberRecordSyncTest(TestCase):
         self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
 
     def test_two_members_each_get_their_own_ptr(self):
-        """Reconciling the whole set must not disturb the members that did not change."""
+        """Publishing a member must leave the one already published where it stands."""
         first = self._membership()
         second = self._membership(member_zone=create_zone("second.example"))
         self.assertEqual(
@@ -1831,6 +1846,22 @@ class CatalogMemberRecordSyncTest(TestCase):
                 (f"{first.member_label}.zones", "member.example"),
                 (f"{second.member_label}.zones", "second.example"),
             },
+        )
+
+    def test_publishing_a_member_reads_no_more_of_a_large_catalog_than_a_small_one(self):
+        """Rebuilding the whole set read every membership and PTR the catalog held, at half a second by 2000.
+
+        Rows rather than queries: the sweep was the same two queries whatever they returned, so no
+        query count moves when it comes back.
+        """
+        small_catalog = create_zone("small-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        large_catalog = create_zone("large-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        for index in range(10):
+            self._membership(catalog_zone=large_catalog, member_zone=create_zone(f"crowd-{index}.example"))
+
+        self.assertEqual(
+            self._rows_read_publishing("large-newcomer.example", large_catalog),
+            self._rows_read_publishing("small-newcomer.example", small_catalog),
         )
 
     def test_saving_the_catalog_zone_restores_a_missing_member_ptr(self):
@@ -1864,3 +1895,11 @@ class CatalogMemberRecordSyncTest(TestCase):
         membership = CatalogZoneMembership(**fields)
         membership.validated_save()
         return membership
+
+    def _rows_read_publishing(self, member_name, catalog_zone):
+        """Return how many rows the database returned while a new zone joined `catalog_zone`."""
+        member_zone = create_zone(member_name)
+        counter = _RowCounter()
+        with connection.execute_wrapper(counter):
+            self._membership(catalog_zone=catalog_zone, member_zone=member_zone)
+        return counter.rows

@@ -154,8 +154,9 @@ def ensure_catalog_zone_records(zone):
     §4.1 notes that TTLs in a catalog zone carry no meaning, and the RFC sets them to zero
     throughout.
 
-    Idempotent, so running it on every save of a zone or a membership repairs a catalog whose
-    records drifted, rather than only populating a brand-new one.
+    Idempotent, so saving the zone repairs a catalog whose records drifted rather than only
+    populating a brand-new one. It reads every membership the catalog holds, which is why a
+    membership write publishes its own record through `publish_member_ptr_record` instead.
     """
     if not zone.is_catalog_zone:
         return
@@ -194,11 +195,10 @@ def _ensure_member_ptr_records(zone):
     """Rebuild the member PTR records from the catalog's memberships.
 
     RFC 9432 §4.1 publishes each member at `<label>.zones.$CATZ` as a PTR to the member zone name,
-    and §4.1 again requires that RRset to hold exactly one RR. Reconciling the whole set is what
-    lets a membership move or re-target without the caller having to know its previous owner name.
+    and §4.1 again requires that RRset to hold exactly one RR.
     """
     expected = {
-        f"{membership.member_label}.zones": membership.member_zone.name
+        member_ptr_name(membership.member_label): membership.member_zone.name
         for membership in zone.member_memberships.select_related("member_zone")
     }
 
@@ -215,6 +215,39 @@ def _ensure_member_ptr_records(zone):
     for name, ptrdname in expected.items():
         if name not in published:
             PTRRecord(name=name, ptrdname=ptrdname, zone=zone, _ttl=0).validated_save()
+
+
+def member_ptr_name(member_label):
+    """Return the owner name a member is published at, relative to the catalog apex (RFC 9432 §4.1)."""
+    return f"{member_label}.zones"
+
+
+def publish_member_ptr_record(membership):
+    """Publish one membership at its own owner name, leaving the other members of the catalog alone.
+
+    RFC 9432 §4.1 allows a single RR there, so anything else standing at the name gives way. Reading
+    only this owner name is what keeps the cost of a membership write independent of how many members
+    the catalog already holds; reconciling the whole set costs most of a second at a few thousand.
+    """
+    name = member_ptr_name(membership.member_label)
+    ptrdname = membership.member_zone.name
+    published = PTRRecord.objects.filter(name=name, zone_id=membership.catalog_zone_id)
+    keeper = published.filter(ptrdname=ptrdname).first()
+
+    with system_write():
+        (published.exclude(pk=keeper.pk) if keeper else published).delete()
+        if keeper is None:
+            PTRRecord(name=name, ptrdname=ptrdname, zone=membership.catalog_zone, _ttl=0).validated_save()
+
+
+def withdraw_member_ptr_record(catalog_zone_id, member_label):
+    """Withdraw the PTR that published a membership, named by the label it was published under.
+
+    Takes a label rather than a membership because a move and a reissued label each leave a record
+    behind under the previous one, which the membership no longer carries.
+    """
+    with system_write():
+        PTRRecord.objects.filter(name=member_ptr_name(member_label), zone_id=catalog_zone_id).delete()
 
 
 def reenroll_in_catalog(zone):
@@ -823,7 +856,7 @@ class CatalogZoneMembership(BaseModel):
         self._validate_member_label()
 
     def save(self, *args, **kwargs):
-        """Fill in or reissue the member label, then update the PTR records of every affected catalog.
+        """Fill in or reissue the member label, then publish this membership as a PTR record.
 
         Atomic: if writing a PTR fails, the membership must not be stored.
 
@@ -831,25 +864,29 @@ class CatalogZoneMembership(BaseModel):
         issued there and is generated here instead.
         """
         stored = (
-            CatalogZoneMembership.objects.filter(pk=self.pk).values("catalog_zone_id", "member_zone_id").first()
+            CatalogZoneMembership.objects.filter(pk=self.pk)
+            .values("catalog_zone_id", "member_zone_id", "member_label")
+            .first()
             if self.present_in_database
             else None
         )
         previous_catalog_zone_id = stored["catalog_zone_id"] if stored else None
         previous_member_zone_id = stored["member_zone_id"] if stored else None
+        previous_label = stored["member_label"] if stored else None
 
         # Pointing the membership at another zone hands it the identity the previous one was
         # published under, which a consumer would read as that zone carrying on under a new name.
-        if previous_member_zone_id is not None and previous_member_zone_id != self.member_zone_id:
+        if stored and previous_member_zone_id != self.member_zone_id:
             self.member_label = catalog_member_label()
         self._ensure_member_label()
 
         with transaction.atomic():
             super().save(*args, **kwargs)
-            ensure_catalog_zone_records(self.catalog_zone)
-            # Moving a membership to another catalog leaves a PTR behind in the one it came from.
-            if previous_catalog_zone_id and previous_catalog_zone_id != self.catalog_zone_id:
-                ensure_catalog_zone_records(DNSZone.objects.get(pk=previous_catalog_zone_id))
+            publish_member_ptr_record(self)
+            # A move leaves a record behind in the catalog it came from, and a reissued label leaves
+            # one at the label it was published under.
+            if stored and (previous_catalog_zone_id, previous_label) != (self.catalog_zone_id, self.member_label):
+                withdraw_member_ptr_record(previous_catalog_zone_id, previous_label)
 
     def _ensure_member_label(self):
         """Fill in the generated label, leaving one the caller supplied alone."""
