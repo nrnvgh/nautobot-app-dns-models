@@ -782,7 +782,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         return selection.filter(zone_type=DNSZoneTypeChoices.TYPE_CATALOG).exists()
 
 
-class CatalogZoneMembershipUIViewSet(ObjectEditViewMixin, ObjectDestroyViewMixin):
+class CatalogZoneMembershipUIViewSet(ObjectEditViewMixin, ObjectDestroyViewMixin):  # pylint: disable=abstract-method
     """Add, edit, and delete pages for a catalog membership.
 
     The membership is a through model and has no list or detail of its own.
