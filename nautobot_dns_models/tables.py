@@ -171,7 +171,7 @@ class DNSZoneTable(BaseTable):
         fields = (
             "pk",
             "name",
-            "zone_type",
+            "type",
             "dns_view",
             "catalog",
             "enabled",
@@ -192,7 +192,7 @@ class DNSZoneTable(BaseTable):
         default_columns = (
             "pk",
             "name",
-            "zone_type",
+            "type",
             "dns_view",
             "catalog",
             "enabled",

@@ -173,7 +173,7 @@ class DNSRegistrationForm(NautobotModelForm):
         queryset=models.DNSZone.objects.all(),
         required=True,
         query_params={
-            "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
+            "type__n": DNSZoneTypeChoices.TYPE_CATALOG,
         },
         label="Zone",
     )
@@ -197,7 +197,7 @@ class DNSRegistrationBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         queryset=models.DNSZone.objects.all(),
         required=False,
         query_params={
-            "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
+            "type__n": DNSZoneTypeChoices.TYPE_CATALOG,
         },
         label="Zone",
     )
@@ -244,7 +244,7 @@ class DNSRegistrationFilterForm(NautobotFilterForm):
         queryset=models.DNSZone.objects.all(),
         required=False,
         query_params={
-            "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
+            "type__n": DNSZoneTypeChoices.TYPE_CATALOG,
         },
         label="Zone",
     )
@@ -301,7 +301,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
     catalog = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.all(),
         query_params={
-            "zone_type": DNSZoneTypeChoices.TYPE_CATALOG,
+            "type": DNSZoneTypeChoices.TYPE_CATALOG,
             "dns_view": "$dns_view",
         },
         required=False,
@@ -309,7 +309,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         help_text="Catalog zone this zone belongs to.",
     )
 
-    field_order = ["name", "zone_type", "dns_view", "catalog", "auto_create_ptr"]
+    field_order = ["name", "type", "dns_view", "catalog", "auto_create_ptr"]
 
     class Meta:
         """Meta attributes."""
@@ -320,7 +320,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         # clear the membership. `nb-use-fields-all` keeps `fields` at `"__all__"` here, so it comes
         # off with `exclude`.
         exclude = ["catalogs"]  # pylint: disable=modelform-uses-exclude
-        widgets = {"zone_type": StaticSelect2()}
+        widgets = {"type": StaticSelect2()}
 
     class Media:
         """Load create-time toggling of the controls a catalog zone cannot use."""
@@ -334,8 +334,8 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         if self.instance.present_in_database:
             catalog_zone = self.instance.catalog
             self.initial["catalog"] = catalog_zone
-            self.fields["zone_type"].disabled = True
-            self.fields["zone_type"].help_text = "Zone type cannot be changed after creation."
+            self.fields["type"].disabled = True
+            self.fields["type"].help_text = "Zone type cannot be changed after creation."
 
             if self.instance.is_catalog_zone:
                 self.fields["auto_create_ptr"].disabled = True
@@ -355,7 +355,7 @@ class DNSZoneForm(EnabledBeforeDescriptionMixin, NautobotModelForm, TenancyForm)
         if catalog_zone is None:
             return self.cleaned_data
 
-        if self.cleaned_data.get("zone_type") == DNSZoneTypeChoices.TYPE_CATALOG:
+        if self.cleaned_data.get("type") == DNSZoneTypeChoices.TYPE_CATALOG:
             raise forms.ValidationError({"catalog": "A catalog zone cannot be a member of another catalog zone."})
 
         if not catalog_zone.is_catalog_zone:
@@ -535,7 +535,7 @@ class DNSZoneBulkAddMembershipForm(forms.Form):
 
     catalog = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.all(),
-        query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+        query_params={"type": DNSZoneTypeChoices.TYPE_CATALOG},
         label="Catalog Zone",
         help_text="A selected zone that is already a member of another catalog is moved to this one.",
     )
@@ -615,15 +615,14 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
         help_text="Search within Name, Filename, SOA MNAME, and SOA RNAME.",
     )
     name = forms.CharField(required=False, label="Name")
-    zone_type = forms.MultipleChoiceField(
+    type = forms.MultipleChoiceField(
         required=False,
         choices=DNSZoneTypeChoices,
         widget=StaticSelect2Multiple(),
-        label="Zone Type",
     )
     catalog = DynamicModelMultipleChoiceField(
         queryset=models.DNSZone.objects.all(),
-        query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+        query_params={"type": DNSZoneTypeChoices.TYPE_CATALOG},
         required=False,
         label="Catalog Zone",
     )
@@ -637,7 +636,7 @@ class DNSZoneFilterForm(NautobotFilterForm, TenancyFilterForm):
     fields = [
         "q",
         "name",
-        "zone_type",
+        "type",
         "catalog",
         "enabled",
         "filename",
@@ -653,7 +652,7 @@ class CatalogZoneMembershipForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
     catalog_zone = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.all(),
         query_params={
-            "zone_type": DNSZoneTypeChoices.TYPE_CATALOG,
+            "type": DNSZoneTypeChoices.TYPE_CATALOG,
             "same_dns_view_as": "$member_zone",
         },
         label="Catalog Zone",
@@ -663,7 +662,7 @@ class CatalogZoneMembershipForm(BootstrapMixin, ReturnURLForm, forms.ModelForm):
         # Catalogs are left out of the picker because `CatalogZoneMembership.clean()` refuses them.
         # `$catalog_zone` only yields a PK, so same_dns_view_as maps that zone to its view.
         query_params={
-            "zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG,
+            "type__n": DNSZoneTypeChoices.TYPE_CATALOG,
             "same_dns_view_as": "$catalog_zone",
         },
         label="Member Zone",

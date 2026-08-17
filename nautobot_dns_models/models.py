@@ -405,12 +405,11 @@ class DNSZone(DNSModel):
     """Model for DNS SOA Records. An SOA Record defines a DNS Zone."""
 
     name = models.CharField(max_length=200, help_text="FQDN of the Zone, w/ TLD. e.g example.com")
-    zone_type = models.CharField(
+    type = models.CharField(
         max_length=50,
         choices=DNSZoneTypeChoices,
         default=DNSZoneTypeChoices.TYPE_PRIMARY,
         help_text="Type of the Zone, determining which records it may contain. Cannot be changed after creation.",
-        verbose_name="Zone Type",
     )
     dns_view = ForeignKeyWithAutoRelatedName(
         DNSView,
@@ -497,7 +496,7 @@ class DNSZone(DNSModel):
 
         constraints = [
             models.CheckConstraint(
-                condition=~Q(zone_type=DNSZoneTypeChoices.TYPE_CATALOG) | Q(auto_create_ptr=False),
+                condition=~Q(type=DNSZoneTypeChoices.TYPE_CATALOG) | Q(auto_create_ptr=False),
                 name="catalog_zone_no_auto_create_ptr",
                 violation_error_message="Catalog zones cannot enable automatic PTR creation.",
                 violation_error_code="catalog_zone_auto_create_ptr",
@@ -512,7 +511,7 @@ class DNSZone(DNSModel):
         return f"{self.name} ({self.dns_view})"
 
     def clean(self):
-        """Normalize the SOA RNAME, keep zone_type immutable, hold memberships to one view, and bar catalog PTR."""
+        """Normalize the SOA RNAME, keep type immutable, hold memberships to one view, and bar catalog PTR."""
         super().clean()
 
         invalid_rname_message = (
@@ -533,10 +532,10 @@ class DNSZone(DNSModel):
         self.soa_rname = normalized_soa_rname
 
         if self.present_in_database:
-            stored = DNSZone.objects.filter(pk=self.pk).values("zone_type", "dns_view_id").first()
+            stored = DNSZone.objects.filter(pk=self.pk).values("type", "dns_view_id").first()
             if stored is not None:
-                if stored["zone_type"] != self.zone_type:
-                    raise ValidationError({"zone_type": "Zone type cannot be changed after creation."})
+                if stored["type"] != self.type:
+                    raise ValidationError({"type": "Zone type cannot be changed after creation."})
                 if stored["dns_view_id"] != self.dns_view_id:
                     self._validate_view_change()
 
@@ -609,7 +608,7 @@ class DNSZone(DNSModel):
     @property
     def is_catalog_zone(self):
         """Return whether this zone is an RFC 9432 catalog zone."""
-        return self.zone_type == DNSZoneTypeChoices.TYPE_CATALOG
+        return self.type == DNSZoneTypeChoices.TYPE_CATALOG
 
     @classmethod
     def find_reverse_zone_for_ptrdname(cls, ptrdname, dns_view=None):
@@ -624,7 +623,7 @@ class DNSZone(DNSModel):
             if zone_name in RESERVED_ROOTS:
                 break
 
-            zones = cls.objects.filter(name=zone_name, zone_type__in=permitted_zone_types)
+            zones = cls.objects.filter(name=zone_name, type__in=permitted_zone_types)
             if dns_view is not None:
                 zones = zones.filter(dns_view=dns_view)
             zone = zones.first()
@@ -907,7 +906,7 @@ class DNSRecordQuerySet(RestrictedQuerySet):
             permitted_zone_types = [
                 zone_type for zone_type, _ in DNSZoneTypeChoices.CHOICES if DNSZone.zone_type_allows_records(zone_type)
             ]
-            protected = self.exclude(zone__zone_type__in=permitted_zone_types)
+            protected = self.exclude(zone__type__in=permitted_zone_types)
             if protected.exists():
                 raise ProtectedError(SYSTEM_MANAGED_DELETE_ERROR, list(protected[:50]))
 
@@ -958,7 +957,7 @@ class DNSRecord(DNSModel):
 
     def delete(self, *args, **kwargs):
         """Refuse to delete a system-managed record."""
-        if not system_write_in_progress() and not DNSZone.zone_type_allows_records(self.zone.zone_type):
+        if not system_write_in_progress() and not DNSZone.zone_type_allows_records(self.zone.type):
             raise ProtectedError(SYSTEM_MANAGED_DELETE_ERROR, [self])
         return super().delete(*args, **kwargs)
 
@@ -1001,10 +1000,10 @@ class DNSRecord(DNSModel):
 
     def _enforce_zone_type_allows_record(self) -> None:
         """Reject a user write of a record type the zone's type does not make available to users."""
-        if system_write_in_progress() or DNSZone.zone_type_allows_records(self.zone.zone_type):  # pylint: disable=no-member
+        if system_write_in_progress() or DNSZone.zone_type_allows_records(self.zone.type):  # pylint: disable=no-member
             return
 
-        zone_type_label = self.zone.get_zone_type_display().lower()  # pylint: disable=no-member
+        zone_type_label = self.zone.get_type_display().lower()  # pylint: disable=no-member
         raise ValidationError(
             {
                 "zone": (

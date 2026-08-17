@@ -2,7 +2,7 @@
 
 The model behind a zone's membership in an [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) catalog zone: it has add, edit, and delete forms, but no list or detail page of its own. The PTR record that publishes the membership to consumers is derived from it rather than managed directly.
 
-- `catalog_zone` (DNSZone): The catalog zone publishing this membership. Must have a `zone_type` of `Catalog`.
+- `catalog_zone` (DNSZone): The catalog zone publishing this membership. Must have a `type` of `Catalog`.
 - `member_zone` (DNSZone): The zone published by the catalog. Must be in the same DNS view as the catalog zone, and cannot itself be a catalog zone.
 - `member_label` (string): Opaque DNS label identifying this member within the catalog zone. Generated automatically when omitted.
 

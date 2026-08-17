@@ -93,7 +93,7 @@ class DNSRegistrationFilterSet(NautobotFilterSet):
 
     dns_zone = NaturalKeyOrPKMultipleChoiceFilter(
         queryset=models.DNSZone.objects.all(),
-        query_params={"zone_type__n": DNSZoneTypeChoices.TYPE_CATALOG},
+        query_params={"type__n": DNSZoneTypeChoices.TYPE_CATALOG},
         to_field_name="name",
         label="Zone (name or ID)",
     )
@@ -119,7 +119,7 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
     catalog = NaturalKeyOrPKMultipleChoiceFilter(
         field_name="catalog_memberships__catalog_zone",
         queryset=models.DNSZone.objects.all(),
-        query_params={"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+        query_params={"type": DNSZoneTypeChoices.TYPE_CATALOG},
         to_field_name="name",
         label="Catalog zone (name or ID)",
     )

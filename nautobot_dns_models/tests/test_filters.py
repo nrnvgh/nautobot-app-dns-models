@@ -371,7 +371,7 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         DNSZone.objects.create(
             name="Catalog One",
             filename="catalog1.conf",
-            zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+            type=DNSZoneTypeChoices.TYPE_CATALOG,
             tenant=cls.tenant2,
             description="Catalog one",
             soa_mname="ns1.catalog.example",
@@ -394,13 +394,13 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(self.filterset(params, self.queryset).qs.count(), 0)
 
     def test_zone_type(self):
-        """Test filtering by `zone_type`.
+        """Test filtering by `type`.
 
-        `zone_type` is not covered by `generic_filter_tests` because those require at least three
+        `type` is not covered by `generic_filter_tests` because those require at least three
         distinct values and only two zone types exist.
         """
-        self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_CATALOG]}, self.queryset).qs.count(), 1)
-        self.assertEqual(self.filterset({"zone_type": [DNSZoneTypeChoices.TYPE_PRIMARY]}, self.queryset).qs.count(), 3)
+        self.assertEqual(self.filterset({"type": [DNSZoneTypeChoices.TYPE_CATALOG]}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"type": [DNSZoneTypeChoices.TYPE_PRIMARY]}, self.queryset).qs.count(), 3)
 
     def test_catalog(self):
         """`catalog` matches member zones by their catalog zone's name or ID."""
@@ -465,7 +465,7 @@ class CatalogZoneMembershipFilterTestCase(FilterTestCases.FilterTestCase):
     def setUpTestData(cls):
         """Setup test data for CatalogZoneMembership Model."""
         cls.catalog_zones = [
-            DNSZone.objects.create(name=f"catalog-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+            DNSZone.objects.create(name=f"catalog-{index}.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
             for index in range(3)
         ]
         # One per membership, since a zone may belong to only one catalog.

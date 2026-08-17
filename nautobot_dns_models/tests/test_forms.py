@@ -45,7 +45,7 @@ class DNSZoneFormPayloadMixin:
         """Return a valid DNSZoneForm payload, with any supplied overrides applied."""
         data = {
             "name": "Development",
-            "zone_type": DNSZoneTypeChoices.TYPE_PRIMARY,
+            "type": DNSZoneTypeChoices.TYPE_PRIMARY,
             "dns_view": self.dns_view.id,
             "ttl": 1010101,
             "filename": "development.zone",
@@ -120,37 +120,37 @@ class DNSZoneFormTestCase(DNSZoneFormPayloadMixin, TestCase):
         self.assertTrue(form.is_valid(), form.errors)
 
     def test_can_create_catalog_zone(self):
-        form = forms.DNSZoneForm(data=self._zone_data(zone_type=DNSZoneTypeChoices.TYPE_CATALOG))
+        form = forms.DNSZoneForm(data=self._zone_data(type=DNSZoneTypeChoices.TYPE_CATALOG))
         self.assertTrue(form.is_valid(), form.errors)
         zone = form.save()
-        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_CATALOG)
+        self.assertEqual(zone.type, DNSZoneTypeChoices.TYPE_CATALOG)
 
     def test_rejects_auto_create_ptr_on_catalog_zone(self):
-        form = forms.DNSZoneForm(data=self._zone_data(zone_type=DNSZoneTypeChoices.TYPE_CATALOG, auto_create_ptr=True))
+        form = forms.DNSZoneForm(data=self._zone_data(type=DNSZoneTypeChoices.TYPE_CATALOG, auto_create_ptr=True))
         self.assertFalse(form.is_valid())
         self.assertIn("cannot enable automatic PTR creation", str(form.errors["auto_create_ptr"]))
 
     def test_zone_type_is_disabled_when_editing(self):
         zone = DNSZone.objects.create(name="existing.example")
         form = forms.DNSZoneForm(instance=zone)
-        self.assertTrue(form.fields["zone_type"].disabled)
+        self.assertTrue(form.fields["type"].disabled)
 
     def test_zone_type_is_enabled_when_creating(self):
         form = forms.DNSZoneForm()
-        self.assertFalse(form.fields["zone_type"].disabled)
+        self.assertFalse(form.fields["type"].disabled)
 
     def test_submitted_zone_type_is_ignored_when_editing(self):
         """A disabled field falls back to the instance value, so an attempted change is a no-op rather than an error."""
         zone = DNSZone.objects.create(name="existing.example")
         form = forms.DNSZoneForm(
             instance=zone,
-            data=self._zone_data(name=zone.name, zone_type=DNSZoneTypeChoices.TYPE_CATALOG),
+            data=self._zone_data(name=zone.name, type=DNSZoneTypeChoices.TYPE_CATALOG),
         )
         self.assertTrue(form.is_valid(), form.errors)
-        self.assertEqual(form.save().zone_type, DNSZoneTypeChoices.TYPE_PRIMARY)
+        self.assertEqual(form.save().type, DNSZoneTypeChoices.TYPE_PRIMARY)
 
     def test_auto_create_ptr_is_disabled_when_editing_catalog_zone(self):
-        zone = DNSZone.objects.create(name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = DNSZone.objects.create(name="catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         form = forms.DNSZoneForm(instance=zone)
         self.assertTrue(form.fields["auto_create_ptr"].disabled)
 
@@ -186,7 +186,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
     def test_rejects_a_catalog_for_a_catalog_zone(self):
         """Nesting is refused here as it is on the membership model."""
         form = forms.DNSZoneForm(
-            data=self._zone_data(zone_type=DNSZoneTypeChoices.TYPE_CATALOG, catalog=self._catalog_zone().pk)
+            data=self._zone_data(type=DNSZoneTypeChoices.TYPE_CATALOG, catalog=self._catalog_zone().pk)
         )
         self.assertFalse(form.is_valid())
         self.assertIn("cannot be a member of another catalog zone", str(form.errors["catalog"]))
@@ -200,7 +200,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
     def test_rejects_a_catalog_in_another_view(self):
         other_view = DNSView.objects.create(name="Other")
         catalog_zone = DNSZone.objects.create(
-            name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG, dns_view=other_view
+            name="catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG, dns_view=other_view
         )
         form = forms.DNSZoneForm(data=self._zone_data(catalog=catalog_zone.pk))
         self.assertFalse(form.is_valid())
@@ -214,7 +214,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
         """The membership is reused, so the member label a consumer keys on survives the move."""
         zone, _ = self._enrolled_zone()
         member_label = zone.catalog_memberships.get().member_label
-        other_catalog = DNSZone.objects.create(name="other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_catalog = DNSZone.objects.create(name="other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
 
         form = forms.DNSZoneForm(instance=zone, data=self._zone_data(name=zone.name, catalog=other_catalog.pk))
         self.assertTrue(form.is_valid(), form.errors)
@@ -246,7 +246,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
             instance=catalog_zone,
             data=self._zone_data(
                 name=catalog_zone.name,
-                zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+                type=DNSZoneTypeChoices.TYPE_CATALOG,
                 dns_view=other_view.pk,
             ),
         )
@@ -271,7 +271,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
         self.assertEqual(zone.dns_view_id, catalog_zone.dns_view_id)
 
     def test_catalog_is_disabled_when_editing_catalog_zone(self):
-        zone = DNSZone.objects.create(name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = DNSZone.objects.create(name="catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         form = forms.DNSZoneForm(instance=zone)
         self.assertTrue(form.fields["catalog"].disabled)
 
@@ -302,7 +302,7 @@ class DNSZoneFormCatalogFieldTestCase(DNSZoneFormPayloadMixin, TestCase):
 
     def _catalog_zone(self, **overrides):
         """Create and return a catalog zone in the view the form payload uses."""
-        fields = {"name": "catalog.example", "zone_type": DNSZoneTypeChoices.TYPE_CATALOG}
+        fields = {"name": "catalog.example", "type": DNSZoneTypeChoices.TYPE_CATALOG}
         fields.update(overrides)
         return DNSZone.objects.create(**fields)
 
@@ -319,7 +319,7 @@ class DNSZoneBulkEditTestCase(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = DNSZone.objects.create(name="catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = DNSZone.objects.create(name="catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.member_zone = DNSZone.objects.create(name="member.example")
         cls.unenrolled_zone = DNSZone.objects.create(name="primary.example")
         cls.other_view = DNSView.objects.create(name="Other")

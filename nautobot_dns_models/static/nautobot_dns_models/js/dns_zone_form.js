@@ -2,14 +2,14 @@
  * DNS Zone Form - disable the controls a catalog zone cannot use.
  *
  * A catalog zone can neither auto-create PTR records nor be a member of another catalog zone, and
- * the model refuses both. On create, zone_type is still editable, so the controls must track the
- * select. On edit, zone_type is already disabled server-side and this script exits early.
+ * the model refuses both. On create, type is still editable, so the controls must track the
+ * select. On edit, type is already disabled server-side and this script exits early.
  */
 
 document.addEventListener("DOMContentLoaded", function () {
-    const zoneTypeField = document.getElementById("id_zone_type");
+    const zoneTypeField = document.getElementById("id_type");
 
-    // Edit disables zone_type server-side; leave the other controls as the form set them.
+    // Edit disables type server-side; leave the other controls as the form set them.
     if (!zoneTypeField || zoneTypeField.disabled) {
         return;
     }

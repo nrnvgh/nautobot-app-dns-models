@@ -177,7 +177,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         dns_view = DNSView.objects.get(name="Default")
         cls.form_data = {
             "name": "Test 1",
-            "zone_type": DNSZoneTypeChoices.TYPE_PRIMARY,
+            "type": DNSZoneTypeChoices.TYPE_PRIMARY,
             "dns_view": dns_view.id,
             "ttl": 3600,
             "description": "Initial model",
@@ -201,7 +201,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
     def test_list_names_each_zone_catalog_without_per_zone_queries(self):
         """The catalog column reads the membership from the view's prefetch, not once per row."""
-        catalog = DNSZone.objects.create(name="catalog-list.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog = DNSZone.objects.create(name="catalog-list.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         for index in range(12):
             CatalogZoneMembership.objects.create(
                 catalog_zone=catalog,
@@ -231,7 +231,7 @@ class ZoneDetailViewByZoneTypeTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.member_zone = create_zone("member.example")
         cls.membership = CatalogZoneMembership(catalog_zone=cls.catalog_zone, member_zone=cls.member_zone)
         cls.membership.validated_save()
@@ -358,8 +358,8 @@ class ZoneFormMembershipPermissionTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        cls.other_catalog_zone = create_zone("other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.other_catalog_zone = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.unenrolled_zone = create_zone("unenrolled.example")
         cls.enrolled_zone = create_zone("enrolled.example")
         CatalogZoneMembership(catalog_zone=cls.catalog_zone, member_zone=cls.enrolled_zone).validated_save()
@@ -507,7 +507,7 @@ class ZoneFormMembershipPermissionTest(TestCase):
         zone = zone or DNSZone(name=create_zone_name, filename=f"{create_zone_name}.zone")
         data = {
             "name": zone.name,
-            "zone_type": DNSZoneTypeChoices.TYPE_PRIMARY,
+            "type": DNSZoneTypeChoices.TYPE_PRIMARY,
             "dns_view": DNSView.objects.get(name="Default").pk,
             "filename": zone.filename,
             "soa_mname": "ns1.example.",
@@ -542,8 +542,8 @@ class CatalogZoneMembershipViewTest(
     @classmethod
     def setUpTestData(cls):
         catalogs = [
-            create_zone("view-catalog-0.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG),
-            create_zone("view-catalog-1.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG),
+            create_zone("view-catalog-0.example", type=DNSZoneTypeChoices.TYPE_CATALOG),
+            create_zone("view-catalog-1.example", type=DNSZoneTypeChoices.TYPE_CATALOG),
         ]
         members = [create_zone(f"view-member-{index}.example") for index in range(4)]
         for index, member in enumerate(members[:3]):
@@ -1264,7 +1264,7 @@ class ZoneBulkEditPTRControlTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("bulk-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("bulk-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.primary_zones = [create_zone(f"bulk-primary-{index}.example") for index in range(2)]
         cls.bulk_edit_path = reverse("plugins:nautobot_dns_models:dnszone_bulk_edit")
 
@@ -1289,8 +1289,8 @@ class ZoneBulkEditPTRControlTest(TestCase):
         self.assertIn(self.WITHDRAWN, self._bulk_edit_form(edit_all=True))
 
     def test_select_all_keeps_the_control_when_filtered_to_primary_zones(self):
-        """With `?zone_type=primary`, "select all" resolves to primary zones alone and keeps the control."""
-        content = self._bulk_edit_form(edit_all=True, query=f"?zone_type={DNSZoneTypeChoices.TYPE_PRIMARY}")
+        """With `?type=primary`, "select all" resolves to primary zones alone and keeps the control."""
+        content = self._bulk_edit_form(edit_all=True, query=f"?type={DNSZoneTypeChoices.TYPE_PRIMARY}")
         self.assertIn('name="auto_create_ptr"', content)
         self.assertNotIn(self.WITHDRAWN, content)
 
@@ -1328,8 +1328,8 @@ class ZoneBulkAddMembershipTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("add-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        cls.other_catalog_zone = create_zone("add-other.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("add-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.other_catalog_zone = create_zone("add-other.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.unenrolled_zones = [create_zone(f"add-free-{index}.example") for index in range(2)]
         cls.enrolled_zone = create_zone("add-enrolled.example")
         CatalogZoneMembership(catalog_zone=cls.other_catalog_zone, member_zone=cls.enrolled_zone).validated_save()
@@ -1407,7 +1407,7 @@ class ZoneBulkAddMembershipTest(TestCase):
         """Past five names the report counts the rest, and the names it gives stay bolded."""
         self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
         catalogs = [
-            create_zone(f"add-many-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG) for index in range(7)
+            create_zone(f"add-many-{index}.example", type=DNSZoneTypeChoices.TYPE_CATALOG) for index in range(7)
         ]
 
         body = self._post(pk_list=[zone.pk for zone in catalogs])
@@ -1461,7 +1461,7 @@ class ZoneBulkAddMembershipTest(TestCase):
         self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
         stranger = create_zone(
             "add-stranger.example",
-            zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+            type=DNSZoneTypeChoices.TYPE_CATALOG,
             dns_view=DNSView.objects.create(name="Add Test View"),
         )
 
@@ -1555,8 +1555,8 @@ class ZoneBulkRemoveMembershipTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("remove-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        cls.other_catalog_zone = create_zone("remove-other.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("remove-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.other_catalog_zone = create_zone("remove-other.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.enrolled_zones = [create_zone(f"remove-member-{index}.example") for index in range(2)]
         for zone in cls.enrolled_zones:
             CatalogZoneMembership(catalog_zone=cls.catalog_zone, member_zone=zone).validated_save()

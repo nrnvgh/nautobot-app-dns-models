@@ -34,7 +34,7 @@ class DNSZoneType(OptimizedNautobotObjectType):
 
     catalog = graphene.Field("nautobot_dns_models.graphql.types.DNSZoneType")
 
-    @gql_optimizer.resolver_hints(prefetch_related="catalog_memberships__catalog_zone", only="zone_type")
+    @gql_optimizer.resolver_hints(prefetch_related="catalog_memberships__catalog_zone", only="type")
     @permission_safe_resolver
     def resolve_catalog(self, info):  # pylint: disable=unused-argument
         """Return the catalog zone this zone belongs to, or null if the user may not view it.
@@ -42,7 +42,7 @@ class DNSZoneType(OptimizedNautobotObjectType):
         `catalog` is a property rather than a FK or filterset, so it bypasses the auto-generated
         permission-enforcing resolvers. `resolver_hints` stays outermost so the optimizer still carries
         the hints; without them, listing zones reads the membership, the catalog zone, and this zone's
-        otherwise deferred `zone_type` once per zone.
+        otherwise deferred `type` once per zone.
         """
         return self.catalog
 

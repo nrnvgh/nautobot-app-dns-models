@@ -183,7 +183,7 @@ class ZoneRecordsTablePanel(ObjectsTablePanel):
         if self.system_managed:
             return zone.is_catalog_zone
 
-        return DNSZone.zone_type_allows_records(zone.zone_type)
+        return DNSZone.zone_type_allows_records(zone.type)
 
 
 class ZoneRegistrationPanel(ObjectsTablePanel):
@@ -248,7 +248,7 @@ class RecordStatsPanel(StatsPanel):
     def should_render(self, context):
         """Render only where the zone permits users to manage records."""
         zone = get_obj_from_context(context)
-        return zone is not None and DNSZone.zone_type_allows_records(zone.zone_type)
+        return zone is not None and DNSZone.zone_type_allows_records(zone.type)
 
 
 class AddRecordButton(object_detail.Button):
@@ -266,7 +266,7 @@ class AddRecordButton(object_detail.Button):
             return False
 
         zone = get_obj_from_context(context)
-        return zone is not None and DNSZone.zone_type_allows_records(zone.zone_type)
+        return zone is not None and DNSZone.zone_type_allows_records(zone.type)
 
 
 class AddRecordsDropdownButton(object_detail.DropdownButton):
@@ -779,7 +779,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
     def _selection_includes_catalog_zone(self):
         """Report whether the zones this bulk edit would reach include a catalog zone."""
         selection = get_bulk_queryset_from_view(user=self.request.user, action="change", **self.key_params)
-        return selection.filter(zone_type=DNSZoneTypeChoices.TYPE_CATALOG).exists()
+        return selection.filter(type=DNSZoneTypeChoices.TYPE_CATALOG).exists()
 
 
 class CatalogZoneMembershipUIViewSet(ObjectEditViewMixin, ObjectDestroyViewMixin):  # pylint: disable=abstract-method

@@ -78,7 +78,7 @@ class DNSZoneTestCase(GraphQLQueryMixin, TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.member_zone = create_zone("member.example")
         cls.other_member_zone = create_zone("other-member.example")
         cls.solo_zone = create_zone("solo.example")
@@ -173,7 +173,7 @@ class CatalogZoneMembershipTestCase(GraphQLQueryMixin, TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.member_zone = create_zone("member.example")
         cls.membership = CatalogZoneMembership.objects.create(
             catalog_zone=cls.catalog_zone, member_zone=cls.member_zone

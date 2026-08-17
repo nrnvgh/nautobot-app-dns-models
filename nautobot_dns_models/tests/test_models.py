@@ -188,7 +188,7 @@ class TestDNSRegistration(ModelTestCases.BaseModelTestCase):
         """Create test data for DNSRegistration Model."""
         super().setUpTestData()
         for i in range(3):
-            DNSZone.objects.create(name=f"Test Zone {i}", zone_type=DNSZoneTypeChoices.TYPE_PRIMARY)
+            DNSZone.objects.create(name=f"Test Zone {i}", type=DNSZoneTypeChoices.TYPE_PRIMARY)
 
         cls.registrar = DNSRegistrar.objects.create(name="Test Registrar")
         status = Status.objects.get(name="Active")
@@ -203,7 +203,7 @@ class TestDNSRegistration(ModelTestCases.BaseModelTestCase):
 
     def test_registration_accepts_primary_zone(self):
         """Test that registration accepts a primary zone."""
-        primary_zone = DNSZone.objects.create(name="Test Primary", zone_type=DNSZoneTypeChoices.TYPE_PRIMARY)
+        primary_zone = DNSZone.objects.create(name="Test Primary", type=DNSZoneTypeChoices.TYPE_PRIMARY)
         registration = DNSRegistration(
             dns_registrar=self.registrar,
             status=self.status,
@@ -215,7 +215,7 @@ class TestDNSRegistration(ModelTestCases.BaseModelTestCase):
 
     def test_registration_rejects_catalog_zone(self):
         """Test that registration rejects a catalog zone."""
-        catalog_zone = DNSZone.objects.create(name="Test Catalog", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = DNSZone.objects.create(name="Test Catalog", type=DNSZoneTypeChoices.TYPE_CATALOG)
         with self.assertRaises(ValidationError) as context:
             DNSRegistration(
                 dns_registrar=self.registrar,
@@ -905,7 +905,7 @@ class AutoCreatePTRRecordTestCase(TestCase):
         catalog_zone = DNSZone.objects.create(
             name="1.168.192.in-addr.arpa",
             dns_view=self.view,
-            zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+            type=DNSZoneTypeChoices.TYPE_CATALOG,
         )
         with self.assertRaises(ValidationError):
             ARecord.objects.create(name="host4", ip_address=self.ipv4_unmatched, zone=self.fwd_on)
@@ -951,7 +951,7 @@ class TestDNSZoneFindForPtrdname(TestCase):
         DNSZone.objects.create(
             name="0.0.10.in-addr.arpa",
             dns_view=self.view_a,
-            zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+            type=DNSZoneTypeChoices.TYPE_CATALOG,
         )
         broad = DNSZone.objects.create(name="10.in-addr.arpa", dns_view=self.view_a)
         self.assertEqual(DNSZone.find_reverse_zone_for_ptrdname("1.0.0.10.in-addr.arpa"), broad)
@@ -963,7 +963,7 @@ class TestDNSZoneFindForPtrdname(TestCase):
         DNSZone.objects.create(
             name="0.0.10.in-addr.arpa",
             dns_view=self.view_a,
-            zone_type=DNSZoneTypeChoices.TYPE_CATALOG,
+            type=DNSZoneTypeChoices.TYPE_CATALOG,
         )
         self.assertIsNone(DNSZone.find_reverse_zone_for_ptrdname("1.0.0.10.in-addr.arpa"))
 
@@ -1141,28 +1141,28 @@ class DNSModelEnabledFieldTest(TestCase):
 
 
 class DNSZoneTypeTest(TestCase):
-    """Tests for the DNSZone.zone_type field and the invariants it carries."""
+    """Tests for the DNSZone.type field and the invariants it carries."""
 
     def test_default_zone_type_is_primary(self):
         """A zone created without an explicit type is a primary zone."""
         zone = DNSZone.objects.create(name="default-type.example")
-        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_PRIMARY)
+        self.assertEqual(zone.type, DNSZoneTypeChoices.TYPE_PRIMARY)
 
     def test_catalog_zone_can_be_created(self):
         """A catalog zone can be created and validated."""
-        zone = self._make_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = self._make_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         zone.validated_save()
         zone.refresh_from_db()
-        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_CATALOG)
+        self.assertEqual(zone.type, DNSZoneTypeChoices.TYPE_CATALOG)
 
     def test_rejects_zone_type_change(self):
-        """Changing zone_type on an existing zone is rejected."""
+        """Changing type on an existing zone is rejected."""
         zone = self._make_zone("immutable.example")
         zone.validated_save()
-        zone.zone_type = DNSZoneTypeChoices.TYPE_CATALOG
+        zone.type = DNSZoneTypeChoices.TYPE_CATALOG
         with self.assertRaises(ValidationError) as context:
             zone.full_clean()
-        self.assertIn("cannot be changed after creation", str(context.exception.message_dict["zone_type"]))
+        self.assertIn("cannot be changed after creation", str(context.exception.message_dict["type"]))
 
     def test_primary_zone_allows_auto_create_ptr(self):
         """auto_create_ptr remains available on primary zones."""
@@ -1172,14 +1172,14 @@ class DNSZoneTypeTest(TestCase):
 
     def test_catalog_zone_rejects_auto_create_ptr(self):
         """Validation rejects auto_create_ptr on a catalog zone rather than silently ignoring it."""
-        zone = self._make_zone("catalog-ptr.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG, auto_create_ptr=True)
+        zone = self._make_zone("catalog-ptr.example", type=DNSZoneTypeChoices.TYPE_CATALOG, auto_create_ptr=True)
         with self.assertRaises(ValidationError) as context:
             zone.full_clean()
         self.assertIn("cannot enable automatic PTR creation", str(context.exception.message_dict["auto_create_ptr"]))
 
     def test_catalog_zone_auto_create_ptr_blocked_at_database(self):
         """The check constraint blocks auto_create_ptr on catalog zones even when validation is skipped."""
-        zone = DNSZone.objects.create(name="catalog-db.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = DNSZone.objects.create(name="catalog-db.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         with self.assertRaises(IntegrityError):
             DNSZone.objects.filter(pk=zone.pk).update(auto_create_ptr=True)
 
@@ -1201,17 +1201,17 @@ class CatalogZoneRecordGatingTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.primary_zone = create_zone("primary.example")
 
     def test_primary_zone_type_allows_records(self):
         """A primary zone's type allows user records, and the zone does not report as a catalog zone."""
-        self.assertTrue(DNSZone.zone_type_allows_records(self.primary_zone.zone_type))
+        self.assertTrue(DNSZone.zone_type_allows_records(self.primary_zone.type))
         self.assertFalse(self.primary_zone.is_catalog_zone)
 
     def test_catalog_zone_type_allows_no_records(self):
         """A catalog zone's type allows no user records, and the zone reports as a catalog zone."""
-        self.assertFalse(DNSZone.zone_type_allows_records(self.catalog_zone.zone_type))
+        self.assertFalse(DNSZone.zone_type_allows_records(self.catalog_zone.type))
         self.assertTrue(self.catalog_zone.is_catalog_zone)
 
     def test_record_fixtures_cover_every_record_model(self):
@@ -1223,8 +1223,8 @@ class CatalogZoneRecordGatingTest(TestCase):
 
     def test_unknown_zone_type_allows_no_records(self):
         """A zone type missing from the registry denies everything rather than defaulting to open."""
-        zone = DNSZone(name="future.example", zone_type="future")
-        self.assertFalse(DNSZone.zone_type_allows_records(zone.zone_type))
+        zone = DNSZone(name="future.example", type="future")
+        self.assertFalse(DNSZone.zone_type_allows_records(zone.type))
         self.assertFalse(zone.is_catalog_zone)
 
     def test_rejects_user_created_record_in_catalog_zone(self):
@@ -1316,7 +1316,7 @@ class CatalogZoneApexNSRecordTest(TestCase):
 
     def test_creating_catalog_zone_writes_the_apex_ns_record(self):
         """A new catalog zone carries `$CATZ 0 IN NS invalid.`, the RRset that makes it a valid zone."""
-        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         record = NSRecord.objects.get(zone=zone)
         self.assertEqual(record.name, APEX_RECORD_NAME)
         self.assertEqual(record.server, CATALOG_APEX_NS_SERVER)
@@ -1324,14 +1324,14 @@ class CatalogZoneApexNSRecordTest(TestCase):
 
     def test_resaving_catalog_zone_does_not_duplicate_the_apex_ns_record(self):
         """The RRset holds the single RR the RFC recommends, so editing a zone adds none."""
-        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         zone.description = "Edited"
         zone.save()
         self.assertEqual(NSRecord.objects.filter(zone=zone).count(), 1)
 
     def test_saving_catalog_zone_restores_a_missing_apex_ns_record(self):
         """Saving repairs a catalog zone left without an NS RRset, which a server would refuse to load."""
-        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         with system_write():
             NSRecord.objects.filter(zone=zone).delete()
 
@@ -1341,7 +1341,7 @@ class CatalogZoneApexNSRecordTest(TestCase):
 
     def test_saving_catalog_zone_drops_a_foreign_ns_record(self):
         """An NS naming anything else is removed, since the app owns this RRset outright."""
-        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         with system_write():
             NSRecord(name="sub", server="ns1.example.", zone=zone, _ttl=0).validated_save()
 
@@ -1358,7 +1358,7 @@ class CatalogZoneVersionRecordTest(TestCase):
 
     def test_creating_catalog_zone_writes_the_version_record(self):
         """A new catalog zone carries `version.$CATZ 0 IN TXT "2"` without the user adding it."""
-        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         record = TXTRecord.objects.get(zone=zone)
         self.assertEqual(record.name, "version")
         self.assertEqual(record.text, "2")
@@ -1373,14 +1373,14 @@ class CatalogZoneVersionRecordTest(TestCase):
 
     def test_resaving_catalog_zone_does_not_duplicate_the_version_record(self):
         """RFC 9432 §4.2.1 allows exactly one RR in the version RRset, so editing a zone adds none."""
-        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         zone.description = "Edited"
         zone.save()
         self.assertEqual(TXTRecord.objects.filter(name="version", zone=zone).count(), 1)
 
     def test_saving_catalog_zone_restores_a_missing_version_record(self):
         """Saving repairs a catalog zone whose version record was lost, since a consumer would reject it."""
-        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         with system_write():
             TXTRecord.objects.filter(zone=zone).delete()
 
@@ -1390,7 +1390,7 @@ class CatalogZoneVersionRecordTest(TestCase):
 
     def test_saving_catalog_zone_drops_a_foreign_schema_version_record(self):
         """A version RR from another schema version is removed, leaving the single RR the RFC allows."""
-        zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         with system_write():
             TXTRecord(name="version", text="1", zone=zone, _ttl=0).validated_save()
 
@@ -1420,7 +1420,7 @@ class CatalogMembershipChangeLogTest(TestCase):
 
     def test_enrolling_records_a_change_against_both_zones(self):
         """Declaring the membership as an M2M through earns core's side-object change records."""
-        catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         member_zone = create_zone("member.example")
 
         with web_request_context(self.user):
@@ -1436,7 +1436,7 @@ class CatalogMembershipChangeLogTest(TestCase):
         member PTR records are where the history of a rename is legible: one deleted at the old
         label, one created at the new. A reader auditing the catalog sees what a consumer saw.
         """
-        catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         member_zone = create_zone("member.example")
         membership = CatalogZoneMembership(catalog_zone=catalog_zone, member_zone=member_zone)
         membership.validated_save()
@@ -1465,7 +1465,7 @@ class CatalogMembershipManagerTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.member_zone = create_zone("member.example")
 
     def test_adding_enrolls_the_zone_and_publishes_it(self):
@@ -1501,7 +1501,7 @@ class CatalogMembershipManagerTest(TestCase):
         runs inside an atomic block it opened without a savepoint, so raising there leaves any
         enclosing transaction unusable.
         """
-        nested_catalog = create_zone("nested.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        nested_catalog = create_zone("nested.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
 
         with self.assertRaises(ValidationError) as context:
             self.catalog_zone.members.add(nested_catalog)
@@ -1532,7 +1532,7 @@ class CatalogZoneMembershipTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.member_zone = create_zone("member.example")
 
     def test_label_is_generated_when_left_blank(self):
@@ -1575,7 +1575,7 @@ class CatalogZoneMembershipTest(TestCase):
 
     def test_rejects_a_catalog_zone_as_a_member(self):
         """A consumer configures a member as an ordinary zone, so a nested catalog would go unread."""
-        other_catalog = create_zone("other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         with self.assertRaises(ValidationError) as context:
             self._membership(member_zone=other_catalog)
         self.assertIn("cannot be a member of another catalog zone", str(context.exception.message_dict["member_zone"]))
@@ -1597,7 +1597,7 @@ class CatalogZoneMembershipTest(TestCase):
     def test_rejects_a_second_membership_for_one_zone(self):
         """A zone belongs to at most one catalog, so two catalogs cannot both claim to provision it."""
         self._membership()
-        other_catalog = create_zone("other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         with self.assertRaises(ValidationError) as context:
             self._membership(catalog_zone=other_catalog)
         self.assertIn("already belongs to a catalog zone", str(context.exception))
@@ -1613,7 +1613,7 @@ class CatalogZoneMembershipTest(TestCase):
     def test_allows_the_same_label_in_a_different_catalog(self):
         """Labels are scoped to their catalog, so another catalog may reuse one."""
         self._membership(member_label="shared")
-        other_catalog = create_zone("other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         other_member = create_zone("second.example")
         membership = self._membership(catalog_zone=other_catalog, member_zone=other_member, member_label="shared")
         self.assertEqual(membership.member_label, "shared")
@@ -1667,7 +1667,7 @@ class CatalogMembershipViewChangeTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.member_zone = create_zone("member.example")
         cls.other_view = DNSView.objects.create(name="Other")
 
@@ -1734,7 +1734,7 @@ class CatalogMemberRecordSyncTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.catalog_zone = create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.member_zone = create_zone("member.example")
 
     def test_membership_publishes_a_member_ptr(self):
@@ -1811,7 +1811,7 @@ class CatalogMemberRecordSyncTest(TestCase):
     def test_moving_a_membership_between_catalogs_moves_the_ptr(self):
         """The catalog it left must stop advertising a member it no longer has."""
         membership = self._membership()
-        other_catalog = create_zone("other-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         membership.catalog_zone = other_catalog
         membership.validated_save()
 
@@ -1854,8 +1854,8 @@ class CatalogMemberRecordSyncTest(TestCase):
         Rows rather than queries: the sweep was the same two queries whatever they returned, so no
         query count moves when it comes back.
         """
-        small_catalog = create_zone("small-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        large_catalog = create_zone("large-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        small_catalog = create_zone("small-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        large_catalog = create_zone("large-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         for index in range(10):
             self._membership(catalog_zone=large_catalog, member_zone=create_zone(f"crowd-{index}.example"))
 

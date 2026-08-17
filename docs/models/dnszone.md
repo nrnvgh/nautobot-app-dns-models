@@ -5,7 +5,7 @@ The DNS zone model is used to represent a distinct DNS zone. It contains the zon
 Domain registration attributes are modeled separately in `DNSRegistration`.
 
 - `name` (string): Unique FQDN of the Zone, w/ TLD. e.g `example.com`.
-- `zone_type` (choice, default `Primary`): `Primary` for an ordinary zone, or `Catalog` for an [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) catalog zone. Fixed at creation; a zone cannot be converted between types.
+- `type` (choice, default `Primary`): `Primary` for an ordinary zone, or `Catalog` for an [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) catalog zone. Fixed at creation; a zone cannot be converted between types.
 - `enabled` (boolean, default `True`): Indicates whether the zone is eligible for publication by external integrations. This app does not publish zones or enforce this setting. The same field exists on every [DNS record](dnsrecord.md) type; disabling a zone does not change the records it contains.
 - `ttl` (integer): Time to live for the DNS zone.
 - `filename` (string): Filename of the DNS zone file.
@@ -51,7 +51,7 @@ email form as follows:
 
 +++ 2.4.0
 
-A zone with a `zone_type` of `Catalog` names its member zones, the mechanism [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) defines for provisioning zones to secondary name servers. This app builds a catalog's contents but does not serve or consume one.
+A zone with a `type` of `Catalog` names its member zones, the mechanism [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) defines for provisioning zones to secondary name servers. This app builds a catalog's contents but does not serve or consume one.
 
 Every record in a catalog zone is system-managed, so no record type can be created, edited, or deleted there by hand. A catalog zone holds:
 

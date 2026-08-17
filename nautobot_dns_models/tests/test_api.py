@@ -455,7 +455,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         "soa_mname",
         "soa_rname",
     ]
-    choices_fields = ["zone_type"]
+    choices_fields = ["type"]
 
     @classmethod
     def setUpTestData(cls):
@@ -547,7 +547,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_create_defaults_to_primary_zone_type(self):
-        """Omitting zone_type on create yields a primary zone."""
+        """Omitting type on create yields a primary zone."""
         self.add_permissions("nautobot_dns_models.add_dnszone")
         response = self.client.post(
             self._get_list_url(),
@@ -562,9 +562,9 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
             **self.header,
         )
         self.assertHttpStatus(response, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["zone_type"], DNSZoneTypeChoices.TYPE_PRIMARY)
+        self.assertEqual(response.data["type"], DNSZoneTypeChoices.TYPE_PRIMARY)
         self.assertEqual(
-            DNSZone.objects.get(name="api-default-type.example").zone_type,
+            DNSZone.objects.get(name="api-default-type.example").type,
             DNSZoneTypeChoices.TYPE_PRIMARY,
         )
 
@@ -580,7 +580,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
                 "filename": "api-catalog-ptr.zone",
                 "soa_mname": "ns1.api-catalog-ptr.example",
                 "soa_rname": "admin@api-catalog-ptr.example",
-                "zone_type": DNSZoneTypeChoices.TYPE_CATALOG,
+                "type": DNSZoneTypeChoices.TYPE_CATALOG,
                 "auto_create_ptr": True,
             },
             format="json",
@@ -592,24 +592,24 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_patch_rejects_zone_type_change(self):
-        """The API refuses to change zone_type on an existing zone."""
+        """The API refuses to change type on an existing zone."""
         self.add_permissions("nautobot_dns_models.change_dnszone")
         zone = _create_zone(name="api-immutable.example")
         response = self.client.patch(
             self._get_detail_url(zone),
-            {"zone_type": DNSZoneTypeChoices.TYPE_CATALOG},
+            {"type": DNSZoneTypeChoices.TYPE_CATALOG},
             format="json",
             **self.header,
         )
         self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("cannot be changed after creation", str(response.data["zone_type"]))
+        self.assertIn("cannot be changed after creation", str(response.data["type"]))
         zone.refresh_from_db()
-        self.assertEqual(zone.zone_type, DNSZoneTypeChoices.TYPE_PRIMARY)
+        self.assertEqual(zone.type, DNSZoneTypeChoices.TYPE_PRIMARY)
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_get_reports_the_catalog_a_zone_is_enrolled_in(self):
         """An enrolled zone names its catalog, and one that is not enrolled reports null."""
-        catalog_zone = _create_zone(name="api-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = _create_zone(name="api-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         member_zone = _create_zone(name="api-member.example")
         unenrolled_zone = _create_zone(name="api-unenrolled.example")
         CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
@@ -626,8 +626,8 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
     def test_patch_leaves_membership_alone(self):
         """`catalog` is read-only here, so a payload naming one is ignored rather than acted on."""
         self.add_permissions("nautobot_dns_models.change_dnszone")
-        catalog_zone = _create_zone(name="api-catalog-ro.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
-        other_catalog_zone = _create_zone(name="api-catalog-ro-2.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = _create_zone(name="api-catalog-ro.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_catalog_zone = _create_zone(name="api-catalog-ro-2.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         member_zone = _create_zone(name="api-member-ro.example")
         CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
 
@@ -644,7 +644,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
     def test_patch_refuses_to_move_an_enrolled_zone_to_another_view(self):
         """A PATCH moving an enrolled zone's `dns_view` is refused, leaving the zone where it was."""
         self.add_permissions("nautobot_dns_models.change_dnszone")
-        catalog_zone = _create_zone(name="api-catalog-view.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = _create_zone(name="api-catalog-view.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         member_zone = _create_zone(name="api-member-view.example")
         CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
         other_view = DNSView.objects.create(name="API Other View")
@@ -664,7 +664,7 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_list_reads_every_membership_at_once(self):
         """Listing zones must not go back to the database for each one's catalog."""
-        catalog_zone = _create_zone(name="api-catalog-list.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = _create_zone(name="api-catalog-list.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         # Above the context manager's default repetition threshold, so an unprefetched read trips it.
         for index in range(12):
             CatalogZoneMembership.objects.create(
@@ -692,7 +692,7 @@ class CatalogZoneMembershipAPITestCase(APIViewTestCases.APIViewTestCase):
     @classmethod
     def setUpTestData(cls):
         cls.catalog_zones = [
-            _create_zone(name=f"catalog-{index}.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+            _create_zone(name=f"catalog-{index}.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
             for index in range(2)
         ]
         # One per membership, since a zone may belong to only one catalog.
@@ -798,7 +798,7 @@ class CatalogZoneMembershipAPITestCase(APIViewTestCases.APIViewTestCase):
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_list_reads_every_referenced_view_at_once(self):
         """A membership's `display` names both zones, and a zone names its view, which cannot cost a query each."""
-        catalog_zone = _create_zone(name="member-list-catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = _create_zone(name="member-list-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         # Above the context manager's default repetition threshold, so an unselected view trips it.
         for index in range(12):
             CatalogZoneMembership.objects.create(
@@ -1180,7 +1180,7 @@ class TXTRecordAPITestCase(APIViewTestCases.APIViewTestCase):
     def test_create_in_catalog_zone_rejected(self):
         """The REST API refuses a record a user may not create in a catalog zone."""
         self.add_permissions("nautobot_dns_models.add_txtrecord")
-        catalog_zone = _create_zone("catalog.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = _create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         response = self.client.post(
             self._get_list_url(),
             {"name": "note", "text": "added by hand", "zone": catalog_zone.id},
@@ -1194,7 +1194,7 @@ class TXTRecordAPITestCase(APIViewTestCases.APIViewTestCase):
     def test_delete_in_catalog_zone_rejected(self):
         """The REST API refuses to delete a system-managed catalog record."""
         self.add_permissions("nautobot_dns_models.delete_txtrecord")
-        catalog_zone = _create_zone("catalog-delete.example", zone_type=DNSZoneTypeChoices.TYPE_CATALOG)
+        catalog_zone = _create_zone("catalog-delete.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         record = TXTRecord.objects.get(name="version", zone=catalog_zone)
 
         response = self.client.delete(self._get_detail_url(record), **self.header)
