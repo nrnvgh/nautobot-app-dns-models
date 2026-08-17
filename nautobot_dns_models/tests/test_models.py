@@ -1864,17 +1864,23 @@ class CatalogMemberRecordSyncTest(TestCase):
             self._rows_read_publishing("small-newcomer.example", small_catalog),
         )
 
-    def test_saving_the_catalog_zone_restores_a_missing_member_ptr(self):
-        """The reconciler is the repair path for member PTRs as much as for the version record."""
-        membership = self._membership()
+    def test_saving_the_catalog_zone_leaves_the_member_ptrs_to_the_memberships(self):
+        """Nothing on a catalog zone decides what its member PTRs hold, so its save reads none of them.
+
+        The version record it does restore marks the boundary: the zone's own records are repaired on
+        a save, and a member's record is published by the membership.
+        """
+        self._membership()
         with system_write():
             PTRRecord.objects.filter(zone=self.catalog_zone).delete()
+            TXTRecord.objects.filter(name="version", zone=self.catalog_zone).delete()
 
         self.catalog_zone.save()
 
-        self.assertEqual(PTRRecord.objects.get(zone=self.catalog_zone).name, f"{membership.member_label}.zones")
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+        self.assertTrue(TXTRecord.objects.filter(name="version", zone=self.catalog_zone).exists())
 
-    def test_saving_the_catalog_zone_drops_a_second_rr_for_one_member(self):
+    def test_resaving_a_membership_drops_a_second_rr_at_its_owner_name(self):
         """A repeated owner name makes BIND 9.18.3 and later refuse the catalog, so the extra RR goes."""
         membership = self._membership()
         with system_write():
@@ -1882,7 +1888,7 @@ class CatalogMemberRecordSyncTest(TestCase):
                 name=f"{membership.member_label}.zones", ptrdname="impostor.example", zone=self.catalog_zone, _ttl=0
             ).validated_save()
 
-        self.catalog_zone.save()
+        membership.save()
 
         self.assertEqual(
             [record.ptrdname for record in PTRRecord.objects.filter(zone=self.catalog_zone)], ["member.example"]

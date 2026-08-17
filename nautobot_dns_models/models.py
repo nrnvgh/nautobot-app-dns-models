@@ -149,14 +149,13 @@ def dns_record_models():
 
 
 def ensure_catalog_zone_records(zone):
-    """Write the records RFC 9432 requires in `zone`, and drop any that no longer belong.
+    """Hold `zone`'s apex NS and `version` TXT records at what RFC 9432 requires of a catalog.
 
     §4.1 notes that TTLs in a catalog zone carry no meaning, and the RFC sets them to zero
     throughout.
 
-    Idempotent, so saving the zone repairs a catalog whose records drifted rather than only
-    populating a brand-new one. It reads every membership the catalog holds, which is why a
-    membership write publishes its own record through `publish_member_ptr_record` instead.
+    Idempotent, so saving the zone repairs those two records rather than only populating a
+    brand-new catalog.
     """
     if not zone.is_catalog_zone:
         return
@@ -164,7 +163,6 @@ def ensure_catalog_zone_records(zone):
     with system_write():
         _ensure_apex_ns_record(zone)
         _ensure_version_record(zone)
-        _ensure_member_ptr_records(zone)
 
 
 def _ensure_apex_ns_record(zone):
@@ -182,7 +180,7 @@ def _ensure_apex_ns_record(zone):
 def _ensure_version_record(zone):
     """Hold the schema version TXT at the single RR RFC 9432 §4.2.1 requires.
 
-    2 is the only version the RFC defines, 1 having come from an earlier draft.
+    2 is the only version the RFC defines.
     """
     version_records = TXTRecord.objects.filter(name="version", zone=zone)
     # Per RFC 9432 §4.2.1, a second RR in the version RRset makes the whole catalog broken.
@@ -191,60 +189,31 @@ def _ensure_version_record(zone):
         TXTRecord(name="version", text="2", zone=zone, _ttl=0).validated_save()
 
 
-def _ensure_member_ptr_records(zone):
-    """Rebuild the member PTR records from the catalog's memberships.
-
-    RFC 9432 §4.1 publishes each member at `<label>.zones.$CATZ` as a PTR to the member zone name,
-    and §4.1 again requires that RRset to hold exactly one RR.
-    """
-    expected = {
-        member_ptr_name(membership.member_label): membership.member_zone.name
-        for membership in zone.member_memberships.select_related("member_zone")
-    }
-
-    published = set()
-    for record in PTRRecord.objects.filter(zone=zone):
-        # Every PTR in a catalog zone is a member PTR, so one that matches no current membership
-        # belongs to a membership that changed or went away. A repeated owner name is a second RR in
-        # the RRset, which breaks the catalog outright.
-        if record.name in published or expected.get(record.name) != record.ptrdname:
-            record.delete()
-        else:
-            published.add(record.name)
-
-    for name, ptrdname in expected.items():
-        if name not in published:
-            PTRRecord(name=name, ptrdname=ptrdname, zone=zone, _ttl=0).validated_save()
-
-
 def member_ptr_name(member_label):
     """Return the owner name a member is published at, relative to the catalog apex (RFC 9432 §4.1)."""
     return f"{member_label}.zones"
 
 
 def publish_member_ptr_record(membership):
-    """Publish one membership at its own owner name, leaving the other members of the catalog alone.
+    """Publish the PTR record for the member zone in a catalog membership.
 
-    RFC 9432 §4.1 allows a single RR there, so anything else standing at the name gives way. Reading
-    only this owner name is what keeps the cost of a membership write independent of how many members
-    the catalog already holds; reconciling the whole set costs most of a second at a few thousand.
+    RFC 9432 §4.1 allows only a single RR at that owner name, so anything else standing there gives way.
     """
-    name = member_ptr_name(membership.member_label)
+    owner_name = member_ptr_name(membership.member_label)
     ptrdname = membership.member_zone.name
-    published = PTRRecord.objects.filter(name=name, zone_id=membership.catalog_zone_id)
-    keeper = published.filter(ptrdname=ptrdname).first()
+    member_ptr_records = PTRRecord.objects.filter(name=owner_name, zone_id=membership.catalog_zone_id)
 
     with system_write():
-        (published.exclude(pk=keeper.pk) if keeper else published).delete()
-        if keeper is None:
-            PTRRecord(name=name, ptrdname=ptrdname, zone=membership.catalog_zone, _ttl=0).validated_save()
+        member_ptr_records.exclude(ptrdname=ptrdname).delete()
+        if not member_ptr_records.filter(ptrdname=ptrdname).exists():
+            PTRRecord(name=owner_name, ptrdname=ptrdname, zone=membership.catalog_zone, _ttl=0).validated_save()
 
 
 def withdraw_member_ptr_record(catalog_zone_id, member_label):
-    """Withdraw the PTR that published a membership, named by the label it was published under.
+    """Withdraw the PTR record for a catalog membership, named by the label it was published under.
 
-    Takes a label rather than a membership because a move and a reissued label each leave a record
-    behind under the previous one, which the membership no longer carries.
+    Takes a catalog and a label rather than a membership, since the record a move or a reissued
+    label leaves behind is the one the membership has stopped carrying.
     """
     with system_write():
         PTRRecord.objects.filter(name=member_ptr_name(member_label), zone_id=catalog_zone_id).delete()

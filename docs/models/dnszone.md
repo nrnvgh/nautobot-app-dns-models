@@ -53,11 +53,13 @@ email form as follows:
 
 A zone with a `zone_type` of `Catalog` names its member zones, the mechanism [RFC 9432](https://datatracker.ietf.org/doc/html/rfc9432) defines for provisioning zones to secondary name servers. This app builds a catalog's contents but does not serve or consume one.
 
-Every record in a catalog zone is system-managed, so no record type can be created, edited, or deleted there by hand. Saving a catalog zone writes the records the RFC requires, and repairs them if they have drifted:
+Every record in a catalog zone is system-managed, so no record type can be created, edited, or deleted there by hand. A catalog zone holds:
 
 - one NS record at the zone apex with `invalid` as its `server`, the single RR [RFC 9432 §4](https://datatracker.ietf.org/doc/html/rfc9432#section-4) recommends for the NS RRset a zone must have to be valid
 - `version` TXT record, holding `2`, the only schema version RFC 9432 defines
 - one PTR record per member, at `<member_label>.zones`, pointing at the member zone name
+
+Saving a catalog zone writes the first two, and repairs them if they have drifted. Each PTR record belongs to the membership that publishes it, described under [Catalog Zone Membership](catalogzonemembership.md).
 
 The apex NS record is named `@`, which denotes the zone origin per [RFC 1035 §5.1](https://datatracker.ietf.org/doc/html/rfc1035#section-5.1). Its `server` omits the trailing dot the RFC writes, since that dot is zone file syntax rather than part of the name.
 

@@ -36,7 +36,7 @@ Deleting a membership and creating another produces a new label for the same rea
 
 ## Published record
 
-Saving a membership publishes its member PTR record, and deleting one withdraws it, leaving the other members of the catalog zone untouched. That record sits at `<member_label>.zones` within the catalog zone, points at the member zone name, and has a TTL of 0. Saving the catalog zone itself repairs the whole set, as described under [DNS Zone](dnszone.md).
+Saving a membership publishes its member PTR record, and deleting one withdraws it, leaving the other members of the catalog zone untouched. That record sits at `<member_label>.zones` within the catalog zone, points at the member zone name, and has a TTL of 0.
 
 Those PTR records are system-managed. They cannot be created, edited, or deleted through ordinary PTR record CRUD; change the membership instead. See [DNS Zone](dnszone.md) for the rest of a catalog zone's contents.
 
