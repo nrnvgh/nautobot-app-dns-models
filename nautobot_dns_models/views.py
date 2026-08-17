@@ -701,6 +701,14 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             for membership in CatalogZoneMembership.objects.filter(member_zone__in=zones)
         }
 
+        # The check after the writes reads each row as the move left it. An object-level constraint
+        # can admit a row in the destination catalog while holding it out of the one it is leaving,
+        # so a move is authorized against the stored row first, as `form_save` does.
+        self._require_bulk_membership_permission(
+            [membership.pk for membership in memberships.values() if membership.catalog_zone_id != catalog_zone.pk],
+            "change",
+        )
+
         for zone in zones:
             membership = memberships.get(zone.pk)
             if membership is None:
@@ -716,11 +724,15 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
             written[operation].append(membership.pk)
 
         for operation, pks in written.items():
-            permitted = CatalogZoneMembership.objects.restrict(self.request.user, operation).filter(pk__in=pks)
-            if permitted.count() != len(pks):
-                raise ObjectDoesNotExist
+            self._require_bulk_membership_permission(pks, operation)
 
         return len(written["add"]), len(written["change"])
+
+    def _require_bulk_membership_permission(self, pks, operation):
+        """Refuse the batch unless `operation` is within reach on every membership listed."""
+        permitted = CatalogZoneMembership.objects.restrict(self.request.user, operation).filter(pk__in=pks)
+        if permitted.count() != len(pks):
+            raise ObjectDoesNotExist
 
     def _remove_memberships(self, memberships):
         """Delete the memberships a selection holds, refusing the batch if one of them is out of reach."""
@@ -728,11 +740,11 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         if not pks:
             return 0
 
-        permitted = CatalogZoneMembership.objects.restrict(self.request.user, "delete").filter(pk__in=pks)
-        if permitted.count() != len(pks):
-            raise ObjectDoesNotExist
+        self._require_bulk_membership_permission(pks, "delete")
 
-        memberships.delete()
+        # Delete the rows the check covered: `memberships` is evaluated again on its own delete, so
+        # a membership written for a selected zone in between would go with them unchecked.
+        CatalogZoneMembership.objects.filter(pk__in=pks).delete()
         return len(pks)
 
     def _get_pending_membership_change(self, form):

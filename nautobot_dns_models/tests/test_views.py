@@ -1501,6 +1501,20 @@ class ZoneBulkAddMembershipTest(TestCase):
         self._apply(self.unenrolled_zones, self.catalog_zone, expect=302)
         self.assertEqual(self._catalog_of(self.unenrolled_zones[0]), self.catalog_zone)
 
+    def test_a_constraint_is_enforced_against_the_catalog_a_move_leaves(self):
+        """A move is a write on a row in the old catalog, so reach over the new one is not enough."""
+        object_permission = ObjectPermission(
+            name="Bulk move into one catalog only",
+            actions=["add", "change"],
+            constraints={"catalog_zone__name": self.catalog_zone.name},
+        )
+        object_permission.save()
+        object_permission.users.add(self.user)
+        object_permission.object_types.add(ContentType.objects.get_for_model(CatalogZoneMembership))
+
+        self.assertIn(self.PERMISSION_REFUSED, self._apply([self.enrolled_zone], self.catalog_zone, expect=200))
+        self.assertEqual(self._catalog_of(self.enrolled_zone), self.other_catalog_zone)
+
     def _apply(self, zones, catalog, expect):
         """Post the applying pass for `zones`, and return the page when it is redisplayed."""
         return self._post(
