@@ -4,10 +4,11 @@
 from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, connection, transaction
 from django.db.models import ProtectedError
+from nautobot.apps.change_logging import web_request_context
 from nautobot.apps.testing import ModelTestCases, TestCase
-from nautobot.extras.models import Status
+from nautobot.extras.models import ObjectChange, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from netutils.ip import ipaddress_address
 
@@ -20,6 +21,7 @@ from nautobot_dns_models.models import (
     UINT32_MAX,
     AAAARecord,
     ARecord,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -31,6 +33,7 @@ from nautobot_dns_models.models import (
     PTRRecord,
     SRVRecord,
     TXTRecord,
+    catalog_member_label,
     dns_record_models,
     dns_wire_label_length,
     split_txt_character_strings,
@@ -48,6 +51,21 @@ def create_zone(name, **kwargs):
         soa_rname=f"admin@{name}",
         **kwargs,
     )
+
+
+class _RowCounter:
+    """Count the rows the database returns, for a cost that query counting cannot see."""
+
+    def __init__(self):
+        """Start the count at nothing."""
+        self.rows = 0
+
+    def __call__(self, execute, sql, params, many, context):
+        """Run the query, then add on however many rows came back."""
+        result = execute(sql, params, many, context)
+        if sql.lstrip().upper().startswith("SELECT"):
+            self.rows += max(context["cursor"].rowcount, 0)
+        return result
 
 
 # Helper for generating unicode labels of a specific IDNA-encoded length
@@ -1600,3 +1618,1116 @@ class CatalogZoneVersionRecordTest(TestCase):
         zone.save()
 
         self.assertEqual([record.text for record in TXTRecord.objects.filter(name="version", zone=zone)], ["2"])
+
+
+class CatalogMemberLabelTest(TestCase):
+    """Tests for the opaque catalog member label generator."""
+
+    def test_is_a_single_dns_safe_label(self):
+        """Unpadded lowercase base32 of a UUID is 26 characters from [a-z2-7], inside RFC 1035 §3.1."""
+        label = catalog_member_label()
+        self.assertEqual(len(label), 26)
+        self.assertRegex(label, r"^[a-z2-7]+$")
+        self.assertNotIn("=", label)
+        self.assertNotIn(".", label)
+
+    def test_each_call_mints_a_new_identity(self):
+        """Re-enrolling with a blank label must not silently resume prior consumer state."""
+        self.assertNotEqual(catalog_member_label(), catalog_member_label())
+
+
+class CatalogMembershipChangeLogTest(TestCase):
+    """Tests that a membership is recorded against the zones it relates, not only the row itself."""
+
+    def test_enrolling_records_a_change_against_both_zones(self):
+        """Declaring the membership as an M2M through earns core's side-object change records."""
+        catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = create_zone("member.example")
+
+        with web_request_context(self.user):
+            CatalogZoneMembership(catalog_zone=catalog_zone, member_zone=member_zone).validated_save()
+
+        self.assertTrue(ObjectChange.objects.filter(changed_object_id=member_zone.pk).exists())
+        self.assertTrue(ObjectChange.objects.filter(changed_object_id=catalog_zone.pk).exists())
+
+    def test_the_catalog_zone_change_names_the_member(self):
+        """The catalog side's entry carries its members, as the member side's carries `catalogs`."""
+        catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = create_zone("member.example")
+
+        with web_request_context(self.user):
+            CatalogZoneMembership(catalog_zone=catalog_zone, member_zone=member_zone).validated_save()
+
+        change = ObjectChange.objects.get(changed_object_id=catalog_zone.pk)
+        self.assertEqual([member["id"] for member in change.object_data_v2["members"]], [str(member_zone.pk)])
+
+    def test_renaming_a_member_records_a_withdrawal_and_an_addition(self):
+        """A rename is published as the removal of one catalog entry and the addition of another.
+
+        The membership row is replaced, but it is not change-logged in its own right, so the
+        member PTR records are where the history of a rename is legible: one deleted at the old
+        label, one created at the new. Those entries belong to the records, which is asserted
+        against the predicate Nautobot's changelog tab uses, since the documentation once claimed
+        they show under the catalog zone.
+        """
+        catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = create_zone("member.example")
+        membership = CatalogZoneMembership(catalog_zone=catalog_zone, member_zone=member_zone)
+        membership.validated_save()
+        old_pk = membership.pk
+        old_label = membership.member_label
+
+        with web_request_context(self.user):
+            member_zone.name = "renamed.example"
+            member_zone.validated_save()
+
+        membership = CatalogZoneMembership.objects.get(member_zone=member_zone)
+        self.assertNotEqual(membership.pk, old_pk)
+        self.assertNotEqual(membership.member_label, old_label)
+        self.assertFalse(CatalogZoneMembership.objects.filter(pk=old_pk).exists())
+        ptr_type = ContentType.objects.get_for_model(PTRRecord)
+        ptr_changes = ObjectChange.objects.filter(changed_object_type=ptr_type).values_list("action", "object_repr")
+        self.assertEqual(
+            set(ptr_changes),
+            {("delete", "member.example"), ("create", "renamed.example")},
+        )
+        self.assertFalse(
+            ObjectChange.objects.filter(
+                changed_object_type=ptr_type,
+                related_object_type=ContentType.objects.get_for_model(DNSZone),
+                related_object_id=catalog_zone.pk,
+            ).exists()
+        )
+
+    def test_withdrawing_and_enrolling_records_a_change_against_both_catalogs(self):
+        """Deleting then recreating a membership logs changes against both catalogs and the member zone."""
+        old_catalog = create_zone("old-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        new_catalog = create_zone("new-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = create_zone("member.example")
+        membership = CatalogZoneMembership(catalog_zone=old_catalog, member_zone=member_zone)
+        membership.validated_save()
+
+        with web_request_context(self.user):
+            membership.delete()
+            CatalogZoneMembership(catalog_zone=new_catalog, member_zone=member_zone).validated_save()
+
+        self.assertTrue(ObjectChange.objects.filter(changed_object_id=old_catalog.pk).exists())
+        self.assertTrue(ObjectChange.objects.filter(changed_object_id=new_catalog.pk).exists())
+        self.assertTrue(ObjectChange.objects.filter(changed_object_id=member_zone.pk).exists())
+
+
+class CatalogMembershipManagerTest(TestCase):
+    """Tests the paths that reach the through table without saving through it."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = create_zone("member.example")
+
+    def test_adding_enrolls_the_zone_and_publishes_it(self):
+        """A manager add is a real membership, so it earns a label and a member PTR."""
+        self.member_zone.catalogs.add(self.catalog_zone)
+
+        membership = self.member_zone.catalog_memberships.get()
+        self.assertEqual(len(membership.member_label), 26)
+        self.assertTrue(
+            PTRRecord.objects.filter(zone=self.catalog_zone, name=f"{membership.member_label}.zones").exists()
+        )
+        self.assertTrue(self.catalog_zone.has_members)
+
+    def test_adding_from_the_catalog_end_enrolls_the_zone_too(self):
+        """The reverse accessor writes the same row, so it is held to the same rules."""
+        self.catalog_zone.members.add(self.member_zone)
+
+        self.assertEqual(self.member_zone.catalog_memberships.get().catalog_zone, self.catalog_zone)
+
+    def test_adding_several_zones_gives_each_its_own_label(self):
+        """Bulk-created rows never reach save(), so the label has to come from the field default."""
+        second_zone = create_zone("second.example")
+
+        self.catalog_zone.members.add(self.member_zone, second_zone)
+
+        labels = set(CatalogZoneMembership.objects.values_list("member_label", flat=True))
+        self.assertEqual(len(labels), 2)
+
+    def test_a_direct_bulk_create_publishes_what_it_stores(self):
+        """A caller reaching past the manager stores no membership the catalog leaves unpublished.
+
+        `m2m_changed` is sent only by the manager, so the publication has to belong to the insert
+        rather than to a receiver watching one way in.
+        """
+        CatalogZoneMembership.objects.bulk_create(
+            [CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone)]
+        )
+
+        membership = self.member_zone.catalog_memberships.get()
+        self.assertTrue(
+            PTRRecord.objects.filter(zone=self.catalog_zone, name=f"{membership.member_label}.zones").exists()
+        )
+
+    def test_a_bulk_update_refuses_the_immutable_fields(self):
+        """A relabel here would leave the PTR published where nothing can find it to withdraw."""
+        self.member_zone.catalogs.add(self.catalog_zone)
+        membership = self.member_zone.catalog_memberships.get()
+        stored_label = membership.member_label
+        membership.member_label = "relabelled"
+
+        with self.assertRaises(ValidationError) as context:
+            CatalogZoneMembership.objects.bulk_update([membership], ["member_label"])
+
+        self.assertEqual(
+            context.exception.messages[0],
+            "These fields cannot be changed on an existing membership: member_label.",
+        )
+        membership.refresh_from_db()
+        self.assertEqual(membership.member_label, stored_label)
+
+    def test_adding_refuses_to_nest_a_catalog_zone(self):
+        """The manager cannot be used to write a membership the model would have rejected."""
+        nested_catalog = create_zone("nested.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.members.add(nested_catalog)
+
+        # Nothing is queried after the refusal, which leaves the transaction unusable.
+        self.assertEqual(
+            context.exception.message_dict["member_zone"][0],
+            "A catalog zone cannot be a member of another catalog zone.",
+        )
+
+    def test_adding_refuses_a_zone_from_another_view(self):
+        """View scoping holds on the manager path as it does on the membership."""
+        other_zone = create_zone("other.example", dns_view=DNSView.objects.create(name="Other"))
+
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.members.add(other_zone)
+
+        self.assertEqual(
+            context.exception.message_dict["member_zone"][0],
+            "The member zone must be in the same view as the catalog zone.",
+        )
+
+    def test_adding_refuses_a_supplied_label_with_a_dot(self):
+        """`through_defaults` reaches only the row Django inserts, which is where it is validated."""
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.members.add(self.member_zone, through_defaults={"member_label": "bad.label"})
+
+        self.assertEqual(
+            context.exception.message_dict["member_label"][0],
+            "The member label must be a single DNS label, without dots.",
+        )
+
+    def test_adding_refuses_an_over_long_supplied_label(self):
+        """An over-long label is a validation error rather than the column's own `DataError`.
+
+        The field's length check answers before the wire-format rule in `clean()` does, so the
+        message is Django's.
+        """
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.members.add(self.member_zone, through_defaults={"member_label": "a" * 70})
+
+        self.assertEqual(
+            context.exception.message_dict["member_label"][0],
+            "Ensure this value has at most 63 characters (it has 70).",
+        )
+
+    def test_adding_refuses_a_supplied_label_reused_in_another_case(self):
+        """Two cases of one label name one node, whichever path supplies the second."""
+        self.catalog_zone.members.add(self.member_zone, through_defaults={"member_label": "shared"})
+        second_zone = create_zone("second.example")
+
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.members.add(second_zone, through_defaults={"member_label": "Shared"})
+
+        self.assertEqual(
+            context.exception.message_dict["__all__"][0],
+            "This label is already used by another member of the catalog zone.",
+        )
+
+    def test_adding_generates_a_label_for_a_blank_one(self):
+        """A blank label asks for a generated one, as it does on every other path."""
+        self.catalog_zone.members.add(self.member_zone, through_defaults={"member_label": ""})
+
+        membership = self.member_zone.catalog_memberships.get()
+        self.assertEqual(len(membership.member_label), 26)
+        self.assertTrue(
+            PTRRecord.objects.filter(zone=self.catalog_zone, name=f"{membership.member_label}.zones").exists()
+        )
+
+    def test_removing_withdraws_the_member_ptr(self):
+        """Removal deletes the through row, which the post_delete receiver already answers for."""
+        self.catalog_zone.members.add(self.member_zone)
+
+        self.catalog_zone.members.remove(self.member_zone)
+
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+        self.assertFalse(self.catalog_zone.has_members)
+
+
+class CatalogZoneMembershipTest(TestCase):
+    """Tests for the membership model that enrolls a zone in a catalog zone."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = create_zone("member.example")
+
+    def test_label_is_generated_when_left_blank(self):
+        """Leaving the label blank mints an opaque identity rather than demanding operator input."""
+        membership = self._membership()
+        self.assertEqual(len(membership.member_label), 26)
+        self.assertRegex(membership.member_label, r"^[a-z2-7]+$")
+
+    def test_label_is_generated_without_validation(self):
+        """An ORM caller that skips full_clean() still gets a label, since save() cannot store a blank one."""
+        membership = CatalogZoneMembership.objects.create(catalog_zone=self.catalog_zone, member_zone=self.member_zone)
+        self.assertEqual(len(membership.member_label), 26)
+        self.assertRegex(membership.member_label, r"^[a-z2-7]+$")
+
+    def test_supplied_label_is_kept(self):
+        """RFC 9432 §4.1 lets a producer pick any unique label, so an operator's choice stands."""
+        membership = self._membership(member_label="chosen")
+        self.assertEqual(membership.member_label, "chosen")
+
+    def test_label_cannot_be_changed(self):
+        """A consumer treats a relabelled member as a removal and re-addition, discarding its state."""
+        membership = self._membership()
+        membership.member_label = "renamed"
+        with self.assertRaises(ValidationError) as context:
+            membership.full_clean()
+
+        self.assertEqual(
+            context.exception.message_dict["member_label"][0],
+            "The member label cannot be changed on an existing membership.",
+        )
+
+    def test_changing_existing_membership_catalog_zone_is_rejected(self):
+        """Validation rejects assigning an existing membership to a different catalog zone."""
+        membership = self._membership()
+        membership.catalog_zone = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        with self.assertRaises(ValidationError) as context:
+            membership.full_clean()
+
+        self.assertEqual(
+            context.exception.message_dict["catalog_zone"][0],
+            "The catalog zone cannot be changed on an existing membership.",
+        )
+
+    def test_changing_existing_membership_member_zone_is_rejected(self):
+        """Validation rejects assigning an existing membership to a different member zone."""
+        membership = self._membership()
+        membership.member_zone = create_zone("second.example")
+        with self.assertRaises(ValidationError) as context:
+            membership.full_clean()
+
+        self.assertEqual(
+            context.exception.message_dict["member_zone"][0],
+            "The member zone cannot be changed on an existing membership.",
+        )
+
+    def test_rejects_label_spanning_more_than_one_node(self):
+        """The label names a single node under zones.$CATZ, so a dot would silently nest it deeper."""
+        with self.assertRaises(ValidationError) as context:
+            self._membership(member_label="two.labels")
+
+        self.assertEqual(
+            context.exception.message_dict["member_label"][0],
+            "The member label must be a single DNS label, without dots.",
+        )
+
+    def test_rejects_membership_in_a_non_catalog_zone(self):
+        """Only a catalog zone publishes members."""
+        primary_zone = create_zone("second.example")
+        with self.assertRaises(ValidationError) as context:
+            self._membership(catalog_zone=primary_zone)
+
+        self.assertEqual(
+            context.exception.message_dict["catalog_zone"][0],
+            "Members can only be added to a catalog zone.",
+        )
+
+    def test_rejects_a_catalog_zone_as_a_member(self):
+        """A consumer configures a member as an ordinary zone, so a nested catalog would go unread."""
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        with self.assertRaises(ValidationError) as context:
+            self._membership(member_zone=other_catalog)
+
+        self.assertEqual(
+            context.exception.message_dict["member_zone"][0],
+            "A catalog zone cannot be a member of another catalog zone.",
+        )
+
+    def test_rejects_self_membership(self):
+        """A catalog naming itself is refused as self-membership, not as the nesting complaint."""
+        with self.assertRaises(ValidationError) as context:
+            self._membership(member_zone=self.catalog_zone)
+
+        self.assertEqual(
+            context.exception.message_dict["member_zone"][0],
+            "A zone cannot be a member of itself.",
+        )
+
+    def test_a_bare_save_refuses_what_clean_refuses(self):
+        """A job or shell caller reaches `save()` without `clean()`, and these rules hold there too.
+
+        Each is checked above through `validated_save()`. Repeated here through `save()` because they
+        read only immutable state, so no write path has grounds to skip them: an unenforced one stores
+        a membership that publishes a PTR into an ordinary zone, or under a label naming two nodes.
+        """
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        primary_zone = create_zone("second.example")
+        cases = [
+            ({"member_zone": self.catalog_zone}, "A zone cannot be a member of itself."),
+            ({"catalog_zone": primary_zone}, "Members can only be added to a catalog zone."),
+            ({"member_zone": other_catalog}, "A catalog zone cannot be a member of another catalog zone."),
+            ({"member_label": "two.labels"}, "The member label must be a single DNS label, without dots."),
+        ]
+
+        for overrides, message in cases:
+            with self.subTest(message=message):
+                fields = {"catalog_zone": self.catalog_zone, "member_zone": self.member_zone, **overrides}
+
+                with self.assertRaises(ValidationError) as context:
+                    CatalogZoneMembership(**fields).save()
+
+                self.assertIn(message, context.exception.messages)
+                self.assertFalse(CatalogZoneMembership.objects.exists())
+
+    def test_rejects_a_member_zone_from_another_view(self):
+        """A catalog and its members have to resolve in the same view to describe one nameserver's zones."""
+        other_view = DNSView.objects.create(name="Other")
+        member_elsewhere = create_zone("elsewhere.example", dns_view=other_view)
+        with self.assertRaises(ValidationError) as context:
+            self._membership(member_zone=member_elsewhere)
+
+        self.assertEqual(
+            context.exception.message_dict["member_zone"][0],
+            "The member zone must be in the same view as the catalog zone.",
+        )
+
+    def test_rejects_a_second_membership_for_one_zone(self):
+        """A zone belongs to at most one catalog, so two catalogs cannot both claim to provision it."""
+        self._membership()
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        with self.assertRaises(ValidationError) as context:
+            self._membership(catalog_zone=other_catalog)
+
+        self.assertEqual(
+            context.exception.message_dict["__all__"][0],
+            "This zone already belongs to a catalog zone.",
+        )
+
+    def test_rejects_a_label_reused_within_one_catalog(self):
+        """Reusing a member label is rejected because RFC 9432 §4.1 requires exactly one PTR per member-node RRset."""
+        self._membership(member_label="shared")
+        other_member = create_zone("second.example")
+        with self.assertRaises(ValidationError) as context:
+            self._membership(member_zone=other_member, member_label="shared")
+
+        self.assertEqual(
+            context.exception.message_dict["__all__"][0],
+            "This label is already used by another member of the catalog zone.",
+        )
+
+    def test_rejects_a_label_reused_in_another_case_within_one_catalog(self):
+        """RFC 4343 §3 compares labels without regard to case, so `Shared` and `shared` are one node."""
+        self._membership(member_label="shared")
+        other_member = create_zone("second.example")
+        with self.assertRaises(ValidationError) as context:
+            self._membership(member_zone=other_member, member_label="Shared")
+
+        self.assertEqual(
+            context.exception.message_dict["__all__"][0],
+            "This label is already used by another member of the catalog zone.",
+        )
+
+    def test_rejecting_a_case_variant_publishes_no_second_record(self):
+        """The refusal comes before the write, so the catalog keeps one PTR at that owner name."""
+        self._membership(member_label="shared")
+        other_member = create_zone("second.example")
+        with self.assertRaises(ValidationError):
+            self._membership(member_zone=other_member, member_label="Shared")
+
+        self.assertEqual(
+            list(PTRRecord.objects.filter(zone=self.catalog_zone).values_list("name", flat=True)),
+            ["shared.zones"],
+        )
+
+    def test_allows_the_same_label_in_a_different_catalog(self):
+        """Labels are scoped to their catalog, so another catalog may reuse one."""
+        self._membership(member_label="shared")
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_member = create_zone("second.example")
+        membership = self._membership(catalog_zone=other_catalog, member_zone=other_member, member_label="shared")
+        self.assertEqual(membership.member_label, "shared")
+
+    def test_allows_a_case_variant_label_in_a_different_catalog(self):
+        """The case-insensitive constraint is scoped to one catalog, as the byte-exact one beside it is."""
+        self._membership(member_label="shared")
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_member = create_zone("second.example")
+        membership = self._membership(catalog_zone=other_catalog, member_zone=other_member, member_label="Shared")
+        self.assertEqual(membership.member_label, "Shared")
+
+    def test_revalidating_a_membership_does_not_collide_with_itself(self):
+        """A row's own label is not a claim against it, so revalidating an unchanged membership passes."""
+        membership = self._membership(member_label="chosen")
+        membership.full_clean()
+        self.assertEqual(membership.member_label, "chosen")
+
+    def test_a_bare_save_cannot_store_a_case_variant(self):
+        """A bare `save()` runs no validation, leaving the constraint as the only thing that can refuse it."""
+        self._membership(member_label="shared")
+        membership = CatalogZoneMembership(
+            catalog_zone=self.catalog_zone,
+            member_zone=create_zone("second.example"),
+            member_label="Shared",
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            membership.save()
+
+    def test_a_refused_case_variant_stores_nothing(self):
+        """The label is refused by the insert itself, so the catalog is left as it was."""
+        self._membership(member_label="shared")
+        membership = CatalogZoneMembership(
+            catalog_zone=self.catalog_zone,
+            member_zone=create_zone("second.example"),
+            member_label="Shared",
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            membership.save()
+
+        self.assertEqual(
+            list(
+                CatalogZoneMembership.objects.filter(catalog_zone=self.catalog_zone).values_list(
+                    "member_label", flat=True
+                )
+            ),
+            ["shared"],
+        )
+
+    def test_a_membership_deleted_by_another_writer_cannot_be_saved_again(self):
+        """Django turns an UPDATE that matches no row into an INSERT, which would undo the delete."""
+        membership = self._membership()
+        CatalogZoneMembership.objects.filter(pk=membership.pk).delete()
+
+        with self.assertRaises(ValidationError) as context:
+            membership.save()
+
+        self.assertEqual(context.exception.messages[0], "This membership no longer exists.")
+
+    def test_a_deleted_membership_is_refused_before_its_ptr_is_republished(self):
+        """Through `validated_save()`, since `clean()` reads the stored row without holding it."""
+        membership = self._membership()
+        CatalogZoneMembership.objects.filter(pk=membership.pk).delete()
+
+        with self.assertRaises(ValidationError):
+            membership.validated_save()
+
+        self.assertFalse(CatalogZoneMembership.objects.filter(pk=membership.pk).exists())
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+
+    def test_a_membership_whose_member_zone_was_deleted_cannot_be_saved_again(self):
+        """Deleted through a queryset, as another writer would: the instance keeps the id of a gone row.
+
+        Reported against the zone rather than the membership, because the zone going is what took the
+        membership with it, and that is the more specific of the two true answers.
+        """
+        membership = self._membership()
+        DNSZone.objects.filter(pk=self.member_zone.pk).delete()
+
+        with self.assertRaises(ValidationError) as context:
+            membership.save()
+
+        self.assertEqual(context.exception.message_dict["member_zone"][0], "The member zone no longer exists.")
+
+    def test_a_zone_moved_after_the_check_refuses_the_membership(self):
+        """Moved through a queryset, which is how another writer's committed move looks from here.
+
+        `clean()` compares views it read earlier, and commits in a later transaction, so the two
+        cannot be the same read. Only a comparison made at the write can see this.
+        """
+        membership = CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone)
+        membership.full_clean()
+        other_view = DNSView.objects.create(name="Other")
+        DNSZone.objects.filter(pk=self.member_zone.pk).update(dns_view=other_view)
+
+        with self.assertRaises(ValidationError) as context:
+            membership.save()
+
+        self.assertEqual(
+            context.exception.message_dict["member_zone"][0],
+            "The member zone must be in the same view as the catalog zone.",
+        )
+
+    def test_a_refused_view_mismatch_stores_nothing(self):
+        """The refusal has to land before the PTR, which is what advertises the member to consumers."""
+        membership = CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone)
+        membership.full_clean()
+        other_view = DNSView.objects.create(name="Other")
+        DNSZone.objects.filter(pk=self.member_zone.pk).update(dns_view=other_view)
+
+        with self.assertRaises(ValidationError):
+            membership.save()
+
+        self.assertFalse(CatalogZoneMembership.objects.filter(member_zone=self.member_zone).exists())
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+
+    def test_a_membership_naming_a_deleted_zone_is_refused(self):
+        """Otherwise the insert dangles a foreign key, which PostgreSQL reports away from this call."""
+        membership = CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone)
+        DNSZone.objects.filter(pk=self.member_zone.pk).delete()
+
+        with self.assertRaises(ValidationError) as context:
+            membership.save()
+
+        self.assertEqual(context.exception.message_dict["member_zone"][0], "The member zone no longer exists.")
+
+    def test_deleting_the_member_zone_removes_the_membership(self):
+        """Membership is a property of the member zone, so it should not outlive it."""
+        membership = self._membership()
+        self.member_zone.delete()
+        self.assertFalse(CatalogZoneMembership.objects.filter(pk=membership.pk).exists())
+
+    def test_catalog_zone_cannot_be_deleted_while_it_has_members(self):
+        """Deleting a catalog zone with members is refused, leaving the zone and its system-managed records intact."""
+        membership = self._membership()
+        with self.assertRaises(ProtectedError):
+            self.catalog_zone.delete()
+
+        self.assertTrue(DNSZone.objects.filter(pk=self.catalog_zone.pk).exists())
+        self._assert_catalog_records_survived(membership)
+
+    def test_refused_bulk_delete_of_a_catalog_zone_keeps_its_records(self):
+        """Nautobot's bulk delete job calls `QuerySet.delete()`, which clears those records the same way."""
+        membership = self._membership()
+        with self.assertRaises(ProtectedError):
+            DNSZone.objects.filter(pk=self.catalog_zone.pk).delete()
+
+        self.assertTrue(DNSZone.objects.filter(pk=self.catalog_zone.pk).exists())
+        self._assert_catalog_records_survived(membership)
+
+    def _assert_catalog_records_survived(self, membership):
+        """Assert the catalog's apex NS, version TXT, and member PTR survived the refused deletion."""
+        self.assertEqual(
+            [(record.name, record.server, record.ttl) for record in NSRecord.objects.filter(zone=self.catalog_zone)],
+            [(APEX_RECORD_NAME, CATALOG_APEX_NS_SERVER, 0)],
+        )
+        self.assertEqual(
+            [
+                (record.name, record.text, record.ttl)
+                for record in TXTRecord.objects.filter(name="version", zone=self.catalog_zone)
+            ],
+            [("version", "2", 0)],
+        )
+        self.assertEqual(
+            [(record.name, record.ptrdname, record.ttl) for record in PTRRecord.objects.filter(zone=self.catalog_zone)],
+            [(f"{membership.member_label}.zones", membership.member_zone.name, 0)],
+        )
+
+    def _membership(self, **overrides):
+        """Create and return a validated membership, defaulting to the fixture zones."""
+        fields = {"catalog_zone": self.catalog_zone, "member_zone": self.member_zone}
+        fields.update(overrides)
+        membership = CatalogZoneMembership(**fields)
+        membership.validated_save()
+        return membership
+
+
+class CatalogMembershipViewChangeTest(TestCase):
+    """Tests that a zone taking part in a membership stays in the view that membership was made in.
+
+    `CatalogZoneMembership` refuses a catalog and a member in different views, but nothing re-validates a
+    stored membership when either of its zones moves, so the same rule has to hold from the zone side.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = create_zone("member.example")
+        cls.other_view = DNSView.objects.create(name="Other")
+
+    def test_enrolled_member_cannot_change_view(self):
+        """Moving an enrolled zone would leave its catalog publishing a member from another view."""
+        membership = self._membership()
+
+        self.member_zone.dns_view = self.other_view
+        with self.assertRaises(ValidationError) as context:
+            self.member_zone.validated_save()
+
+        self.assertEqual(
+            context.exception.message_dict["dns_view"][0],
+            "A zone that is a member of a catalog zone cannot be moved to another view.",
+        )
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.dns_view_id, self.catalog_zone.dns_view_id)
+        self.assertTrue(CatalogZoneMembership.objects.filter(pk=membership.pk).exists())
+
+    def test_catalog_with_members_cannot_change_view(self):
+        """Moving a catalog would strand every zone it publishes in the view it left."""
+        self._membership()
+
+        self.catalog_zone.dns_view = self.other_view
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.validated_save()
+
+        self.assertEqual(
+            context.exception.message_dict["dns_view"][0],
+            "A catalog zone with members cannot be moved to another view.",
+        )
+        self.catalog_zone.refresh_from_db()
+        self.assertEqual(self.catalog_zone.dns_view_id, self.member_zone.dns_view_id)
+
+    def test_unenrolled_zone_can_change_view(self):
+        """A zone in no membership has nothing holding it in place."""
+        self.member_zone.dns_view = self.other_view
+        self.member_zone.validated_save()
+
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.dns_view_id, self.other_view.pk)
+
+    def test_empty_catalog_can_change_view(self):
+        """A catalog with no members publishes nothing that a move could strand."""
+        self.catalog_zone.dns_view = self.other_view
+        self.catalog_zone.validated_save()
+
+        self.catalog_zone.refresh_from_db()
+        self.assertEqual(self.catalog_zone.dns_view_id, self.other_view.pk)
+
+    def test_enrolled_member_can_still_be_edited(self):
+        """Only the view is pinned, so membership does not freeze the rest of the zone."""
+        self._membership()
+
+        self.member_zone.description = "still enrolled"
+        self.member_zone.validated_save()
+
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.description, "still enrolled")
+
+    def test_enrolled_member_cannot_change_view_on_a_bare_save(self):
+        """A job or shell caller reaches `save()` without `clean()`, and the rule has to hold there too."""
+        self._membership()
+
+        self.member_zone.dns_view = self.other_view
+        with self.assertRaises(ValidationError) as context:
+            self.member_zone.save()
+
+        self.assertEqual(
+            context.exception.message_dict["dns_view"][0],
+            "A zone that is a member of a catalog zone cannot be moved to another view.",
+        )
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.dns_view_id, self.catalog_zone.dns_view_id)
+
+    def test_catalog_with_members_cannot_change_view_on_a_bare_save(self):
+        """The same from the catalog side, where a move strands every member it publishes."""
+        self._membership()
+
+        self.catalog_zone.dns_view = self.other_view
+        with self.assertRaises(ValidationError) as context:
+            self.catalog_zone.save()
+
+        self.assertEqual(
+            context.exception.message_dict["dns_view"][0],
+            "A catalog zone with members cannot be moved to another view.",
+        )
+
+    def test_a_membership_created_after_the_check_still_blocks_the_move(self):
+        """The enrollment lands between the mover's validation and its write, so only the write can see it.
+
+        `clean()` passes because there is nothing to find yet. What refuses the move is `save()`
+        reading the memberships again while holding the zone's row. Enrolled through a second instance
+        of the zone, as another writer would hold, since the mover's own instance already carries the
+        view it is trying to store.
+        """
+        self.member_zone.dns_view = self.other_view
+        self.member_zone.full_clean()
+        CatalogZoneMembership(
+            catalog_zone=self.catalog_zone, member_zone=DNSZone.objects.get(pk=self.member_zone.pk)
+        ).validated_save()
+
+        with self.assertRaises(ValidationError) as context:
+            self.member_zone.save()
+
+        self.assertEqual(
+            context.exception.message_dict["dns_view"][0],
+            "A zone that is a member of a catalog zone cannot be moved to another view.",
+        )
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.dns_view_id, self.catalog_zone.dns_view_id)
+
+    def test_a_prefetched_member_zone_still_sees_a_new_membership(self):
+        """The check has to query rather than read a cache, since both viewsets prefetch this relation.
+
+        Enrolled after the load and through a second instance, so the mover's own prefetch is older
+        than the membership it has to notice. The lock decides nothing if the read that follows it
+        answers from memory.
+        """
+        zone = DNSZone.objects.prefetch_related("catalog_memberships__catalog_zone").get(pk=self.member_zone.pk)
+        CatalogZoneMembership(
+            catalog_zone=self.catalog_zone, member_zone=DNSZone.objects.get(pk=self.member_zone.pk)
+        ).validated_save()
+
+        zone.dns_view = self.other_view
+        with self.assertRaises(ValidationError) as context:
+            zone.save()
+
+        self.assertEqual(
+            context.exception.message_dict["dns_view"][0],
+            "A zone that is a member of a catalog zone cannot be moved to another view.",
+        )
+        zone.refresh_from_db()
+        self.assertEqual(zone.dns_view_id, self.catalog_zone.dns_view_id)
+
+    def test_a_prefetched_catalog_zone_still_sees_a_new_member(self):
+        """The same from the catalog side, which no queryset prefetches today.
+
+        `exists()` answers from a prefetch cache as readily as `first()` does, so this side is fresh
+        only for as long as nothing asks for `member_memberships`. Pinned here so that adding that
+        prefetch for a members column cannot quietly reopen the move.
+        """
+        catalog = DNSZone.objects.prefetch_related("member_memberships").get(pk=self.catalog_zone.pk)
+        CatalogZoneMembership(
+            catalog_zone=DNSZone.objects.get(pk=self.catalog_zone.pk), member_zone=self.member_zone
+        ).validated_save()
+
+        catalog.dns_view = self.other_view
+        with self.assertRaises(ValidationError) as context:
+            catalog.save()
+
+        self.assertEqual(
+            context.exception.message_dict["dns_view"][0],
+            "A catalog zone with members cannot be moved to another view.",
+        )
+        catalog.refresh_from_db()
+        self.assertEqual(catalog.dns_view_id, self.member_zone.dns_view_id)
+
+    def test_saving_an_enrolled_member_without_its_view_stores_no_move(self):
+        """A partial save leaves the stored view alone, so an in-memory one is not a move to refuse."""
+        self._membership()
+
+        self.member_zone.dns_view = self.other_view
+        self.member_zone.description = "partially saved"
+        self.member_zone.save(update_fields=["description"])
+
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.dns_view_id, self.catalog_zone.dns_view_id)
+        self.assertEqual(self.member_zone.description, "partially saved")
+
+    def _membership(self):
+        """Enroll the fixture member in the fixture catalog."""
+        membership = CatalogZoneMembership(catalog_zone=self.catalog_zone, member_zone=self.member_zone)
+        membership.validated_save()
+        return membership
+
+
+class CatalogMemberRecordSyncTest(TestCase):
+    """Tests for the member PTR records a catalog zone publishes on behalf of its memberships."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = create_zone("member.example")
+
+    def test_membership_publishes_a_member_ptr(self):
+        """RFC 9432 §4.1 publishes a member at `<label>.zones.$CATZ` pointing to the member zone."""
+        membership = self._membership()
+        record = PTRRecord.objects.get(zone=self.catalog_zone)
+        self.assertEqual(record.name, f"{membership.member_label}.zones")
+        self.assertEqual(record.ptrdname, "member.example")
+        self.assertEqual(record.ttl, 0)
+
+    def test_ptr_record_name_names_the_published_record(self):
+        """`ptr_record_name` is the owner name of the PTR the membership publishes."""
+        membership = self._membership()
+        record = PTRRecord.objects.get(zone=self.catalog_zone)
+        self.assertEqual(membership.ptr_record_name, f"{membership.member_label}.zones")
+        self.assertEqual(membership.ptr_record_name, record.name)
+
+    def test_member_ptr_is_system_managed(self):
+        """The PTR belongs to the membership, so ordinary record operations may not touch it."""
+        self._membership()
+        record = PTRRecord.objects.get(zone=self.catalog_zone)
+        with self.assertRaises(ProtectedError):
+            record.delete()
+
+    def test_resaving_a_membership_publishes_no_duplicate(self):
+        """That RRset must hold exactly one RR, so an edit cannot add a second."""
+        membership = self._membership()
+        membership.save()
+        self.assertEqual(PTRRecord.objects.filter(zone=self.catalog_zone).count(), 1)
+
+    def test_direct_save_refuses_relabeling_a_membership(self):
+        """A bare save rejects relabeling and leaves only the PTR published under the original label."""
+        membership = self._membership()
+        original_label = membership.member_label
+        membership.member_label = "rewritten"
+        with self.assertRaises(ValidationError) as context:
+            membership.save()
+
+        membership.refresh_from_db()
+        self.assertEqual(membership.member_label, original_label)
+        self.assertEqual(
+            context.exception.message_dict["member_label"][0],
+            "The member label cannot be changed on an existing membership.",
+        )
+        self.assertEqual(
+            {(record.name, record.ptrdname) for record in PTRRecord.objects.filter(zone=self.catalog_zone)},
+            {(f"{original_label}.zones", "member.example")},
+        )
+
+    def test_direct_save_refuses_retargeting_a_membership(self):
+        """A bare save rejects member retargeting and preserves the original member and PTR."""
+        membership = self._membership()
+        original_label = membership.member_label
+        membership.member_zone = create_zone("second.example")
+        with self.assertRaises(ValidationError) as context:
+            membership.save()
+
+        membership.refresh_from_db()
+        self.assertEqual(membership.member_label, original_label)
+        self.assertEqual(membership.member_zone, self.member_zone)
+        self.assertEqual(
+            context.exception.message_dict["member_zone"][0],
+            "The member zone cannot be changed on an existing membership.",
+        )
+        self.assertEqual(
+            {(record.name, record.ptrdname) for record in PTRRecord.objects.filter(zone=self.catalog_zone)},
+            {(f"{original_label}.zones", "member.example")},
+        )
+
+    def test_renaming_the_member_zone_republishes_it_under_the_new_label(self):
+        """A PTR left at the old label would keep the old zone name in the catalog after the rename."""
+        membership = self._membership()
+        self.member_zone.name = "renamed.example"
+        self.member_zone.validated_save()
+
+        membership = CatalogZoneMembership.objects.get(member_zone=self.member_zone)
+        self.assertEqual(
+            {(record.name, record.ptrdname) for record in PTRRecord.objects.filter(zone=self.catalog_zone)},
+            {(f"{membership.member_label}.zones", "renamed.example")},
+        )
+
+    def test_renaming_one_member_leaves_the_other_members_alone(self):
+        """A rename withdraws and republishes the zone it renamed, so the other members keep their labels."""
+        first = self._membership()
+        second = self._membership(member_zone=create_zone("second.example"))
+        second_pk = second.pk
+        second_label = second.member_label
+        self.member_zone.name = "renamed.example"
+        self.member_zone.validated_save()
+
+        first = CatalogZoneMembership.objects.get(member_zone=self.member_zone)
+        second.refresh_from_db()
+        self.assertEqual(second.pk, second_pk)
+        self.assertEqual(second.member_label, second_label)
+        self.assertEqual(
+            {(record.name, record.ptrdname) for record in PTRRecord.objects.filter(zone=self.catalog_zone)},
+            {
+                (f"{first.member_label}.zones", "renamed.example"),
+                (f"{second_label}.zones", "second.example"),
+            },
+        )
+
+    def test_saving_a_member_without_its_name_leaves_the_catalog_alone(self):
+        """An `update_fields` that omits `name` stores no rename, so the catalog must not publish one.
+
+        Publishing the in-memory name would advertise the member under a name the database never
+        held, which a consumer would provision and fail to resolve.
+        """
+        membership = self._membership()
+        self.member_zone.name = "unsaved.example"
+        self.member_zone.description = "renamed in memory only"
+        self.member_zone.validated_save(update_fields={"description"})
+
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.name, "member.example")
+        self.assertEqual(
+            {(record.name, record.ptrdname) for record in PTRRecord.objects.filter(zone=self.catalog_zone)},
+            {(f"{membership.member_label}.zones", "member.example")},
+        )
+
+    def test_saving_a_member_without_its_name_keeps_the_same_membership(self):
+        """A save that stores no rename has no reason to withdraw the member and enroll it again.
+
+        A consumer reads a replaced membership as a removal and an addition (RFC 9432 §5.4), so
+        churning the label would reprovision a zone that never moved.
+        """
+        membership = self._membership()
+        self.member_zone.name = "unsaved.example"
+        self.member_zone.validated_save(update_fields={"description"})
+
+        self.assertEqual(CatalogZoneMembership.objects.get(member_zone=self.member_zone).pk, membership.pk)
+
+    def test_renaming_a_member_through_update_fields_republishes_it(self):
+        """Naming `name` in `update_fields` does store a rename, which the catalog has to follow."""
+        self._membership()
+        self.member_zone.name = "renamed.example"
+        self.member_zone.validated_save(update_fields={"name"})
+
+        membership = CatalogZoneMembership.objects.get(member_zone=self.member_zone)
+        self.assertEqual(
+            {(record.name, record.ptrdname) for record in PTRRecord.objects.filter(zone=self.catalog_zone)},
+            {(f"{membership.member_label}.zones", "renamed.example")},
+        )
+
+    def test_renaming_a_prefetched_zone_republishes_a_membership_made_after_the_load(self):
+        """The rename has to query the membership, since both viewsets prefetch this relation.
+
+        Enrolled after the load, so the renamed instance's prefetch holds no membership. Read from
+        that cache, the rename would leave a PTR in the catalog that names the old zone.
+        """
+        zone = DNSZone.objects.prefetch_related("catalog_memberships__catalog_zone").get(pk=self.member_zone.pk)
+        self._membership()
+
+        zone.name = "renamed.example"
+        zone.validated_save()
+
+        membership = CatalogZoneMembership.objects.get(member_zone=self.member_zone)
+        self.assertEqual(
+            {(record.name, record.ptrdname) for record in PTRRecord.objects.filter(zone=self.catalog_zone)},
+            {(f"{membership.member_label}.zones", "renamed.example")},
+        )
+
+    def test_renaming_a_prefetched_zone_does_not_undo_a_removal_made_after_the_load(self):
+        """A membership removed after the load must not be created again by the rename.
+
+        The prefetch still holds the removed row. Read from that cache, the rename would delete
+        nothing and then enroll the zone in the catalog it had just left.
+        """
+        membership = self._membership()
+        zone = DNSZone.objects.prefetch_related("catalog_memberships__catalog_zone").get(pk=self.member_zone.pk)
+        membership.delete()
+
+        zone.name = "renamed.example"
+        zone.validated_save()
+
+        self.assertFalse(CatalogZoneMembership.objects.filter(member_zone=self.member_zone).exists())
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+
+    def test_renaming_a_prefetched_zone_keeps_a_catalog_change_made_after_the_load(self):
+        """A zone moved to another catalog after the load stays there when it is renamed.
+
+        The prefetch still holds the membership in the first catalog. Read from that cache, the
+        rename would try to enroll the zone there as well, and the one-catalog rule would refuse
+        the rename.
+        """
+        membership = self._membership()
+        zone = DNSZone.objects.prefetch_related("catalog_memberships__catalog_zone").get(pk=self.member_zone.pk)
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        membership.delete()
+        self._membership(catalog_zone=other_catalog)
+
+        zone.name = "renamed.example"
+        zone.validated_save()
+
+        membership = CatalogZoneMembership.objects.get(member_zone=self.member_zone)
+        self.assertEqual(membership.catalog_zone, other_catalog)
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+        self.assertEqual(
+            {(record.name, record.ptrdname) for record in PTRRecord.objects.filter(zone=other_catalog)},
+            {(f"{membership.member_label}.zones", "renamed.example")},
+        )
+
+    def test_direct_save_refuses_moving_a_membership_between_catalogs(self):
+        """A bare save rejects a catalog move and leaves the PTR only in the original catalog."""
+        membership = self._membership()
+        other_catalog = create_zone("other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        membership.catalog_zone = other_catalog
+        with self.assertRaises(ValidationError) as context:
+            membership.save()
+
+        membership.refresh_from_db()
+        self.assertEqual(membership.catalog_zone, self.catalog_zone)
+        self.assertEqual(
+            context.exception.message_dict["catalog_zone"][0],
+            "The catalog zone cannot be changed on an existing membership.",
+        )
+        self.assertEqual(PTRRecord.objects.get(zone=self.catalog_zone).ptrdname, "member.example")
+        self.assertFalse(PTRRecord.objects.filter(zone=other_catalog).exists())
+
+    def test_deleting_a_membership_withdraws_the_ptr(self):
+        """Withdrawing a zone has to stop a consumer from provisioning it."""
+        membership = self._membership()
+        membership.delete()
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+
+    def test_bulk_deleting_memberships_withdraws_the_ptr(self):
+        """Bulk delete routes through QuerySet.delete(), which sends post_delete per instance."""
+        self._membership()
+        CatalogZoneMembership.objects.all().delete()
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+
+    def test_deleting_the_member_zone_withdraws_the_ptr(self):
+        """The cascade destroys the membership without calling Model.delete(), which is why a receiver runs."""
+        self._membership()
+        self.member_zone.delete()
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+
+    def test_publishing_two_members_creates_a_distinct_ptr_for_each(self):
+        """Publishing two memberships creates one distinct member PTR for each member zone."""
+        first = self._membership()
+        second = self._membership(member_zone=create_zone("second.example"))
+        self.assertEqual(
+            {(record.name, record.ptrdname) for record in PTRRecord.objects.filter(zone=self.catalog_zone)},
+            {
+                (f"{first.member_label}.zones", "member.example"),
+                (f"{second.member_label}.zones", "second.example"),
+            },
+        )
+
+    def test_publishing_a_member_reads_no_more_of_a_large_catalog_than_a_small_one(self):
+        """Rebuilding the whole set read every membership and PTR the catalog held, at half a second by 2000.
+
+        Rows rather than queries: the sweep was the same two queries whatever they returned, so no
+        query count moves when it comes back.
+        """
+        small_catalog = create_zone("small-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        large_catalog = create_zone("large-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        for index in range(10):
+            self._membership(catalog_zone=large_catalog, member_zone=create_zone(f"crowd-{index}.example"))
+
+        self.assertEqual(
+            self._rows_read_publishing("large-newcomer.example", large_catalog),
+            self._rows_read_publishing("small-newcomer.example", small_catalog),
+        )
+
+    def test_saving_catalog_zone_does_not_restore_missing_member_ptr(self):
+        """Saving a catalog zone does not republish a missing member PTR."""
+        self._membership()
+        with system_write():
+            PTRRecord.objects.filter(zone=self.catalog_zone).delete()
+
+        self.catalog_zone.save()
+
+        self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone).exists())
+
+    def test_resaving_a_membership_removes_an_extra_ptr_from_its_member_node(self):
+        """Resaving removes an extra PTR so the member-node RRset contains exactly one PTR, as per RFC 9432 §4.1."""
+        membership = self._membership()
+        with system_write():
+            PTRRecord(
+                name=f"{membership.member_label}.zones", ptrdname="impostor.example", zone=self.catalog_zone, _ttl=0
+            ).validated_save()
+
+        membership.save()
+
+        self.assertEqual(
+            [record.ptrdname for record in PTRRecord.objects.filter(zone=self.catalog_zone)], ["member.example"]
+        )
+
+    def _membership(self, **overrides):
+        """Create and return a validated membership, defaulting to the fixture zones."""
+        fields = {"catalog_zone": self.catalog_zone, "member_zone": self.member_zone}
+        fields.update(overrides)
+        membership = CatalogZoneMembership(**fields)
+        membership.validated_save()
+        return membership
+
+    def _rows_read_publishing(self, member_name, catalog_zone):
+        """Return how many rows the database returned while a new zone joined `catalog_zone`."""
+        member_zone = create_zone(member_name)
+        counter = _RowCounter()
+        with connection.execute_wrapper(counter):
+            self._membership(catalog_zone=catalog_zone, member_zone=member_zone)
+        return counter.rows

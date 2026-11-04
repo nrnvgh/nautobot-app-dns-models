@@ -55,6 +55,8 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
     description = "Nautobot DNS Models."
     base_url = "dns"
     required_settings = []
+    min_version = "3.2.2"
+    max_version = "3.9999"
     default_settings = {}
     docs_view_name = "plugins:nautobot_dns_models:docs"
     searchable_models = [
@@ -95,8 +97,10 @@ class NautobotDnsModelsConfig(NautobotAppConfig):
     }
 
     def ready(self):
-        """Name the app's OpenAPI choice enums."""
+        """Install the app's signal receivers and name its OpenAPI choice enums."""
         super().ready()
+
+        import nautobot_dns_models.signals  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
 
         # Quells drf_spectacular.W001 enum naming warning.
         django_settings.SPECTACULAR_SETTINGS["ENUM_NAME_OVERRIDES"]["DNSZoneTypeChoices"] = (

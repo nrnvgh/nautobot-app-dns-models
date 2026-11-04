@@ -67,6 +67,16 @@ class DNSZoneSerializer(NautobotModelSerializer):
         fields = "__all__"
         extra_kwargs = {"dns_view": {"default": models.get_default_view}}
 
+    def get_field_names(self, declared_fields, info):
+        """Add the reverse `members` relation, which `__all__` leaves out.
+
+        A zone's change log entry is this serializer's output, so without it an enrollment is logged
+        against the catalog zone with nothing to show which member joined or left.
+        """
+        fields = list(super().get_field_names(declared_fields, info))
+        self.extend_field_names(fields, "members")
+        return fields
+
 
 class DNSRecordSerializer(NautobotModelSerializer):
     """DNSRecord Serializer."""
