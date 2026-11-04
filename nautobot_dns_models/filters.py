@@ -5,7 +5,13 @@ import uuid
 import django_filters
 from django.db.models import CharField, F, Q, Value
 from django.db.models.functions import Coalesce, Concat
-from nautobot.apps.filters import NautobotFilterSet, SearchFilter, TenancyModelFilterSetMixin
+from drf_spectacular.utils import extend_schema_field
+from nautobot.apps.filters import (
+    NautobotFilterSet,
+    RelatedMembershipBooleanFilter,
+    SearchFilter,
+    TenancyModelFilterSetMixin,
+)
 from nautobot.core.filters import MultiValueCharFilter, NaturalKeyOrPKMultipleChoiceFilter
 from netaddr import IPAddress as NetIPAddress
 
@@ -115,11 +121,53 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
             "soa_rname": "icontains",
         }
     )
+    catalog = NaturalKeyOrPKMultipleChoiceFilter(
+        field_name="catalog_memberships__catalog_zone",
+        queryset=models.DNSZone.objects.all(),
+        query_params={"type": DNSZoneTypeChoices.TYPE_CATALOG},
+        to_field_name="name",
+        label="Catalog zone (name or ID)",
+    )
+    # Used by both of CatalogZoneMembershipForm's pickers to scope one end to the other's view.
+    same_dns_view_as = extend_schema_field({"type": "string", "format": "uuid"})(
+        django_filters.ModelChoiceFilter(
+            queryset=models.DNSZone.objects.all(),
+            method="filter_same_dns_view_as",
+            label="Same DNS view as",
+        )
+    )
+    is_catalog_member = RelatedMembershipBooleanFilter(
+        field_name="catalog_memberships",
+        label="Is a catalog member",
+    )
 
     class Meta:
         """Meta attributes for filter."""
 
         model = models.DNSZone
+        fields = "__all__"
+        exclude = ["catalogs"]  # Filtered by `catalog`
+
+    def filter_same_dns_view_as(self, queryset, name, value):  # pylint: disable=unused-argument
+        """Restrict to zones that share `value`'s DNS view."""
+        return queryset.filter(dns_view_id=value.dns_view_id)
+
+
+class CatalogZoneMembershipFilterSet(NautobotFilterSet):
+    """Filter for CatalogZoneMembership."""
+
+    q = SearchFilter(
+        filter_predicates={
+            "catalog_zone__name": "icontains",
+            "member_zone__name": "icontains",
+            "member_label": "icontains",
+        }
+    )
+
+    class Meta:
+        """Meta attributes for filter."""
+
+        model = models.CatalogZoneMembership
         fields = "__all__"
 
 

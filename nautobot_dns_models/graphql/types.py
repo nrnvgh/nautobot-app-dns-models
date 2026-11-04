@@ -1,12 +1,14 @@
 """GraphQL implementation for the DNS models."""
 
 import graphene
-from nautobot.core.graphql.types import OptimizedNautobotObjectType
+import graphene_django_optimizer as gql_optimizer
+from nautobot.apps.graphql import OptimizedNautobotObjectType, permission_safe_resolver
 
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
     CNAMERecordFilterSet,
+    DNSZoneFilterSet,
     MXRecordFilterSet,
     NSRecordFilterSet,
     PTRRecordFilterSet,
@@ -18,12 +20,37 @@ from nautobot_dns_models.models import (
     ARecord,
     CNAMERecord,
     DNSRecord,
+    DNSZone,
     MXRecord,
     NSRecord,
     PTRRecord,
     SRVRecord,
     TXTRecord,
 )
+
+
+class DNSZoneType(OptimizedNautobotObjectType):
+    """Graphql Type Object for the DNSZone model."""
+
+    class Meta:
+        """Metadata for the DNSZone."""
+
+        model = DNSZone
+        filterset_class = DNSZoneFilterSet
+
+    catalog = graphene.Field("nautobot_dns_models.graphql.types.DNSZoneType")
+
+    # Without these hints, a zone list queries the membership, the catalog zone, and the deferred
+    # `type` once per zone.
+    @gql_optimizer.resolver_hints(prefetch_related="catalog_memberships__catalog_zone", only="type")
+    @permission_safe_resolver
+    def resolve_catalog(self, info):  # pylint: disable=unused-argument
+        """Return the catalog zone this zone belongs to, or null if the user may not view it.
+
+        `catalog` is a property, not a relation, so the resolvers Nautobot generates, which enforce
+        view permissions, do not cover it.
+        """
+        return self.catalog
 
 
 class DNSRecordType(OptimizedNautobotObjectType):
@@ -118,6 +145,7 @@ class SRVRecordType(DNSRecordType):
 
 
 graphql_types = [
+    DNSZoneType,
     NSRecordType,
     ARecordType,
     AAAARecordType,

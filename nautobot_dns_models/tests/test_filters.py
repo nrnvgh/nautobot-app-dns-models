@@ -1,5 +1,7 @@
 """Test DNSZone Filter."""
 
+# pylint: disable=too-many-lines
+
 from datetime import date
 
 from django.contrib.contenttypes.models import ContentType
@@ -12,6 +14,7 @@ from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
+    CatalogZoneMembershipFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -27,6 +30,7 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -301,7 +305,9 @@ class DNSRegistrationFilterTestCase(FilterTestCases.FilterTestCase):
 class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.TenancyFilterTestCaseMixin):
     """DNSZone Filter Test Case."""
 
-    queryset = DNSZone.objects.all()
+    # Ordered because `DNSZone` has no default ordering, and core's generic boolean filter test
+    # compares a result of more than one zone as an ordered list.
+    queryset = DNSZone.objects.order_by("name")
     filterset = DNSZoneFilterSet
     tenancy_related_name = "dns_zones"
 
@@ -377,6 +383,9 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
             soa_mname="ns1.catalog.example",
             soa_rname="admin.catalog.example",
         )
+        # Core's generic boolean filter test needs `is_catalog_member` to match some zones and not others.
+        cls.enrolled_zone = DNSZone.objects.get(name="Test One")
+        CatalogZoneMembership.objects.create(catalog_zone=cls.catalog_zone, member_zone=cls.enrolled_zone)
 
     def test_single_name(self):
         """Test using Q search with name of DNSZone."""
@@ -402,6 +411,28 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         self.assertEqual(self.filterset({"type": [DNSZoneTypeChoices.TYPE_CATALOG]}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"type": [DNSZoneTypeChoices.TYPE_PRIMARY]}, self.queryset).qs.count(), 3)
 
+    def test_catalog(self):
+        """`catalog` matches member zones by their catalog zone's name or ID."""
+        catalog = self.catalog_zone
+        enrolled = self.enrolled_zone
+
+        self.assertEqual(list(self.filterset({"catalog": [catalog.name]}, self.queryset).qs), [enrolled])
+        self.assertEqual(list(self.filterset({"catalog": [str(catalog.pk)]}, self.queryset).qs), [enrolled])
+
+    def test_catalog_is_the_only_catalog_filter(self):
+        """The ID-only `catalogs` filter generated from the M2M field is left out, since `catalog` covers it."""
+        filters = self.filterset().filters
+        self.assertNotIn("catalogs", filters)
+        self.assertNotIn("catalogs__n", filters)
+
+    def test_is_catalog_member(self):
+        """`is_catalog_member` returns enrolled zones when true and the others when false."""
+        self.assertEqual(list(self.filterset({"is_catalog_member": True}, self.queryset).qs), [self.enrolled_zone])
+        self.assertQuerysetEqualAndNotEmpty(
+            self.filterset({"is_catalog_member": False}, self.queryset).qs,
+            self.queryset.exclude(pk=self.enrolled_zone.pk),
+        )
+
     def test_search(self):
         """Test filtering by Q search value."""
         self.assertEqual(self.filterset({"q": "Test One"}, self.queryset).qs.count(), 1)
@@ -413,6 +444,45 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         """enabled filter should match only zones with the given enabled value."""
         self.assertEqual(self.filterset({"enabled": "true"}, self.queryset).qs.count(), 3)
         self.assertEqual(self.filterset({"enabled": "false"}, self.queryset).qs.count(), 1)
+
+
+class CatalogZoneMembershipFilterTestCase(FilterTestCases.FilterTestCase):
+    """CatalogZoneMembership Filter Test Case."""
+
+    queryset = CatalogZoneMembership.objects.all()
+    filterset = CatalogZoneMembershipFilterSet
+
+    # The generic q test writes a new value and save()s it; member_label cannot change.
+    # test_search checks q against the stored label instead.
+    exclude_q_filter_predicates = ["member_label"]
+    generic_filter_tests = [
+        ["catalog_zone"],
+        ["member_zone"],
+        ["member_label"],
+    ]
+
+    @classmethod
+    def setUpTestData(cls):
+        """Setup test data for CatalogZoneMembership Model."""
+        cls.catalog_zones = [
+            DNSZone.objects.create(name=f"catalog-{index}.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+            for index in range(3)
+        ]
+        # One per membership, since a zone may belong to only one catalog.
+        member_zones = [DNSZone.objects.create(name=f"member-{index}.example") for index in range(3)]
+
+        for index, (catalog_zone, member_zone) in enumerate(zip(cls.catalog_zones, member_zones)):
+            CatalogZoneMembership.objects.create(
+                catalog_zone=catalog_zone, member_zone=member_zone, member_label=f"label{index}"
+            )
+
+    def test_search(self):
+        """q search should match catalog zone name, member zone name, and member label."""
+        self.assertEqual(self.filterset({"q": "catalog-0.example"}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"q": "member-1.example"}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"q": "label2"}, self.queryset).qs.count(), 1)
+        self.assertEqual(self.filterset({"q": "label"}, self.queryset).qs.count(), 3)
+        self.assertEqual(self.filterset({"q": "does-not-exist"}, self.queryset).qs.count(), 0)
 
 
 class NSRecordFilterTestCase(TestCase):

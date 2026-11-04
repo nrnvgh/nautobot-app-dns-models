@@ -5,6 +5,7 @@ from nautobot.apps.api import NautobotModelViewSet
 from nautobot_dns_models.api.serializers import (
     AAAARecordSerializer,
     ARecordSerializer,
+    CatalogZoneMembershipSerializer,
     CNAMERecordSerializer,
     DNSRegistrarSerializer,
     DNSRegistrationSerializer,
@@ -20,6 +21,7 @@ from nautobot_dns_models.api.serializers import (
 from nautobot_dns_models.filters import (
     AAAARecordFilterSet,
     ARecordFilterSet,
+    CatalogZoneMembershipFilterSet,
     CNAMERecordFilterSet,
     DNSRegistrarFilterSet,
     DNSRegistrationFilterSet,
@@ -35,6 +37,7 @@ from nautobot_dns_models.filters import (
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -88,11 +91,23 @@ class DNSRegistrationViewSet(NautobotModelViewSet):
 class DNSZoneViewSet(NautobotModelViewSet):
     """DNSZone API ViewSet."""
 
-    queryset = DNSZone.objects.all()
+    queryset = DNSZone.objects.prefetch_related("catalog_memberships__catalog_zone")
     serializer_class = DNSZoneSerializer
     filterset_class = DNSZoneFilterSet
 
     lookup_field = "pk"
+
+
+class CatalogZoneMembershipViewSet(NautobotModelViewSet):
+    """CatalogZoneMembership API ViewSet."""
+
+    queryset = CatalogZoneMembership.objects.select_related("catalog_zone__dns_view", "member_zone__dns_view")
+    serializer_class = CatalogZoneMembershipSerializer
+    filterset_class = CatalogZoneMembershipFilterSet
+
+    lookup_field = "pk"
+    # Disabling PUT and PATCH as all three fields are immutable, leaving an update nothing to change.
+    http_method_names = ["get", "post", "delete", "head", "options"]
 
 
 class NSRecordViewSet(NautobotModelViewSet):

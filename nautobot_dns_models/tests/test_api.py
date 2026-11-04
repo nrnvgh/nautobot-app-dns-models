@@ -7,7 +7,7 @@ from constance.test import override_config
 from django.contrib.contenttypes.models import ContentType
 from django.test import override_settings
 from django.urls import reverse
-from nautobot.apps.testing import APIViewTestCases
+from nautobot.apps.testing import APIViewTestCases, AssertNoRepeatedQueries
 from nautobot.extras.models.statuses import Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
 from rest_framework import status
@@ -16,6 +16,7 @@ from nautobot_dns_models.choices import DNSZoneTypeChoices
 from nautobot_dns_models.models import (
     AAAARecord,
     ARecord,
+    CatalogZoneMembership,
     CNAMERecord,
     DNSRegistrar,
     DNSRegistration,
@@ -587,6 +588,241 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         self.assertEqual(response.data["type"][0], "Zone type cannot be changed after creation.")
         zone.refresh_from_db()
         self.assertEqual(zone.type, DNSZoneTypeChoices.TYPE_PRIMARY)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_get_reports_the_catalog_a_zone_is_enrolled_in(self):
+        """An enrolled zone names its catalog, and one that is not enrolled reports null."""
+        catalog_zone = _create_zone(name="api-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = _create_zone(name="api-member.example")
+        unenrolled_zone = _create_zone(name="api-unenrolled.example")
+        CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+
+        response = self.client.get(self._get_detail_url(member_zone), **self.header)
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        self.assertEqual(response.data["catalog"]["id"], catalog_zone.pk)
+
+        response = self.client.get(self._get_detail_url(unenrolled_zone), **self.header)
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        self.assertIsNone(response.data["catalog"])
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_patch_leaves_membership_alone(self):
+        """`catalog` is read-only here, so a payload naming one is ignored rather than acted on."""
+        self.add_permissions("nautobot_dns_models.change_dnszone")
+        catalog_zone = _create_zone(name="api-catalog-ro.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        other_catalog_zone = _create_zone(name="api-catalog-ro-2.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = _create_zone(name="api-member-ro.example")
+        CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+
+        response = self.client.patch(
+            self._get_detail_url(member_zone),
+            {"catalog": other_catalog_zone.pk},
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        self.assertEqual(member_zone.catalog, catalog_zone)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_patch_refuses_to_move_an_enrolled_zone_to_another_view(self):
+        """A PATCH moving an enrolled zone's `dns_view` is refused, leaving the zone where it was."""
+        self.add_permissions("nautobot_dns_models.change_dnszone")
+        catalog_zone = _create_zone(name="api-catalog-view.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        member_zone = _create_zone(name="api-member-view.example")
+        CatalogZoneMembership.objects.create(catalog_zone=catalog_zone, member_zone=member_zone)
+        other_view = DNSView.objects.create(name="API Other View")
+
+        response = self.client.patch(
+            self._get_detail_url(member_zone),
+            {"dns_view": other_view.pk},
+            format="json",
+            **self.header,
+        )
+
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["dns_view"][0],
+            "A zone that is a member of a catalog zone cannot be moved to another view.",
+        )
+        member_zone.refresh_from_db()
+        self.assertEqual(member_zone.dns_view_id, catalog_zone.dns_view_id)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_list_reads_every_membership_at_once(self):
+        """Listing zones must not go back to the database for each one's catalog."""
+        catalog_zone = _create_zone(name="api-catalog-list.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        # Above the context manager's default repetition threshold, so an unprefetched read trips it.
+        for index in range(12):
+            CatalogZoneMembership.objects.create(
+                catalog_zone=catalog_zone,
+                member_zone=_create_zone(name=f"api-member-list-{index}.example"),
+            )
+
+        with AssertNoRepeatedQueries(self):
+            response = self.client.get(self._get_list_url(), **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+
+
+class CatalogZoneMembershipAPITestCase(
+    # Not inheriting UpdateObjectViewTestCase: the viewset disables PUT and PATCH.
+    APIViewTestCases.GetObjectViewTestCase,
+    APIViewTestCases.ListObjectsViewTestCase,
+    APIViewTestCases.CreateObjectViewTestCase,
+    APIViewTestCases.DeleteObjectViewTestCase,
+    APIViewTestCases.NotesURLViewTestCase,
+):
+    """Test the Nautobot CatalogZoneMembership API."""
+
+    model = CatalogZoneMembership
+    view_namespace = "plugins-api:nautobot_dns_models"
+    brief_fields = [
+        "catalog_zone",
+        "member_zone",
+        "member_label",
+    ]
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zones = [
+            _create_zone(name=f"catalog-{index}.example", type=DNSZoneTypeChoices.TYPE_CATALOG) for index in range(2)
+        ]
+        # One per membership, since a zone may belong to only one catalog.
+        member_zones = [_create_zone(name=f"member-{index}.example") for index in range(6)]
+
+        for member_zone in member_zones[:3]:
+            CatalogZoneMembership.objects.create(catalog_zone=cls.catalog_zones[0], member_zone=member_zone)
+
+        cls.create_data = [
+            {"catalog_zone": cls.catalog_zones[1].pk, "member_zone": member_zone.pk} for member_zone in member_zones[3:]
+        ]
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_omitted_member_label_is_generated(self):
+        """The API mints a label like every other path, rather than making the caller invent one."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
+        response = self.client.post(
+            self._get_list_url(),
+            data=self.create_data[0],
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_201_CREATED)
+        self.assertRegex(response.data["member_label"], r"^[a-z2-7]{26}$")
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_csv_import_without_a_label_column_generates_labels(self):
+        """Bulk import is how a catalog is populated, and it cannot ask the operator to invent labels."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
+        entry = self.create_data[0]
+        csv_data = f"catalog_zone,member_zone\n{entry['catalog_zone']},{entry['member_zone']}\n"
+
+        response = self.client.post(self._get_list_url(), csv_data, content_type="text/csv", **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_201_CREATED)
+        self.assertRegex(response.data[0]["member_label"], r"^[a-z2-7]{26}$")
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_csv_import_with_an_empty_label_cell_generates_a_label(self):
+        """A sheet exported with the column and cleared is asking for a label, not for an empty one."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
+        entry = self.create_data[1]
+        csv_data = f"catalog_zone,member_zone,member_label\n{entry['catalog_zone']},{entry['member_zone']},\n"
+
+        response = self.client.post(self._get_list_url(), csv_data, content_type="text/csv", **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_201_CREATED)
+        self.assertRegex(response.data[0]["member_label"], r"^[a-z2-7]{26}$")
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_duplicate_member_label_rejected(self):
+        """The serializer drops DRF's uniqueness validators, leaving `full_clean()` to enforce the constraint."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
+        existing = self._get_queryset().first()
+        response = self.client.post(
+            self._get_list_url(),
+            data={
+                "catalog_zone": existing.catalog_zone.pk,
+                "member_zone": self.create_data[0]["member_zone"],
+                "member_label": existing.member_label,
+            },
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["__all__"][0],
+            "This label is already used by another member of the catalog zone.",
+        )
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_member_label_differing_only_in_case_rejected(self):
+        """REST is the only path that can supply a label, and DNS reads two cases of one as one node."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
+        existing = self._get_queryset().first()
+        response = self.client.post(
+            self._get_list_url(),
+            data={
+                "catalog_zone": existing.catalog_zone.pk,
+                "member_zone": self.create_data[0]["member_zone"],
+                "member_label": existing.member_label.upper(),
+            },
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["__all__"][0],
+            "This label is already used by another member of the catalog zone.",
+        )
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_duplicate_member_zone_rejected(self):
+        """A zone belongs to one catalog, which is the other constraint DRF is no longer checking."""
+        self.add_permissions("nautobot_dns_models.add_catalogzonemembership")
+        existing = self._get_queryset().first()
+        response = self.client.post(
+            self._get_list_url(),
+            data={"catalog_zone": self.catalog_zones[1].pk, "member_zone": existing.member_zone.pk},
+            format="json",
+            **self.header,
+        )
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["__all__"][0],
+            "This zone already belongs to a catalog zone.",
+        )
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_the_endpoint_offers_no_update(self):
+        """All three fields are immutable, so a membership is replaced rather than edited."""
+        self.add_permissions("nautobot_dns_models.change_catalogzonemembership")
+        urls = {
+            "detail": self._get_detail_url(self._get_queryset().first()),
+            "list": self._get_list_url(),
+        }
+
+        for endpoint, url in urls.items():
+            for method in (self.client.patch, self.client.put):
+                with self.subTest(endpoint=endpoint, method=method.__name__.upper()):
+                    response = method(url, data={"member_label": "rewritten"}, format="json", **self.header)
+                    self.assertHttpStatus(response, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_list_reads_every_referenced_view_at_once(self):
+        """A membership's `display` names both zones, and a zone names its view, which cannot cost a query each."""
+        catalog_zone = _create_zone(name="member-list-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        # Above the context manager's default repetition threshold, so an unselected view trips it.
+        for index in range(12):
+            CatalogZoneMembership.objects.create(
+                catalog_zone=catalog_zone,
+                member_zone=_create_zone(name=f"member-list-{index}.example"),
+            )
+
+        with AssertNoRepeatedQueries(self):
+            response = self.client.get(self._get_list_url(), **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_200_OK)
 
 
 class NSRecordAPITestCase(APIViewTestCases.APIViewTestCase):
