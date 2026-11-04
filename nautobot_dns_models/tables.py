@@ -8,6 +8,28 @@ from nautobot.tenancy.tables import TenantColumn
 
 from nautobot_dns_models import models
 
+DNSZONE_BUTTONS = """
+{% if not record.is_catalog_zone %}
+    {% with membership=record.catalog_memberships.first %}
+        {% if not membership %}
+            {% if perms.nautobot_dns_models.add_catalogzonemembership %}
+                <li>
+                    <a href="{% url 'plugins:nautobot_dns_models:catalogzonemembership_add' %}?member_zone={{ record.pk }}&return_url={{ request.path }}" class="dropdown-item text-success">
+                        <span class="mdi mdi-folder-plus-outline me-4" aria-hidden="true"></span>Add to Catalog
+                    </a>
+                </li>
+            {% endif %}
+        {% elif perms.nautobot_dns_models.delete_catalogzonemembership %}
+            <li>
+                <a href="{% url 'plugins:nautobot_dns_models:catalogzonemembership_delete' pk=membership.pk %}?return_url={{ request.path }}" class="dropdown-item text-danger">
+                    <span class="mdi mdi-folder-minus-outline me-4" aria-hidden="true"></span>Remove from Catalog
+                </a>
+            </li>
+        {% endif %}
+    {% endwith %}
+{% endif %}
+"""
+
 
 class TruncatedTextColumn(tables.Column):
     """Render a long text value truncated, with the full value available as a tooltip.
@@ -156,9 +178,15 @@ class DNSZoneTable(BaseTable):
     dns_view = tables.Column(linkify=True)
     enabled = BooleanColumn()
     auto_create_ptr = BooleanColumn()
+    catalog = tables.Column(
+        linkify=True,
+        verbose_name="Catalog Zone",
+        order_by="catalog_memberships__catalog_zone__name",
+    )
     actions = ButtonsColumn(
         models.DNSZone,
         buttons=("changelog", "edit", "delete"),
+        prepend_template=DNSZONE_BUTTONS,
     )
 
     class Meta(BaseTable.Meta):
@@ -170,6 +198,7 @@ class DNSZoneTable(BaseTable):
             "name",
             "type",
             "dns_view",
+            "catalog",
             "enabled",
             "ttl",
             "filename",
@@ -190,6 +219,7 @@ class DNSZoneTable(BaseTable):
             "name",
             "type",
             "dns_view",
+            "catalog",
             "enabled",
             "ttl",
             "filename",
@@ -197,6 +227,40 @@ class DNSZoneTable(BaseTable):
             "soa_rname",
             "actions",
         )
+
+    def render_catalog(self, value):
+        """Name the catalog alone; `DNSZone.__str__` would repeat the view the row already carries."""
+        return value.name
+
+
+class CatalogMemberZoneTable(BaseTable):  # pylint: disable=nb-sub-class-name
+    """Membership rows on a catalog zone's Member Zones panel, listed by member zone."""
+
+    member_zone = tables.Column(linkify=True, verbose_name="Member Zone")
+    ptr_record_name = tables.Column(order_by=("member_label",), verbose_name="PTR Record Name")
+    actions = ButtonsColumn(
+        models.CatalogZoneMembership,
+        buttons=("delete",),
+    )
+
+    class Meta(BaseTable.Meta):
+        """Meta attributes."""
+
+        model = models.CatalogZoneMembership
+        fields = (
+            "member_zone",
+            "ptr_record_name",
+            "actions",
+        )
+        default_columns = (
+            "member_zone",
+            "ptr_record_name",
+            "actions",
+        )
+
+    def render_member_zone(self, value):
+        """Name the zone alone; `DNSZone.__str__` would repeat the view the catalog already implies."""
+        return value.name
 
 
 class NSRecordTable(DNSRecordTable):

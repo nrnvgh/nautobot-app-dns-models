@@ -1,0 +1,55 @@
+{% extends "generic/object_create.html" %}
+{% load form_helpers %}
+
+{% block form %}
+    <div class="card">
+        <div class="card-header"><strong>DNS Zone</strong></div>
+        <div class="card-body">
+            {% render_field form.name %}
+            {% render_field form.type %}
+            {% render_field form.dns_view %}
+            {% render_field form.catalog %}
+
+            {% if editing %}
+                {# This only gets rendered if the zone is a member of a catalog #}
+                {% with membership=object.catalog_memberships.first %}
+                    {% if membership %}
+                        <div id="id_catalog_membership-help" class="row mb-10">
+                            <div class="col-md-9 offset-md-3">
+                                <div class="d-flex flex-column flex-lg-row align-items-start gap-8">
+                                    <span class="form-text mt-0">
+                                        Remove this zone from its current catalog before selecting another.
+                                    </span>
+                                    {% if perms.nautobot_dns_models.delete_catalogzonemembership %}
+                                        <a
+                                            href="{% url 'plugins:nautobot_dns_models:catalogzonemembership_delete' pk=membership.pk %}?return_url={% url 'plugins:nautobot_dns_models:dnszone' pk=object.pk %}"
+                                            class="btn btn-danger ms-lg-auto flex-shrink-0"
+                                        >
+                                            <span class="mdi mdi-folder-minus-outline"></span>
+                                            Remove from Catalog…
+                                        </a>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    {% endif %}
+                {% endwith %}
+            {% endif %}
+
+            {% render_field form.enabled %}
+            {% render_field form.auto_create_ptr %}
+            {% render_field form.ttl %}
+            {% render_field form.filename %}
+            {% render_field form.description %}
+            {% render_field form.soa_mname %}
+            {% render_field form.soa_rname %}
+            {% render_field form.soa_refresh %}
+            {% render_field form.soa_retry %}
+            {% render_field form.soa_expire %}
+            {% render_field form.soa_serial %}
+            {% render_field form.soa_minimum %}
+        </div>
+    </div>
+    {% include "inc/tenancy_form_panel.html" %}
+    {% include "inc/extras_features_edit_form_fields.html" %}
+{% endblock form %}

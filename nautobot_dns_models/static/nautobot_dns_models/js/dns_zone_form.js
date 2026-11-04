@@ -1,9 +1,9 @@
 /**
  * DNS Zone Form - disable the controls a catalog zone cannot use.
  *
- * A catalog zone cannot auto-create PTR records, and the model refuses it. On create, type is
- * still editable, so the controls must track the select. On edit, type is already disabled
- * server-side and this script exits early.
+ * A catalog zone can neither auto-create PTR records nor be a member of another catalog zone, and
+ * the model refuses both. On create, type is still editable, so the controls must track the
+ * select. On edit, type is already disabled server-side and this script exits early.
  */
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -42,6 +42,18 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (isCatalog) {
                     field.checked = false;
                 }
+            }
+        ),
+        control(
+            "id_catalog",
+            "A catalog zone cannot be a member of another catalog zone.",
+            function (field, isCatalog) {
+                // Select2 owns the rendered markup, so it redraws only on the change event.
+                $(field).prop("disabled", isCatalog);
+                if (isCatalog) {
+                    $(field).val(null);
+                }
+                $(field).trigger("change.select2");
             }
         ),
     ].filter(Boolean);
