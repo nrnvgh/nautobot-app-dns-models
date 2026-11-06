@@ -301,7 +301,9 @@ class DNSRegistrationFilterTestCase(FilterTestCases.FilterTestCase):
 class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.TenancyFilterTestCaseMixin):
     """DNSZone Filter Test Case."""
 
-    queryset = DNSZone.objects.all()
+    # Ordered because `DNSZone` has no default ordering, and core's generic boolean filter test
+    # compares a result of more than one zone as an ordered list.
+    queryset = DNSZone.objects.order_by("name")
     filterset = DNSZoneFilterSet
     tenancy_related_name = "dns_zones"
 
@@ -377,6 +379,11 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
             soa_mname="ns1.catalog.example",
             soa_rname="admin.catalog.example",
         )
+        # Core's generic boolean filter tests need `is_catalog_member` and `has_members` to match
+        # some zones and not others.
+        cls.enrolled_zone = DNSZone.objects.get(name="Test One")
+        cls.enrolled_zone.catalog_zone = cls.catalog_zone
+        cls.enrolled_zone.validated_save()
 
     def test_single_name(self):
         """Test using Q search with name of DNSZone."""
@@ -401,6 +408,23 @@ class DNSZoneFilterTestCase(FilterTestCases.FilterTestCase, FilterTestCases.Tena
         """
         self.assertEqual(self.filterset({"type": [DNSZoneTypeChoices.TYPE_CATALOG]}, self.queryset).qs.count(), 1)
         self.assertEqual(self.filterset({"type": [DNSZoneTypeChoices.TYPE_PRIMARY]}, self.queryset).qs.count(), 3)
+
+    def test_catalog_zone(self):
+        """`catalog_zone` takes the catalog's name or ID."""
+        for value in (self.catalog_zone.name, str(self.catalog_zone.pk)):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    list(self.filterset({"catalog_zone": [value]}, self.queryset).qs), [self.enrolled_zone]
+                )
+
+    def test_is_catalog_member(self):
+        """`is_catalog_member` separates members from every other zone, catalogs included."""
+        self.assertEqual(list(self.filterset({"is_catalog_member": True}, self.queryset).qs), [self.enrolled_zone])
+        self.assertNotIn(self.enrolled_zone, self.filterset({"is_catalog_member": False}, self.queryset).qs)
+
+    def test_has_members(self):
+        """`has_members` picks out the catalog zones that have members."""
+        self.assertEqual(list(self.filterset({"has_members": True}, self.queryset).qs), [self.catalog_zone])
 
     def test_search(self):
         """Test filtering by Q search value."""

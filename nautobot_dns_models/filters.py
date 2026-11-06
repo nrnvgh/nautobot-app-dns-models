@@ -5,7 +5,12 @@ import uuid
 import django_filters
 from django.db.models import CharField, F, Q, Value
 from django.db.models.functions import Coalesce, Concat
-from nautobot.apps.filters import NautobotFilterSet, SearchFilter, TenancyModelFilterSetMixin
+from nautobot.apps.filters import (
+    NautobotFilterSet,
+    RelatedMembershipBooleanFilter,
+    SearchFilter,
+    TenancyModelFilterSetMixin,
+)
 from nautobot.core.filters import MultiValueCharFilter, NaturalKeyOrPKMultipleChoiceFilter
 from netaddr import IPAddress as NetIPAddress
 
@@ -114,6 +119,20 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
             "soa_mname": "icontains",
             "soa_rname": "icontains",
         }
+    )
+    catalog_zone = NaturalKeyOrPKMultipleChoiceFilter(
+        queryset=models.DNSZone.objects.all(),
+        query_params={"type": DNSZoneTypeChoices.TYPE_CATALOG},
+        to_field_name="name",
+        label="Catalog zone (name or ID)",
+    )
+    is_catalog_member = RelatedMembershipBooleanFilter(
+        field_name="catalog_zone",
+        label="Is a catalog member",
+    )
+    has_members = RelatedMembershipBooleanFilter(
+        field_name="members",
+        label="Has members",
     )
 
     class Meta:
