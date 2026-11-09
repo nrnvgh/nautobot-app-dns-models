@@ -1593,7 +1593,7 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertTrue(PTRRecord.objects.filter(zone=self.catalog_zone, name=self.zone.ptr_record_name).exists())
 
     def test_add_another_returns_to_the_add_member_page(self):
-        """The "Add Another" button brings the user back to the add-member page for the next zone."""
+        """The "Add and Add Another" button brings the user back to the add-member page for the next zone."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.catalog_zone.pk})
         response = self.client.post(url, {"zone": str(self.zone.pk), "_addanother": ""})
@@ -1633,7 +1633,7 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
     def test_the_add_to_catalog_page_offers_a_catalog_field(self):
         """The add-to-catalog page's catalog field lists only catalog zones in the zone's view.
 
-        The page has no zone field, as the zone comes from the URL, and no "Add Another" button,
+        The page has no zone field, as the zone comes from the URL, and no "Add and Add Another" button,
         as a zone is in only one catalog.
         """
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
