@@ -431,15 +431,11 @@ class DNSZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         self.assertEqual(positions, sorted(positions))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
-    def test_member_zones_panel_hides_the_member_label_and_offers_edit(self):
-        """The Member Zones panel hides the member label and links each member's edit page.
-
-        The member label is an optional column, not a default one.
-        """
+    def test_member_zones_panel_offers_edit(self):
+        """The Member Zones panel links each member's edit page."""
         self.add_permissions("nautobot_dns_models.change_dnszone")
-        content = self._detail(self.catalog_zone)
-        self.assertNotIn(self.member_zone.member_label + "<", content)
-        self.assertIn(reverse("plugins:nautobot_dns_models:dnszone_edit", kwargs={"pk": self.member_zone.pk}), content)
+        url = reverse("plugins:nautobot_dns_models:dnszone_edit", kwargs={"pk": self.member_zone.pk})
+        self.assertIn(url, self._detail(self.catalog_zone))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_member_zones_panel_links_the_catalogs_ptr_records(self):

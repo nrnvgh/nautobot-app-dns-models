@@ -256,7 +256,6 @@ class CatalogMemberZoneTable(CatalogActionsTableMixin, BaseTable):  # pylint: di
     """Table of the member zones on a catalog zone's detail page."""
 
     name = tables.Column(linkify=True, verbose_name="Member Zone")
-    member_label = tables.Column(verbose_name="Member Label")
     ptr_record_name = tables.Column(
         accessor="ptr_record_name", order_by=("member_label",), verbose_name="PTR Record Name"
     )
@@ -266,7 +265,7 @@ class CatalogMemberZoneTable(CatalogActionsTableMixin, BaseTable):  # pylint: di
         """Meta attributes."""
 
         model = models.DNSZone
-        fields = ("name", "member_label", "ptr_record_name", "actions")
+        fields = ("name", "ptr_record_name", "actions")
         default_columns = ("name", "ptr_record_name", "actions")
 
 
