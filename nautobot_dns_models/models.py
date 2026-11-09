@@ -548,7 +548,7 @@ class DNSZone(DNSModel):
         max_length=50,
         choices=DNSZoneTypeChoices,
         default=DNSZoneTypeChoices.TYPE_PRIMARY,
-        help_text="Type of the Zone, determining which records it may contain. Cannot be changed after creation.",
+        help_text="Type of the zone. Cannot be changed after creation.",
     )
     dns_view = ForeignKeyWithAutoRelatedName(
         DNSView,

@@ -4,7 +4,7 @@ from nautobot.apps.choices import ChoiceSet
 
 
 class DNSZoneTypeChoices(ChoiceSet):
-    """Type of a DNS Zone, determining which records it may contain."""
+    """Type of a DNS zone."""
 
     TYPE_PRIMARY = "primary"
     TYPE_CATALOG = "catalog"
