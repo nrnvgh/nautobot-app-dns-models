@@ -2,6 +2,9 @@
 
 # pylint: disable=too-many-lines
 from django import forms
+from django.db import transaction
+from django.db.models import ProtectedError, RestrictedError
+from django.db.models.deletion import Collector
 from nautobot.apps.forms import (
     BootstrapMixin,
     BulkEditNullBooleanSelect,
@@ -285,9 +288,9 @@ class DNSZoneForm(NautobotModelForm, TenancyForm):
     catalog_zone = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.filter(type=DNSZoneTypeChoices.TYPE_CATALOG),
         required=False,
-        query_params={"type": DNSZoneTypeChoices.TYPE_CATALOG, "dns_view": "$dns_view"},
+        query_params={"type": DNSZoneTypeChoices.TYPE_CATALOG, "dns_view": "$dns_view", "can_change": "True"},
         label="Catalog Zone",
-        help_text="The RFC 9432 catalog zone this zone is a member of.",
+        help_text="The catalog zone this zone is a member of.",
     )
 
     field_order = ["name", "type", "dns_view", "catalog_zone", "enabled", "auto_create_ptr"]
@@ -304,9 +307,20 @@ class DNSZoneForm(NautobotModelForm, TenancyForm):
 
         js = ("nautobot_dns_models/js/dns_zone_form.js",)
 
-    def __init__(self, *args, **kwargs):
-        """Configure fields according to the stored zone state."""
+    def __init__(self, *args, user=None, **kwargs):
+        """Configure fields according to the stored zone state and, given `user`, the catalogs they may change."""
         super().__init__(*args, **kwargs)
+
+        if user is not None:
+            catalog_zone = self.fields["catalog_zone"]
+            changeable = models.DNSZone.objects.restrict(user, "change").filter(type=DNSZoneTypeChoices.TYPE_CATALOG)
+            current_catalog_id = self.instance.catalog_zone_id
+            if current_catalog_id is None or changeable.filter(pk=current_catalog_id).exists():
+                catalog_zone.queryset = changeable
+            else:
+                # The queryset stays whole, since a disabled field still validates its stored value.
+                catalog_zone.disabled = True
+                catalog_zone.help_text = "Changing this zone's catalog requires permission to change its catalog zone."
 
         # New zones keep their create-time controls editable.
         if not self.instance.present_in_database:
@@ -393,7 +407,7 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
     catalog_zone = DynamicModelChoiceField(
         queryset=models.DNSZone.objects.filter(type=DNSZoneTypeChoices.TYPE_CATALOG),
         required=False,
-        query_params={"type": DNSZoneTypeChoices.TYPE_CATALOG},
+        query_params={"type": DNSZoneTypeChoices.TYPE_CATALOG, "can_change": "True"},
         label="Catalog Zone",
     )
     enabled = forms.NullBooleanField(required=False, widget=BulkEditNullBooleanSelect)
@@ -438,7 +452,7 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
             self.nullable_fields = [name for name in self.nullable_fields if name != "catalog_zone"]
             return
 
-        # A catalog holds zones from its own view only, so only a selection within one view can join one.
+        # A catalog holds zones from its own view only, so only a selection within one view can be added to one.
         view_ids = list(selection.order_by().values_list("dns_view_id", flat=True).distinct()[:2])
         if len(view_ids) > 1:
             catalog_zone.disabled = True
@@ -461,7 +475,7 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
 
         nulling = "catalog_zone" in self.nullable_fields and "catalog_zone" in self._nullified_fields()
         if self.user is not None and (catalog_zone is not None or nulling):
-            self._validate_catalogs_left(catalog_zone)
+            self._validate_catalogs_removed_from(catalog_zone)
 
         return cleaned_data
 
@@ -482,18 +496,18 @@ class DNSZoneBulkEditForm(TagsBulkEditFormMixin, NautobotBulkEditForm):
         if outside:
             self.add_error("catalog_zone", "The selected zones must be in the same view as the catalog zone.")
 
-    def _validate_catalogs_left(self, catalog_zone):
-        """Refuse when the user may not change a catalog zone that some of the selected zones would leave."""
-        leaving = self.selection.filter(catalog_zone__isnull=False)
+    def _validate_catalogs_removed_from(self, catalog_zone):
+        """Refuse when the user may not change a catalog zone that some of the selected zones would be removed from."""
+        removed = self.selection.filter(catalog_zone__isnull=False)
         if catalog_zone is not None:
-            leaving = leaving.exclude(catalog_zone=catalog_zone)
+            removed = removed.exclude(catalog_zone=catalog_zone)
 
-        left_ids = set(leaving.order_by().values_list("catalog_zone_id", flat=True).distinct())
-        if not left_ids:
+        removed_from_ids = set(removed.order_by().values_list("catalog_zone_id", flat=True).distinct())
+        if not removed_from_ids:
             return
 
-        changeable = models.DNSZone.objects.restrict(self.user, "change").filter(pk__in=left_ids).count()
-        if changeable != len(left_ids):
+        changeable = models.DNSZone.objects.restrict(self.user, "change").filter(pk__in=removed_from_ids).count()
+        if changeable != len(removed_from_ids):
             # Not named, since the user may not be allowed to view them either.
             self.add_error(
                 "catalog_zone",
@@ -512,8 +526,21 @@ class DNSZoneBulkDeleteForm(ConfirmationForm):
         )
 
     def perform_pre_delete(self, queryset):
-        """Clear the zones' member PTR records and system-managed records, which would otherwise refuse the delete."""
-        models.prepare_zones_for_bulk_delete(queryset)
+        """Withdraw member PTR records and clear system-managed records of the zones, unless something else protects them.
+
+        Core's bulk delete collects the zones before it deletes them, so their system-managed records,
+        which `DNSRecord.zone` protects, would refuse it. This runs before that delete, outside its
+        transaction, so if anything else would refuse the delete (e.g. a catalog zone's members, or a
+        member whose catalog zone the user may not change), the records are kept.
+        """
+        try:
+            with transaction.atomic():
+                models.refuse_member_deletes_without_catalog_permission(queryset.values("pk"))
+                models.withdraw_member_ptr_records(queryset.values("pk"))
+                models.purge_system_managed_records(queryset)
+                Collector(using=queryset.db).collect(list(queryset))
+        except (ProtectedError, RestrictedError):
+            pass
 
 
 class CatalogMembershipForm(BootstrapMixin, forms.Form):
@@ -546,6 +573,7 @@ class CatalogMembershipForm(BootstrapMixin, forms.Form):
             self.fields["zone"].widget.add_query_param("dns_view", catalog_zone.dns_view_id)
             self.fields["zone"].widget.add_query_param("is_catalog_member", "False")
             self.fields["zone"].widget.add_query_param("type__n", DNSZoneTypeChoices.TYPE_CATALOG)
+            self.fields["zone"].widget.add_query_param("can_change", "True")
         else:
             del self.fields["zone"]
             self.fields["catalog_zone"].queryset = models.DNSZone.objects.restrict(user, "change").filter(
@@ -553,6 +581,7 @@ class CatalogMembershipForm(BootstrapMixin, forms.Form):
             )
             self.fields["catalog_zone"].widget.add_query_param("dns_view", zone.dns_view_id)
             self.fields["catalog_zone"].widget.add_query_param("type", DNSZoneTypeChoices.TYPE_CATALOG)
+            self.fields["catalog_zone"].widget.add_query_param("can_change", "True")
 
     def clean_zone(self):
         """Refuse a zone already in a catalog, which this form would otherwise move."""

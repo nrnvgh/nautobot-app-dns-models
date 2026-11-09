@@ -48,6 +48,7 @@ class DNSZoneTestCase(GraphQLQueryMixin, TestCase):
         cls.solo_zone = create_zone("solo.example")
 
     def test_catalog_zone_names_the_catalog_a_zone_belongs_to(self):
+        """GraphQL returns a member zone's catalog zone and member label."""
         self.add_permissions("nautobot_dns_models.view_dnszone")
 
         zones = self.run_query(self.ZONES_QUERY, name=["member.example"])["dns_zones"]
@@ -56,6 +57,7 @@ class DNSZoneTestCase(GraphQLQueryMixin, TestCase):
         self.assertEqual(zones[0]["member_label"], self.member_zone.member_label)
 
     def test_catalog_zone_is_null_for_a_zone_in_no_catalog(self):
+        """GraphQL returns a null catalog zone for a zone in no catalog."""
         self.add_permissions("nautobot_dns_models.view_dnszone")
 
         zones = self.run_query(self.ZONES_QUERY, name=["solo.example"])["dns_zones"]

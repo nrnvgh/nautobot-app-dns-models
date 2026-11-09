@@ -134,12 +134,25 @@ class DNSZoneFilterSet(TenancyModelFilterSetMixin, NautobotFilterSet):
         field_name="members",
         label="Has members",
     )
+    can_change = django_filters.BooleanFilter(method="_can_change", label="User can change this zone")
 
     class Meta:
         """Meta attributes for filter."""
 
         model = models.DNSZone
         fields = "__all__"
+
+    def _can_change(self, queryset, name, value):  # pylint: disable=unused-argument
+        """Keep the zones the requesting user may change, or with `False` those they may not."""
+        user = getattr(self.request, "user", None)
+        if user is None:
+            return queryset.none() if value else queryset
+
+        changeable = queryset.restrict(user, "change")
+        if value:
+            return changeable
+
+        return queryset.exclude(pk__in=changeable.values("pk"))
 
 
 # pylint: disable=nb-no-model-found, nb-warn-dunder-filter-field

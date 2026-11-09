@@ -12,7 +12,7 @@ from django.contrib.messages import get_messages
 from django.test import override_settings
 from django.urls import reverse
 from nautobot.apps.testing import AssertNoRepeatedQueries, TestCase, ViewTestCases, create_job_result_and_run_job
-from nautobot.core.testing.utils import extract_page_body
+from nautobot.core.testing.utils import extract_page_body, get_deletable_objects
 from nautobot.extras.choices import JobResultStatusChoices, ObjectChangeActionChoices
 from nautobot.extras.models import ObjectChange, Status
 from nautobot.ipam.models import IPAddress, Namespace, Prefix
@@ -217,6 +217,10 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
             "enabled": True,
         }
 
+        # The generic edit tests edit whichever zone sorts first, which may be the catalog zone,
+        # and a zone's type cannot change after creation.
+        cls.update_data = {key: value for key, value in cls.form_data.items() if key != "type"}
+
         cls.csv_data = (
             "name, dns_view, ttl, description, filename, soa_mname, soa_rname, soa_refresh, soa_retry, soa_expire, soa_serial, soa_minimum",
             f"Test 3, {dns_view.id}, 3600, Description 3, filename 3, auth-server, admin@example_three.com, 86400, 7200, 3600000, 0, 172800",
@@ -235,6 +239,13 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         cls.primary_zone_record.validated_save()
         cls.member_zone = create_zone("member.example", catalog_zone=cls.catalog_zone)
 
+    def get_deletable_object(self):
+        """Return a deletable zone in no catalog, since deleting a member also needs change permission on its catalog."""
+        instance = get_deletable_objects(self.model, self._get_queryset().filter(catalog_zone__isnull=True)).first()
+        if instance is None:
+            self.fail("Couldn't find a single deletable object!")
+        return instance
+
     def _detail(self, zone):
         """Return the rendered body of `zone`'s detail page."""
         response = self.client.get(zone.get_absolute_url())
@@ -250,7 +261,11 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         return {label.upper() for label in re.findall(r"<strong>([^<]*)</strong>", self._detail(zone))}
 
     def test_custom_actions(self):
-        """Run core's check on each action against a zone that has the page: a catalog, a non-member, a member."""
+        """Each catalog action passes core's custom-action check on a zone that offers it.
+
+        `add_member` runs against a catalog zone, `add_to_catalog` against a zone in no catalog, and
+        `remove_from_catalog` against a member.
+        """
         catalog_zone = create_zone("custom-actions-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         create_zone("custom-actions-member.example", catalog_zone=catalog_zone)
         cases = (
@@ -269,7 +284,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
                 super().test_custom_actions()
 
     def test_list_names_each_zone_catalog_without_per_zone_queries(self):
-        """The catalog column reads the catalog from the view's join, not once per row."""
+        """The zone list names each zone's catalog without a query per row."""
         catalog = DNSZone.objects.create(name="catalog-list.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         for index in range(12):
             DNSZone.objects.create(name=f"member-list-{index}.example", catalog_zone=catalog)
@@ -290,6 +305,14 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         self.assertLessEqual(self.RECORD_PANELS, self._panel_headings(self.primary_zone))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_primary_zone_lists_each_record_panel_once(self):
+        """An ordinary zone's detail page lists each record panel once, with no system-managed copy."""
+        headings = [label.upper() for label in re.findall(r"<strong>([^<]*)</strong>", self._detail(self.primary_zone))]
+        self.assertEqual(
+            {heading: headings.count(heading) for heading in self.RECORD_PANELS}, dict.fromkeys(self.RECORD_PANELS, 1)
+        )
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_catalog_zone_keeps_only_the_record_panels_it_has_records_for(self):
         """A catalog zone lists only the NS and TXT panels, the record types it holds."""
         self.assertEqual(self.RECORD_PANELS & self._panel_headings(self.catalog_zone), {"NS RECORDS", "TXT RECORDS"})
@@ -308,7 +331,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_catalog_zone_offers_no_write_controls_for_the_version_record(self):
-        """With `change_txtrecord`, the version TXT still renders no edit link."""
+        """A catalog zone's version TXT record has no edit link, even with `change_txtrecord`."""
         self.add_permissions("nautobot_dns_models.change_txtrecord")
         record = TXTRecord.objects.get(zone=self.catalog_zone)
         url = reverse("plugins:nautobot_dns_models:txtrecord_edit", args=(record.pk,))
@@ -316,7 +339,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_catalog_zone_offers_no_write_controls_for_the_apex_ns_record(self):
-        """With `change_nsrecord`, the apex NS still renders no edit link."""
+        """A catalog zone's apex NS record has no edit link, even with `change_nsrecord`."""
         self.add_permissions("nautobot_dns_models.change_nsrecord")
         record = NSRecord.objects.get(zone=self.catalog_zone)
         url = reverse("plugins:nautobot_dns_models:nsrecord_edit", args=(record.pk,))
@@ -324,34 +347,34 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_primary_zone_keeps_write_controls_for_its_records(self):
-        """With `change_txtrecord`, an ordinary zone's TXT record still renders its edit link."""
+        """A primary zone's TXT record has an edit link with `change_txtrecord`."""
         self.add_permissions("nautobot_dns_models.change_txtrecord")
         url = reverse("plugins:nautobot_dns_models:txtrecord_edit", args=(self.primary_zone_record.pk,))
         self.assertIn(url, self._detail(self.primary_zone))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_catalog_zone_offers_no_add_button_for_records(self):
-        """With `add_txtrecord`, a catalog zone's TXT panel renders no Add button."""
+        """A catalog zone's TXT panel has no Add button, even with `add_txtrecord`."""
         self.add_permissions("nautobot_dns_models.add_txtrecord")
         url = reverse("plugins:nautobot_dns_models:txtrecord_add")
         self.assertNotIn(url, self._detail(self.catalog_zone))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_primary_zone_keeps_the_add_button_on_its_record_panels(self):
-        """With `add_txtrecord`, an ordinary zone's TXT panel still renders its Add button."""
+        """A primary zone's TXT panel has an Add button with `add_txtrecord`."""
         self.add_permissions("nautobot_dns_models.add_txtrecord")
         url = reverse("plugins:nautobot_dns_models:txtrecord_add")
         self.assertIn(url, self._detail(self.primary_zone))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_catalog_zone_hides_the_add_records_menu(self):
-        """With `add_arecord`, a catalog zone renders no Add Records dropdown."""
+        """A catalog zone has no Add Records menu, even with `add_arecord`."""
         self.add_permissions("nautobot_dns_models.change_dnszone", "nautobot_dns_models.add_arecord")
         self.assertNotIn("Add Records", self._detail(self.catalog_zone))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_primary_zone_keeps_the_add_records_menu(self):
-        """With `add_arecord`, an ordinary zone still renders the Add Records dropdown."""
+        """A primary zone has the Add Records menu with `add_arecord`."""
         self.add_permissions("nautobot_dns_models.change_dnszone", "nautobot_dns_models.add_arecord")
         self.assertIn("Add Records", self._detail(self.primary_zone))
 
@@ -367,12 +390,12 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_primary_zone_keeps_the_registration_panel(self):
-        """An ordinary zone still renders the Registration panel."""
+        """A primary zone has a Registration panel."""
         self.assertIn("REGISTRATION", self._panel_headings(self.primary_zone))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_primary_zone_keeps_record_statistics(self):
-        """An ordinary zone still renders the Records Statistics panel."""
+        """A primary zone has a Records Statistics panel."""
         self.assertIn("RECORDS STATISTICS", self._panel_headings(self.primary_zone))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
@@ -385,7 +408,7 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_member_zones_panel_lists_members_by_name(self):
-        """The Member Zones panel lists members in name order, not the order they joined."""
+        """The Member Zones panel lists members in name order, not the order they were added."""
         members = [create_zone(name, catalog_zone=self.catalog_zone) for name in ("c.example", "b.example")]
         members.append(self.member_zone)
         content = self._detail(self.catalog_zone)
@@ -394,7 +417,10 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_member_zones_panel_hides_the_member_label_and_offers_edit(self):
-        """The member label is a column, but not a default one; each row links to the member's edit page."""
+        """The Member Zones panel hides the member label and links each member's edit page.
+
+        The member label is an optional column, not a default one.
+        """
         self.add_permissions("nautobot_dns_models.change_dnszone")
         content = self._detail(self.catalog_zone)
         self.assertNotIn(self.member_zone.member_label + "<", content)
@@ -963,6 +989,82 @@ class SRVRecordViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         cls.bulk_edit_data = {"description": "Bulk edit views", "enabled": False}
 
 
+class DNSZoneEditViewTest(TestCase):
+    """Tests for the catalog field of the zone add and edit pages, for a user who may change only some catalogs."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.catalog_zone = create_zone("edit-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.other_catalog = create_zone("edit-other-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
+        cls.member_zone = create_zone("edit-member.example", catalog_zone=cls.other_catalog)
+
+    def setUp(self):
+        """Grant the view permission the form's view field needs to accept the zone's view."""
+        super().setUp()
+        self.add_permissions("nautobot_dns_models.view_dnsview")
+
+    def _zone_data(self, zone, **overrides):
+        """Return an edit form payload for `zone` as stored, with any supplied overrides applied."""
+        data = {
+            "name": zone.name,
+            "type": zone.type,
+            "dns_view": str(zone.dns_view_id),
+            "ttl": zone.ttl,
+            "filename": zone.filename,
+            "soa_mname": zone.soa_mname,
+            "soa_rname": zone.soa_rname,
+            "soa_refresh": zone.soa_refresh,
+            "soa_retry": zone.soa_retry,
+            "soa_expire": zone.soa_expire,
+            "soa_serial": zone.soa_serial,
+            "soa_minimum": zone.soa_minimum,
+            "catalog_zone": str(zone.catalog_zone_id or ""),
+            "enabled": "on",
+        }
+        data.update(overrides)
+        return data
+
+    def test_the_add_page_refuses_a_catalog_the_user_cannot_change(self):
+        """Adding a zone to a catalog the user may not change is refused on the catalog field."""
+        permit_zone_change(self.user, self.catalog_zone)
+        self.add_permissions("nautobot_dns_models.add_dnszone")
+        new_zone = DNSZone(
+            name="edit-new.example",
+            filename="edit-new.example.zone",
+            soa_mname="ns1.edit-new.example.",
+            soa_rname="admin@edit-new.example",
+        )
+        response = self.client.post(
+            reverse("plugins:nautobot_dns_models:dnszone_add"),
+            self._zone_data(new_zone, catalog_zone=str(self.other_catalog.pk)),
+        )
+
+        self.assertHttpStatus(response, 200)
+        self.assertFalse(DNSZone.objects.filter(name=new_zone.name).exists())
+        errors = response.context["form"].errors
+        self.assertEqual(list(errors), ["catalog_zone"])
+        # The field's own refusal, rather than the model's, which would follow if the field offered the catalog.
+        self.assertIn("Select a valid choice", errors["catalog_zone"][0])
+
+    def test_a_member_of_a_catalog_the_user_cannot_change_keeps_it_through_an_edit(self):
+        """The edit page disables the catalog field, so other edits save and the zone keeps its catalog."""
+        permit_zone_change(self.user, self.member_zone)
+        url = reverse("plugins:nautobot_dns_models:dnszone_edit", kwargs={"pk": self.member_zone.pk})
+
+        response = self.client.get(url)
+        self.assertHttpStatus(response, 200)
+        self.assertIn(
+            "Changing this zone's catalog requires permission to change its catalog zone.",
+            extract_page_body(response.content.decode(response.charset)),
+        )
+
+        response = self.client.post(url, self._zone_data(self.member_zone, description="Edited", catalog_zone=""))
+        self.assertRedirects(response, self.member_zone.get_absolute_url(), fetch_redirect_response=False)
+        self.member_zone.refresh_from_db()
+        self.assertEqual(self.member_zone.description, "Edited")
+        self.assertEqual(self.member_zone.catalog_zone, self.other_catalog)
+
+
 # Job logs otherwise go through their own connection, which cannot be used inside a `TestCase` transaction.
 @patch("nautobot.extras.models.jobs.JOB_LOGS", None)
 class DNSZoneBulkEditViewTest(TestCase):
@@ -1021,23 +1123,31 @@ class DNSZoneBulkEditViewTest(TestCase):
         self.assertIn('name="auto_create_ptr"', content)
         self.assertNotIn(self.WITHDRAWN, content)
 
+    def test_the_catalog_field_asks_for_catalogs_the_user_can_change(self):
+        """The catalog field asks for catalog zones the user may change."""
+        content = self._bulk_edit_form(pk_list=[zone.pk for zone in self.zones])
+        self.assertIn('data-query-param-can_change="[&quot;True&quot;]"', content)
+
     def test_a_selection_holding_a_catalog_zone_withdraws_the_control(self):
-        """One catalog zone among primary zones withdraws the control for the whole selection."""
+        """A catalog zone in the selection withdraws the `auto_create_ptr` control."""
         content = self._bulk_edit_form(pk_list=[self.zones[0].pk, self.catalog_zone.pk])
         self.assertIn(self.WITHDRAWN, content)
 
     def test_select_all_withdraws_the_control_when_it_includes_a_catalog_zone(self):
-        """An unfiltered "select all" withdraws the control, resolving to every zone including the catalog zone."""
+        """'Select All' withdraws `auto_create_ptr` when it includes a catalog zone.
+
+        Unfiltered, it resolves to every zone, the catalog zone among them.
+        """
         self.assertIn(self.WITHDRAWN, self._bulk_edit_form(edit_all=True))
 
     def test_select_all_keeps_the_control_when_filtered_to_primary_zones(self):
-        """With `?type=primary`, "select all" resolves to primary zones alone and keeps the control."""
+        """'Select All' keeps `auto_create_ptr` when filtered to primary zones."""
         content = self._bulk_edit_form(edit_all=True, query=f"?type={DNSZoneTypeChoices.TYPE_PRIMARY}")
         self.assertIn('name="auto_create_ptr"', content)
         self.assertNotIn(self.WITHDRAWN, content)
 
-    def test_the_page_refuses_a_catalog_some_of_the_selection_cannot_join(self):
-        """The bulk edit page names the view mismatch rather than queueing a job that would fail."""
+    def test_the_page_refuses_a_catalog_some_of_the_selection_cannot_be_added_to(self):
+        """Bulk edit refuses a catalog outside the selection's new view before queueing a job."""
         self.add_permissions("nautobot_dns_models.view_dnsview")
         content = self._bulk_edit_form(
             pk_list=[zone.pk for zone in self.zones],
@@ -1048,16 +1158,22 @@ class DNSZoneBulkEditViewTest(TestCase):
         self.assertIn("The selected zones must be in the same view as the catalog zone.", content)
 
     def test_a_selection_of_member_candidates_offers_set_null_for_the_catalog(self):
-        """A selection that could join a catalog can also be taken out of one."""
+        """A selection of primary zones offers set-null for the catalog."""
         content = self._bulk_edit_form(pk_list=[zone.pk for zone in self.zones])
         self.assertIn(self.NULLIFY_CATALOG_ZONE, content)
 
     def test_a_selection_holding_a_catalog_zone_offers_no_set_null_for_the_catalog(self):
+        """A selection that includes a catalog zone offers no set-null for the catalog.
+
+        A catalog zone cannot be a member of a catalog, so the catalog field is shown disabled and
+        its set-null option is removed.
+        """
         content = self._bulk_edit_form(pk_list=[self.zones[0].pk, self.catalog_zone.pk])
         self.assertIn('name="catalog_zone"', content)
         self.assertNotIn(self.NULLIFY_CATALOG_ZONE, content)
 
-    def test_joining_gives_each_zone_its_own_label_and_ptr_record(self):
+    def test_adding_gives_each_zone_its_own_label_and_ptr_record(self):
+        """Adding zones to a catalog in bulk gives each its own label and PTR record."""
         job_result = self._run(self.zones, catalog_zone=str(self.catalog_zone.pk))
 
         self.assertEqual(job_result.status, JobResultStatusChoices.STATUS_SUCCESS)
@@ -1067,12 +1183,15 @@ class DNSZoneBulkEditViewTest(TestCase):
             self.assertEqual(zone.catalog_zone, self.catalog_zone)
             labels.add(zone.member_label)
             self.assertTrue(PTRRecord.objects.filter(zone=self.catalog_zone, name=zone.ptr_record_name).exists())
+
         self.assertEqual(len(labels), len(self.zones))
 
     def test_nulling_the_catalog_withdraws_each_zone(self):
+        """Nulling the catalog in bulk withdraws each zone's PTR record and logs each delete."""
         for zone in self.zones:
             zone.catalog_zone = self.catalog_zone
             zone.validated_save()
+
         ptr_record_pks = set(
             PTRRecord.objects.filter(zone=self.catalog_zone, name__endswith=".zones").values_list("pk", flat=True)
         )
@@ -1084,23 +1203,26 @@ class DNSZoneBulkEditViewTest(TestCase):
             zone.refresh_from_db()
             self.assertIsNone(zone.catalog_zone)
             self.assertEqual(zone.member_label, "")
+
         self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone, name__endswith=".zones").exists())
         # Each withdrawn record is logged against its own id, though the job logs them only once it ends.
         logged_pks = ObjectChange.objects.filter(
             changed_object_type=ContentType.objects.get_for_model(PTRRecord),
             action=ObjectChangeActionChoices.ACTION_DELETE,
         ).values_list("changed_object_id", flat=True)
+
         self.assertEqual(set(logged_pks), ptr_record_pks)
 
-    def test_one_zone_in_another_view_takes_the_whole_batch_back(self):
+    def test_one_zone_in_a_different_view_fails_the_whole_batch(self):
+        """One zone in a different view fails the bulk add, and no zone is added."""
         job_result = self._run([*self.zones, self.other_view_zone], catalog_zone=str(self.catalog_zone.pk))
 
         self.assertEqual(job_result.status, JobResultStatusChoices.STATUS_FAILURE)
         self.assertFalse(DNSZone.objects.filter(catalog_zone=self.catalog_zone).exists())
         self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone, name__endswith=".zones").exists())
 
-    def test_joining_needs_change_permission_on_the_catalog(self):
-        """A user who may change the zones but not the catalog is refused, and nothing joins."""
+    def test_adding_needs_change_permission_on_the_catalog(self):
+        """A bulk add without change permission on the catalog is refused, and no zone is added."""
         user = User.objects.create_user(username="bulk-catalog-user")
         permit_zone_change(user, *self.zones)
 
@@ -1109,7 +1231,8 @@ class DNSZoneBulkEditViewTest(TestCase):
         self.assertEqual(job_result.status, JobResultStatusChoices.STATUS_FAILURE)
         self.assertFalse(DNSZone.objects.filter(catalog_zone=self.catalog_zone).exists())
 
-    def test_joining_succeeds_with_change_permission_on_the_catalog(self):
+    def test_adding_succeeds_with_change_permission_on_the_catalog(self):
+        """A bulk add succeeds with change permission on the zones and the catalog."""
         user = User.objects.create_user(username="bulk-catalog-user")
         permit_zone_change(user, *self.zones, self.catalog_zone)
 
@@ -1129,8 +1252,8 @@ class DNSZoneBulkDeleteViewTest(TestCase):
         cls.catalog_zone = create_zone("delete-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
         cls.zones = [create_zone(f"delete-member-{index}.example", catalog_zone=cls.catalog_zone) for index in range(2)]
 
-    def _run(self, zones):
-        """Run the bulk delete job against `zones`, returning its result."""
+    def _run(self, zones, username="test-user"):
+        """Run the bulk delete job against `zones` as `username`, returning its result."""
         return create_job_result_and_run_job(
             "nautobot.core.jobs.bulk_actions",
             "BulkDeleteObjects",
@@ -1138,10 +1261,20 @@ class DNSZoneBulkDeleteViewTest(TestCase):
             delete_all=False,
             filter_query_params={},
             pk_list=[str(zone.pk) for zone in zones],
-            username="test-user",
+            username=username,
         )
 
+    def _user_permitted_to_delete(self, *catalog_zones):
+        """Return a user who may view and delete every zone, and change only `catalog_zones`."""
+        user = User.objects.create_user(username="bulk-delete-user")
+        permit_zone_change(user, *catalog_zones)
+        delete_permission = ObjectPermission.objects.create(name="delete zones", actions=["delete"])
+        delete_permission.object_types.set([ContentType.objects.get_for_model(DNSZone)])
+        delete_permission.users.add(user)
+        return user
+
     def test_deleting_members_withdraws_and_logs_their_ptr_records(self):
+        """Bulk deleting members withdraws their PTR records and logs each delete."""
         ptr_record_pks = set(
             PTRRecord.objects.filter(zone=self.catalog_zone, name__endswith=".zones").values_list("pk", flat=True)
         )
@@ -1161,7 +1294,33 @@ class DNSZoneBulkDeleteViewTest(TestCase):
         )
         self.assertEqual(set(logged_ptr_pks), ptr_record_pks)
 
+    def test_deleting_members_needs_change_permission_on_the_catalog(self):
+        """A bulk delete of members without change permission on their catalog is refused.
+
+        No member is deleted and no PTR record is withdrawn, so the catalog still lists every member.
+        """
+        user = self._user_permitted_to_delete()
+        ptr_record_pks = set(PTRRecord.objects.filter(zone=self.catalog_zone).values_list("pk", flat=True))
+
+        job_result = self._run(self.zones, username=user.username)
+
+        self.assertEqual(job_result.status, JobResultStatusChoices.STATUS_FAILURE)
+        self.assertEqual(DNSZone.objects.filter(pk__in=[zone.pk for zone in self.zones]).count(), len(self.zones))
+        self.assertEqual(
+            set(PTRRecord.objects.filter(zone=self.catalog_zone).values_list("pk", flat=True)), ptr_record_pks
+        )
+
+    def test_deleting_members_succeeds_with_change_permission_on_the_catalog(self):
+        """A bulk delete of members succeeds with change permission on their catalog."""
+        user = self._user_permitted_to_delete(self.catalog_zone)
+
+        job_result = self._run(self.zones, username=user.username)
+
+        self.assertEqual(job_result.status, JobResultStatusChoices.STATUS_SUCCESS)
+        self.assertFalse(DNSZone.objects.filter(pk__in=[zone.pk for zone in self.zones]).exists())
+
     def test_an_empty_catalog_zone_is_deleted_with_its_records(self):
+        """Bulk deleting an empty catalog zone deletes its NS and TXT records with it."""
         empty_catalog_zone = create_zone("empty-catalog.example", type=DNSZoneTypeChoices.TYPE_CATALOG)
 
         job_result = self._run([empty_catalog_zone])
@@ -1172,13 +1331,18 @@ class DNSZoneBulkDeleteViewTest(TestCase):
             self.assertFalse(record_model.objects.filter(zone_id=empty_catalog_zone.pk).exists())
 
     def test_a_catalog_with_members_is_refused(self):
+        """Bulk deleting a catalog zone that has members is refused."""
         job_result = self._run([self.catalog_zone])
 
         self.assertEqual(job_result.status, JobResultStatusChoices.STATUS_FAILURE)
         self.assertTrue(DNSZone.objects.filter(pk=self.catalog_zone.pk).exists())
 
     def test_a_refused_delete_keeps_every_record(self):
-        """A member deleted alongside a catalog that keeps another member stays published, and the catalog keeps its records."""
+        """A refused bulk delete leaves the member and the catalog's records in place.
+
+        The selection is one member and its catalog. The catalog still has members, so the delete
+        is refused, and the member, which could have been deleted on its own, keeps its PTR record.
+        """
         records = {
             record_model: set(record_model.objects.filter(zone=self.catalog_zone).values_list("pk", flat=True))
             for record_model in (NSRecord, TXTRecord, PTRRecord)
@@ -1192,7 +1356,10 @@ class DNSZoneBulkDeleteViewTest(TestCase):
             self.assertEqual(set(record_model.objects.filter(zone=self.catalog_zone).values_list("pk", flat=True)), pks)
 
     def test_a_catalog_selected_with_all_its_members_is_refused(self):
-        """Django's Collector refuses a protected reference even from a zone deleted alongside."""
+        """A catalog deleted together with all its members is still refused.
+
+        Django's Collector refuses a protected reference even from a zone deleted in the same batch.
+        """
         job_result = self._run([self.catalog_zone, *self.zones])
 
         self.assertEqual(job_result.status, JobResultStatusChoices.STATUS_FAILURE)
@@ -1203,7 +1370,7 @@ class DNSZoneBulkDeleteViewTest(TestCase):
 
 
 class DNSZoneCatalogMembershipViewTest(TestCase):
-    """Tests for joining and leaving a catalog zone through the UI.
+    """Tests for adding zones to a catalog zone and removing them through the UI.
 
     Covers the `add_member`, `add_to_catalog` and `remove_from_catalog` actions, and the links to them on the
     catalog zone's Member Zones panel and in the zone list.
@@ -1252,7 +1419,7 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         return extract_page_body(response.content.decode(response.charset))
 
     def test_the_panel_offers_add_with_change_permission(self):
-        """A user who may change every zone sees Add Member Zone on the catalog's Member Zones panel."""
+        """A user who may change every zone is offered Add Member Zone on the catalog."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.catalog_zone.pk})
         content = self._detail(self.catalog_zone)
@@ -1266,19 +1433,19 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertNotIn(url, self._detail(self.catalog_zone))
 
     def test_the_panel_offers_no_add_when_the_user_cannot_change_the_catalog(self):
-        """Change permission on a candidate alone does not reach the catalog it would join."""
+        """Add Member Zone is not offered without change permission on the catalog."""
         permit_zone_change(self.user, self.zone)
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.catalog_zone.pk})
         self.assertNotIn(url, self._detail(self.catalog_zone))
 
     def test_the_panel_offers_no_add_when_the_user_can_change_no_candidate(self):
-        """Change permission on the catalog alone would leave the zone picker empty."""
+        """Add Member Zone is not offered when the user can change no zone that could be added."""
         permit_zone_change(self.user, self.catalog_zone, self.enrolled_zone, self.other_view_zone)
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.catalog_zone.pk})
         self.assertNotIn(url, self._detail(self.catalog_zone))
 
     def test_the_panel_offers_add_when_the_user_can_change_the_catalog_and_a_candidate(self):
-        """Change permission on the catalog and on one zone that could join it is enough for Add Member Zone."""
+        """Add Member Zone is offered with change permission on the catalog and at least one candidate."""
         permit_zone_change(self.user, self.catalog_zone, self.zone)
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.catalog_zone.pk})
         self.assertIn(url, self._detail(self.catalog_zone))
@@ -1298,7 +1465,7 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertNotIn(url, self._detail(self.catalog_zone))
 
     def test_the_panel_offers_no_remove_with_permission_on_only_one_zone(self):
-        """Removing changes both the member and its catalog, so permission on either alone is not enough."""
+        """Remove from Catalog is not offered with permission on only the member or the catalog."""
         url = reverse("plugins:nautobot_dns_models:dnszone_remove_from_catalog", kwargs={"pk": self.member_zone.pk})
         for zone in (self.member_zone, self.catalog_zone):
             with self.subTest(zone=zone.name):
@@ -1307,7 +1474,7 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
                 self.assertNotIn(url, self._detail(self.catalog_zone))
 
     def test_the_list_offers_add_to_zones_in_no_catalog_and_remove_to_members(self):
-        """Each list row offers the one catalog action that applies to it, and catalog zones offer neither."""
+        """Each list row offers the one catalog action that applies and catalog zones offer none."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         body = self._list()
         for zone, offers_add, offers_remove in (
@@ -1337,13 +1504,13 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertEqual(body.count("Add to Catalog"), 1)
 
     def test_the_list_offers_no_add_without_a_catalog_the_user_can_change_in_the_view(self):
-        """Change permission on the zone alone would leave the catalog picker empty."""
+        """Add to Catalog is not offered when the user can change no catalog in the zone's view."""
         permit_zone_change(self.user, self.zone, self.other_view_catalog)
         url = reverse("plugins:nautobot_dns_models:dnszone_add_to_catalog", kwargs={"pk": self.zone.pk})
         self.assertNotIn(url, self._list())
 
     def test_the_list_offers_remove_only_with_permission_on_the_member_and_its_catalog(self):
-        """Remove from Catalog appears in the list only when the user may change both the member and its catalog."""
+        """The list offers Remove from Catalog only with permission on the member and its catalog."""
         url = reverse("plugins:nautobot_dns_models:dnszone_remove_from_catalog", kwargs={"pk": self.member_zone.pk})
         cases = (
             ((self.member_zone,), False),
@@ -1356,8 +1523,8 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
                 permit_zone_change(self.user, *zones)
                 self.assertEqual(url in self._list(), offered)
 
-    def test_the_add_member_page_offers_a_zone_picker(self):
-        """The picker asks only for zones in the catalog's view that are in no catalog."""
+    def test_the_add_member_page_offers_a_zone_field(self):
+        """The add-member page offers only zones in the catalog's view that are not in a catalog."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.catalog_zone.pk})
         response = self.client.get(url)
@@ -1366,9 +1533,10 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertIn('name="zone"', body)
         self.assertIn(f'data-query-param-dns_view="[&quot;{self.catalog_zone.dns_view_id}&quot;]"', body)
         self.assertIn('data-query-param-is_catalog_member="[&quot;False&quot;]"', body)
+        self.assertIn('data-query-param-can_change="[&quot;True&quot;]"', body)
 
     def test_adding_a_member_publishes_it_and_returns_to_the_catalog(self):
-        """Adding a zone from the catalog makes it a member with a PTR record, then returns to the catalog."""
+        """Adding a member from the catalog's page publishes it and returns to the catalog."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.catalog_zone.pk})
         response = self.client.post(url, {"zone": str(self.zone.pk), "_save": ""})
@@ -1379,20 +1547,20 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertTrue(PTRRecord.objects.filter(zone=self.catalog_zone, name=self.zone.ptr_record_name).exists())
 
     def test_add_another_returns_to_the_add_member_page(self):
-        """Add another brings the user back to the add-member page for the next zone."""
+        """The "Add Another" button brings the user back to the add-member page for the next zone."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.catalog_zone.pk})
         response = self.client.post(url, {"zone": str(self.zone.pk), "_addanother": ""})
         self.assertRedirects(response, url, fetch_redirect_response=False)
 
-    def test_the_add_member_page_refuses_a_zone_in_another_view(self):
-        """The view mismatch is reported against the zone picker."""
+    def test_the_add_member_page_cannot_add_a_zone_in_a_different_view(self):
+        """The add-member page refuses a zone in a different view, on the zone field."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         body = self._post_add_member_refused(self.other_view_zone)
         self.assertIn("The catalog zone must be in the same view as this zone.", body)
 
     def test_the_add_member_page_refuses_a_zone_already_in_a_catalog(self):
-        """A zone already in another catalog is refused, and stays where it is."""
+        """The add-member page refuses a zone already in another catalog and leaves it there."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         body = self._post_add_member_refused(self.enrolled_zone)
         self.assertIn(f"Zone {self.enrolled_zone} is already a member of catalog zone {self.other_catalog}.", body)
@@ -1400,24 +1568,28 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertEqual(self.enrolled_zone.catalog_zone, self.other_catalog)
 
     def test_the_add_member_page_refuses_a_zone_the_user_cannot_change(self):
-        """Change permission on the catalog alone does not reach the zone it would add."""
+        """The add-member page refuses a zone the user cannot change."""
         permit_zone_change(self.user, self.catalog_zone)
         self._post_add_member_refused(self.zone)
 
     def test_a_catalog_the_user_cannot_change_has_no_add_member_page(self):
-        """The add-member page is a change of the catalog, so it is missing without permission on the catalog."""
+        """A catalog the user cannot change has no add-member page."""
         permit_zone_change(self.user, self.zone)
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.catalog_zone.pk})
         self.assertHttpStatus(self.client.get(url), 404)
 
     def test_a_primary_zone_has_no_add_member_page(self):
-        """Only a catalog zone has members to add."""
+        """A primary zone has no add-member page."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_add_member", kwargs={"pk": self.zone.pk})
         self.assertHttpStatus(self.client.get(url), 404)
 
-    def test_the_add_to_catalog_page_offers_a_catalog_picker(self):
-        """The picker asks only for catalog zones in the zone's view, and the page offers no Add another."""
+    def test_the_add_to_catalog_page_offers_a_catalog_field(self):
+        """The add-to-catalog page's catalog field lists only catalog zones in the zone's view.
+
+        The page has no zone field, as the zone comes from the URL, and no "Add Another" button,
+        as a zone is in only one catalog.
+        """
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_add_to_catalog", kwargs={"pk": self.zone.pk})
         response = self.client.get(url)
@@ -1428,9 +1600,10 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertNotIn('name="_addanother"', body)
         self.assertIn(f'data-query-param-dns_view="[&quot;{self.zone.dns_view_id}&quot;]"', body)
         self.assertIn(f'data-query-param-type="[&quot;{DNSZoneTypeChoices.TYPE_CATALOG}&quot;]"', body)
+        self.assertIn('data-query-param-can_change="[&quot;True&quot;]"', body)
 
     def test_adding_to_a_catalog_publishes_the_zone_and_returns_to_it(self):
-        """Adding a zone from its own page makes it a member with a PTR record, then returns to the zone."""
+        """Adding a zone to a catalog from the zone's page publishes it and returns to the zone."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_add_to_catalog", kwargs={"pk": self.zone.pk})
         response = self.client.post(url, {"catalog_zone": str(self.catalog_zone.pk), "_save": ""})
@@ -1440,25 +1613,25 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertEqual(self.zone.catalog_zone, self.catalog_zone)
         self.assertTrue(PTRRecord.objects.filter(zone=self.catalog_zone, name=self.zone.ptr_record_name).exists())
 
-    def test_the_add_to_catalog_page_refuses_a_catalog_in_another_view(self):
-        """The view mismatch is reported against the catalog picker."""
+    def test_the_add_to_catalog_page_cannot_add_to_a_catalog_zone_in_a_different_view(self):
+        """The add-to-catalog page refuses a catalog zone in a different view, on the catalog field."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         body = self._post_add_to_catalog_refused(self.other_view_catalog)
         self.assertIn("The catalog zone must be in the same view as this zone.", body)
 
     def test_the_add_to_catalog_page_refuses_a_catalog_the_user_cannot_change(self):
-        """Change permission on the zone alone does not reach the catalog it would join."""
+        """The add-to-catalog page refuses a catalog the user cannot change."""
         permit_zone_change(self.user, self.zone)
         self._post_add_to_catalog_refused(self.catalog_zone)
 
     def test_a_zone_the_user_cannot_change_has_no_add_to_catalog_page(self):
-        """The add-to-catalog page is a change of the zone, so it is missing without permission on the zone."""
+        """A zone the user cannot change has no add-to-catalog page."""
         permit_zone_change(self.user, self.catalog_zone)
         url = reverse("plugins:nautobot_dns_models:dnszone_add_to_catalog", kwargs={"pk": self.zone.pk})
         self.assertHttpStatus(self.client.get(url), 404)
 
     def test_a_member_or_catalog_zone_has_no_add_to_catalog_page(self):
-        """Only a zone that is neither a catalog zone nor already a member can be added to a catalog."""
+        """A member zone or a catalog zone has no add-to-catalog page."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         for zone in (self.member_zone, self.catalog_zone):
             with self.subTest(zone=zone.name):
@@ -1477,7 +1650,7 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertEqual(self.member_zone.catalog_zone, self.catalog_zone)
 
     def test_confirming_removal_withdraws_the_member_and_returns_to_the_catalog(self):
-        """Confirming takes the zone out of its catalog, withdraws its PTR record, and returns to the catalog."""
+        """Confirming removal withdraws the member's PTR record and returns to the catalog."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         ptr_record_name = self.member_zone.ptr_record_name
         url = reverse("plugins:nautobot_dns_models:dnszone_remove_from_catalog", kwargs={"pk": self.member_zone.pk})
@@ -1489,7 +1662,7 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertFalse(PTRRecord.objects.filter(zone=self.catalog_zone, name=ptr_record_name).exists())
 
     def test_an_unconfirmed_removal_removes_nothing(self):
-        """A post without the confirmation re-renders the page and leaves the member in its catalog."""
+        """An unconfirmed removal re-renders the page and leaves the member in its catalog."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_remove_from_catalog", kwargs={"pk": self.member_zone.pk})
         response = self.client.post(url, {})
@@ -1498,27 +1671,27 @@ class DNSZoneCatalogMembershipViewTest(TestCase):
         self.assertEqual(self.member_zone.catalog_zone, self.catalog_zone)
 
     def test_the_remove_page_refuses_a_catalog_the_user_cannot_change(self):
-        """Change permission on the member alone does not reach the catalog it would leave."""
+        """The remove page refuses a catalog the user cannot change."""
         permit_zone_change(self.user, self.member_zone)
         url = reverse("plugins:nautobot_dns_models:dnszone_remove_from_catalog", kwargs={"pk": self.member_zone.pk})
         response = self.client.post(url, {"confirm": "true"})
 
         self.assertRedirects(response, self.catalog_zone.get_absolute_url(), fetch_redirect_response=False)
         self.assertIn(
-            "Changing a zone's catalog requires permission to change the catalog zones it joins or leaves.",
+            "Changing a zone's catalog requires permission to change the catalog zones it is added to or removed from.",
             [str(message) for message in get_messages(response.wsgi_request)],
         )
         self.member_zone.refresh_from_db()
         self.assertEqual(self.member_zone.catalog_zone, self.catalog_zone)
 
     def test_a_member_the_user_cannot_change_has_no_remove_page(self):
-        """The remove page is a change of the member, so it is missing without permission on the member."""
+        """A member the user cannot change has no remove page."""
         permit_zone_change(self.user, self.catalog_zone)
         url = reverse("plugins:nautobot_dns_models:dnszone_remove_from_catalog", kwargs={"pk": self.member_zone.pk})
         self.assertHttpStatus(self.client.get(url), 404)
 
     def test_a_zone_in_no_catalog_has_no_remove_page(self):
-        """Only a member zone has a catalog to leave."""
+        """A zone in no catalog has no remove page."""
         self.add_permissions("nautobot_dns_models.view_dnszone", "nautobot_dns_models.change_dnszone")
         url = reverse("plugins:nautobot_dns_models:dnszone_remove_from_catalog", kwargs={"pk": self.zone.pk})
         self.assertHttpStatus(self.client.get(url), 404)

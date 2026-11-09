@@ -10,8 +10,7 @@ from django.apps import apps
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, validate_email
 from django.db import models, transaction
-from django.db.models import ProtectedError, Q, RestrictedError
-from django.db.models.deletion import Collector
+from django.db.models import ProtectedError, Q
 from django.db.models.functions import Lower
 from nautobot.apps.models import BaseManager, BaseModel, PrimaryModel, RestrictedQuerySet, extras_features
 from nautobot.core.models.fields import ForeignKeyWithAutoRelatedName
@@ -33,6 +32,7 @@ RESERVED_ROOTS = {"in-addr.arpa", "ip6.arpa", "arpa"}
 UINT32_MAX = 2**32 - 1
 
 SYSTEM_MANAGED_DELETE_ERROR = "System-managed records cannot be deleted directly."
+CATALOG_MEMBER_DELETE_ERROR = "Deleting a member zone requires permission to change its catalog zone."
 
 # Zone apex per RFC 1035 §5.1.
 APEX_RECORD_NAME = "@"
@@ -367,37 +367,37 @@ def acting_user():
     return change_context.get_user()
 
 
+def refuse_member_deletes_without_catalog_permission(zone_pks):
+    """Refuse to delete the members among `zone_pks` whose catalog zone the acting user may not change.
+
+    Deleting a member withdraws its PTR record from the catalog, as removing it from the catalog does.
+    Raises `ProtectedError`, which every delete path reports as a refusal. Outside a change context,
+    as in a shell or a migration, there is no user to hold to it.
+    """
+    user = acting_user()
+    if user is None:
+        return
+
+    refused = DNSZone.objects.filter(pk__in=zone_pks, catalog_zone__isnull=False).exclude(
+        catalog_zone__in=DNSZone.objects.restrict(user, "change")
+    )
+    if refused.exists():
+        raise ProtectedError(CATALOG_MEMBER_DELETE_ERROR, list(refused[:50]))
+
+
 def purge_system_managed_records(zones):
     """Delete the system-managed records of the zones in `zones`, ahead of deleting the zones.
 
-    Every record in a zone whose type is not in `USER_RECORD_ZONE_TYPES` is system-managed.
-    `DNSRecord.zone` is PROTECT and those records refuse user deletes, so such a zone would
-    otherwise be permanently undeletable.
+    Every record in a catalog zone is system-managed. `DNSRecord.zone` is PROTECT and those
+    records refuse user deletes, so a catalog zone would otherwise be permanently undeletable.
     """
-    managed_zone_pks = [zone.pk for zone in zones if zone.type not in DNSZoneTypeChoices.USER_RECORD_ZONE_TYPES]
+    managed_zone_pks = [zone.pk for zone in zones if zone.is_catalog_zone]
     if not managed_zone_pks:
         return
 
     with system_write():
         for record_model in dns_record_models():
             record_model.objects.filter(zone_id__in=managed_zone_pks).delete()
-
-
-def prepare_zones_for_bulk_delete(zones):
-    """Withdraw member PTR records and clear system-managed records of `zones`, unless something else protects them.
-
-    Core's bulk delete collects the zones before it deletes them, so their system-managed records,
-    which `DNSRecord.zone` protects, would refuse it. This runs before that delete, outside its
-    transaction, so if anything else would refuse the delete (e.g. a catalog zone's members), the
-    records are kept.
-    """
-    try:
-        with transaction.atomic():
-            withdraw_member_ptr_records(zones.values("pk"))
-            purge_system_managed_records(zones)
-            Collector(using=zones.db).collect(list(zones))
-    except (ProtectedError, RestrictedError):
-        pass
 
 
 class DNSZoneQuerySet(RestrictedQuerySet):
@@ -407,12 +407,18 @@ class DNSZoneQuerySet(RestrictedQuerySet):
         """Refuse zones in a catalog, which would be stored without a member label or a published PTR."""
         objs = list(objs)
         if any(obj.catalog_zone_id for obj in objs):
-            raise ValidationError("Zones cannot join a catalog zone through bulk_create(); save each zone instead.")
+            raise ValidationError(
+                "Zones cannot be added to a catalog zone through bulk_create(); save each zone instead."
+            )
 
         return super().bulk_create(objs, *args, **kwargs)
 
     def bulk_update(self, objs, fields, *args, **kwargs):
-        """Refuse the membership fields, which this would otherwise write without publishing the member PTR."""
+        """Refuse the membership fields, which this would otherwise write without publishing the member PTR.
+
+        Without this, `update()` would still refuse them, but only inside Django's atomic block, leaving the caller's
+        transaction unusable.
+        """
         self._refuse_membership_fields(fields, "bulk_update")
         return super().bulk_update(objs, fields, *args, **kwargs)
 
@@ -422,6 +428,7 @@ class DNSZoneQuerySet(RestrictedQuerySet):
         If the delete fails, the records are kept.
         """
         with transaction.atomic():
+            refuse_member_deletes_without_catalog_permission(self.values("pk"))
             # Nothing protects the records in the purge, but if the delete fails (e.g. due to
             # PROTECT from a member zone), the records are restored.
             withdraw_member_ptr_records(self.values("pk"))
@@ -670,7 +677,7 @@ class DNSZone(DNSModel):
         blank=True,
         null=True,
         limit_choices_to={"type": DNSZoneTypeChoices.TYPE_CATALOG},
-        help_text="The RFC 9432 catalog zone this zone is a member of.",
+        help_text="The catalog zone this zone is a member of.",
         verbose_name="Catalog Zone",
     )
     member_label = models.CharField(
@@ -680,7 +687,7 @@ class DNSZone(DNSModel):
         editable=False,
         help_text=(
             "Opaque DNS label identifying this zone within its catalog zone. "
-            "Generated when the zone joins a catalog or is renamed."
+            "Generated when the zone is added to a catalog or renamed."
         ),
         verbose_name="Member Label",
     )
@@ -719,14 +726,9 @@ class DNSZone(DNSModel):
                 name="member_label_only_in_a_catalog",
                 violation_error_message="A zone has a member label exactly when it is in a catalog zone.",
             ),
-            # Zones outside a catalog all have a blank label, but a NULL `catalog_zone` keeps them apart.
-            models.UniqueConstraint(
-                fields=["catalog_zone", "member_label"],
-                name="member_label_unique_in_catalog",
-                violation_error_message="This label is already used by another member of the catalog zone.",
-            ),
-            # RFC 4343 §3 compares labels without regard to case, but the constraint above may not,
-            # which would publish two PTR records at one owner name where RFC 9432 §4.1 allows only one.
+            # RFC 4343 §3 compares labels without regard to case, so labels differing only in case would
+            # publish two PTR records at one owner name, where RFC 9432 §4.1 allows only one. Zones outside
+            # a catalog all have a blank label, but a NULL `catalog_zone` keeps them apart.
             models.UniqueConstraint(
                 "catalog_zone",
                 Lower("member_label"),
@@ -791,6 +793,7 @@ class DNSZone(DNSModel):
         If the delete fails, the records are kept.
         """
         with transaction.atomic():
+            refuse_member_deletes_without_catalog_permission([self.pk])
             # Nothing protects the records in the purge, but if the zone delete fails (e.g. due to
             # PROTECT from a member zone), the records are restored.
             withdraw_member_ptr_records([self.pk])
@@ -800,9 +803,10 @@ class DNSZone(DNSModel):
     def save(self, *args, **kwargs):
         """Normalize the RNAME, then write the records this zone's type and catalog membership require.
 
-        Joining, leaving or moving between catalogs, and renaming a member, publish the member PTR
-        under a new label and withdraw the old one, which a consumer sees as a removal and an
-        addition (RFC 9432 §5.4). If those records cannot be written, the zone is not saved either.
+        Adding a zone to a catalog, removing it, moving it to another catalog, and renaming a member
+        publish the member PTR under a new label and withdraw the old one, which a consumer sees as a
+        removal and an addition (RFC 9432 §5.4). If those records cannot be written, the zone is not
+        saved either.
 
         Membership fields left out of `update_fields` take their stored values, so that the PTR
         record describes what is stored.
@@ -856,7 +860,7 @@ class DNSZone(DNSModel):
             if zone_name in RESERVED_ROOTS:
                 break
 
-            zones = cls.objects.filter(name=zone_name, type__in=DNSZoneTypeChoices.USER_RECORD_ZONE_TYPES)
+            zones = cls.objects.filter(name=zone_name).exclude(type=DNSZoneTypeChoices.TYPE_CATALOG)
             if dns_view is not None:
                 zones = zones.filter(dns_view=dns_view)
             zone = zones.first()
@@ -865,19 +869,27 @@ class DNSZone(DNSModel):
         return None
 
     def _assign_member_label(self, stored_zone):
-        """Give a zone joining a catalog, or renamed within one, a new label, and keep the stored one otherwise.
-
-        A label already set to something other than the stored one, as by an earlier `clean()`, is kept.
-        """
+        """Set the member label this save requires, refusing a supplied label it cannot keep."""
+        stored_label = stored_zone.member_label if stored_zone else ""
         if not self.catalog_zone_id:
+            if self.member_label not in ("", stored_label):
+                raise ValidationError({"member_label": "Only a zone in a catalog zone can have a member label."})
             self.member_label = ""
             return
 
-        stored_label = stored_zone.member_label if stored_zone else ""
         catalog_changed = stored_zone is None or stored_zone.catalog_zone_id != self.catalog_zone_id
         name_changed = stored_zone is not None and stored_zone.name != self.name
         if not (catalog_changed or name_changed):
-            self.member_label = stored_label
+            # Consumers identify the member by its label (RFC 9432 §4.1), so it changes only with the membership.
+            if self.member_label != stored_label:
+                raise ValidationError(
+                    {
+                        "member_label": "The member label can only be set when the zone is added to a catalog, "
+                        "moved to another, or renamed."
+                    }
+                )
+        # A supplied label is kept, so that `save()` keeps the label an earlier `clean()` generated and so that
+        # code importing an existing catalog can keep its members' labels.
         elif not self.member_label or self.member_label == stored_label:
             self.member_label = catalog_member_label()
 
@@ -893,7 +905,7 @@ class DNSZone(DNSModel):
 
     def _lock_stored_zone(self):
         """Return this zone as stored, for `save()` to compare against, holding its row until the transaction ends."""
-        # Locked so that a zone joining this catalog, which locks this row to read its view, waits for
+        # Locked so that a zone being added to this catalog, which locks this row to read its view, waits for
         # this save instead of slipping past the view check.
         return DNSZone.objects.select_for_update().filter(pk=self.pk).first()
 
@@ -918,7 +930,7 @@ class DNSZone(DNSModel):
         if DNSZone.objects.restrict(user, "change").filter(pk__in=catalog_zone_ids).count() != len(catalog_zone_ids):
             raise ValidationError(
                 {
-                    "catalog_zone": "Changing a zone's catalog requires permission to change the catalog zones it joins or leaves."
+                    "catalog_zone": "Changing a zone's catalog requires permission to change the catalog zones it is added to or removed from."
                 }
             )
 
@@ -1069,7 +1081,7 @@ class DNSRecordQuerySet(RestrictedQuerySet):
         """Refuse to delete system-managed records, as `DNSRecord.delete()` does for one record."""
         # Nautobot's bulk delete job calls `QuerySet.delete()` directly, bypassing `DNSRecord.delete()`.
         if not system_write_in_progress():
-            protected = self.exclude(zone__type__in=DNSZoneTypeChoices.USER_RECORD_ZONE_TYPES)
+            protected = self.filter(zone__type=DNSZoneTypeChoices.TYPE_CATALOG)
             if protected.exists():
                 raise ProtectedError(SYSTEM_MANAGED_DELETE_ERROR, list(protected[:50]))
 
@@ -1120,7 +1132,7 @@ class DNSRecord(DNSModel):
 
     def delete(self, *args, **kwargs):
         """Refuse to delete a system-managed record."""
-        if not system_write_in_progress() and self.zone.type not in DNSZoneTypeChoices.USER_RECORD_ZONE_TYPES:
+        if not system_write_in_progress() and self.zone.is_catalog_zone:
             raise ProtectedError(SYSTEM_MANAGED_DELETE_ERROR, [self])
         return super().delete(*args, **kwargs)
 
@@ -1163,7 +1175,7 @@ class DNSRecord(DNSModel):
 
     def _enforce_zone_type_allows_record(self) -> None:
         """Reject a user write of a record type the zone's type does not make available to users."""
-        if system_write_in_progress() or self.zone.type in DNSZoneTypeChoices.USER_RECORD_ZONE_TYPES:  # pylint: disable=no-member
+        if system_write_in_progress() or not self.zone.is_catalog_zone:  # pylint: disable=no-member
             return
 
         zone_type_label = self.zone.get_type_display().lower()  # pylint: disable=no-member

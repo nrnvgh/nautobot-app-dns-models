@@ -18,7 +18,10 @@ class CatalogMemberZoneTableTestCase(TestCase):
         cls.member_zone = create_zone("member.example", catalog_zone=cls.catalog_zone)
 
     def test_the_table_offers_no_catalog_actions_without_a_user(self):
-        """A table built without a user cannot tell what is permitted, so it offers no catalog actions."""
+        """A member zone table built without a user offers no catalog actions.
+
+        Without a user, the table cannot tell which actions are permitted.
+        """
         table = CatalogMemberZoneTable(DNSZone.objects.filter(pk=self.member_zone.pk))
         url = reverse("plugins:nautobot_dns_models:dnszone_remove_from_catalog", kwargs={"pk": self.member_zone.pk})
-        self.assertNotIn(url, table.rows[0].get_cell("actions"))
+        self.assertNotIn(url, table.rows[0].get_cell("actions"))  # pylint: disable=no-member

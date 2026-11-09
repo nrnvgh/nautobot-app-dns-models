@@ -179,7 +179,7 @@ class ZoneRecordsTablePanel(ObjectsTablePanel):
         if self.system_managed:
             return zone.is_catalog_zone
 
-        return zone.type in DNSZoneTypeChoices.USER_RECORD_ZONE_TYPES
+        return not zone.is_catalog_zone
 
 
 class CatalogMemberZonesPanel(ObjectsTablePanel):
@@ -200,7 +200,7 @@ class CatalogMemberZonesPanel(ObjectsTablePanel):
     def _get_table_add_url(self, context):
         """Point Add at the catalog's add-member action, which adds an existing zone rather than creating one."""
         catalog_zone = get_obj_from_context(context)
-        # Offer Add only when the user may change this catalog and some zone the picker would list.
+        # Offer Add only when the user may change this catalog and some zone the field would list.
         changeable = DNSZone.objects.restrict(context["request"].user, "change")
         candidates = changeable.filter(dns_view_id=catalog_zone.dns_view_id, catalog_zone__isnull=True).exclude(
             type=DNSZoneTypeChoices.TYPE_CATALOG
@@ -231,7 +231,7 @@ class RecordStatsPanel(StatsPanel):
     def should_render(self, context):
         """Render only where the zone permits users to manage records."""
         zone = get_obj_from_context(context)
-        return zone is not None and zone.type in DNSZoneTypeChoices.USER_RECORD_ZONE_TYPES
+        return zone is not None and not zone.is_catalog_zone
 
 
 class AddRecordButton(object_detail.Button):
@@ -249,7 +249,7 @@ class AddRecordButton(object_detail.Button):
             return False
 
         zone = get_obj_from_context(context)
-        return zone is not None and zone.type in DNSZoneTypeChoices.USER_RECORD_ZONE_TYPES
+        return zone is not None and not zone.is_catalog_zone
 
 
 class AddRecordsDropdownButton(object_detail.DropdownButton):
@@ -616,14 +616,28 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
         )
 
     def get_form_class(self, **kwargs):
-        """Bind the bulk edit form to the zones it will reach."""
+        """Bind the edit form to the user, and the bulk edit form to the zones it will reach."""
         if self.action == "bulk_update":
             # Core builds the form from the posted zones, which under "select all" are only those on
             # the page that submitted, while the job it queues edits everything the filter matched.
             selection = get_bulk_queryset_from_view(user=self.request.user, action="change", **self.key_params)
             return partial(super().get_form_class(**kwargs), selection=selection, user=self.request.user)
 
-        return super().get_form_class(**kwargs)
+        form_class = super().get_form_class(**kwargs)
+        if self.action in ("create", "update"):
+            # A subclass rather than a partial, since core reads the class's `base_fields`.
+            user = self.request.user
+
+            class UserBoundForm(form_class):
+                """The edit form, bound to the requesting user."""
+
+                def __init__(self, *args, **kwargs):
+                    """Pass the requesting user to the form."""
+                    super().__init__(*args, user=user, **kwargs)
+
+            return UserBoundForm
+
+        return form_class
 
     def _catalog_membership_form_response(self, request, *, title, add_another, catalog_zone=None, zone=None):
         """Render or process the form pairing a zone with a catalog zone, given one of the two, and return to the given one."""
