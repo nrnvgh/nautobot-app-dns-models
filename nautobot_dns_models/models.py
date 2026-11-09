@@ -724,7 +724,7 @@ class DNSZone(DNSModel):
 
         self.soa_rname = normalized_soa_rname
 
-        stored_zone = DNSZone.objects.filter(pk=self.pk).first() if self.present_in_database else None
+        stored_zone = self._stored_zone()
         if stored_zone is not None:
             self._validate_type_unchanged(stored_zone.type)
 
@@ -732,9 +732,7 @@ class DNSZone(DNSModel):
             raise ValidationError({"auto_create_ptr": "Catalog zones cannot enable automatic PTR creation."})
 
         # Before the constraints are validated, which hold the label to the catalog.
-        self._assign_member_label(stored_zone)
-        self._validate_member_label()
-        self._validate_membership(stored_zone)
+        self._enforce_membership_rules(stored_zone)
 
     def delete(self, *args, **kwargs):
         """Withdraw the member PTR record and clear system-managed records, then delete the zone."""
@@ -759,7 +757,7 @@ class DNSZone(DNSModel):
         update_fields = kwargs.get("update_fields")
 
         with transaction.atomic():
-            stored_zone = self._lock_stored_zone() if self.present_in_database else None
+            stored_zone = self._stored_zone(lock=True)
             if stored_zone is not None:
                 self._validate_type_unchanged(stored_zone.type)
                 if update_fields is not None:
@@ -774,9 +772,7 @@ class DNSZone(DNSModel):
                     # publishing the PTR record in a catalog the zone is not stored in.
                     self._keep_unwritten_fields(stored_zone, update_fields)
 
-            self._assign_member_label(stored_zone)
-            self._validate_member_label()
-            self._validate_membership(stored_zone, lock=True)
+            self._enforce_membership_rules(stored_zone, lock=True)
             if update_fields is not None and stored_zone is not None and self.member_label != stored_zone.member_label:
                 kwargs["update_fields"] = {*update_fields, "member_label"}
 
@@ -843,6 +839,22 @@ class DNSZone(DNSModel):
         elif not self.member_label or self.member_label == stored_label:
             self.member_label = catalog_member_label()
 
+    def _enforce_membership_rules(self, stored_zone, *, lock=False):
+        """Assign the member label, then refuse a label or catalog membership this zone cannot have.
+
+        `save()` runs this as well as `clean()`, since code using the ORM can save without cleaning, and
+        the member PTR record `save()` publishes must match what is stored.
+
+        Args:
+            stored_zone (DNSZone): This zone as stored, or None for a new zone.
+
+        Keyword Args:
+            lock (bool): Lock the catalog zone's row while reading it. Defaults to False.
+        """
+        self._assign_member_label(stored_zone)
+        self._validate_member_label()
+        self._validate_membership(stored_zone, lock=lock)
+
     def _keep_unwritten_fields(self, stored_zone, update_fields):
         """Reset the name, view and catalog to their stored values when `update_fields` leaves them out."""
         for attribute_name, names in (
@@ -852,12 +864,6 @@ class DNSZone(DNSModel):
         ):
             if names.isdisjoint(update_fields):
                 setattr(self, attribute_name, getattr(stored_zone, attribute_name))
-
-    def _lock_stored_zone(self):
-        """Return this zone as stored, for `save()` to compare against, holding its row until the transaction ends."""
-        # Locked so that a zone being added to this catalog, which locks this row to read its view, waits for
-        # this save instead of slipping past the view check.
-        return DNSZone.objects.select_for_update().filter(pk=self.pk).first()
 
     def _publish_member_ptr_record(self):
         """Publish the PTR record naming this member zone in its catalog zone.
@@ -904,6 +910,23 @@ class DNSZone(DNSModel):
         version_records.exclude(text="2").delete()
         if not version_records.filter(text="2").exists():
             TXTRecord(name="version", text="2", zone=self, _ttl=CATALOG_RECORD_TTL).validated_save()
+
+    def _stored_zone(self, *, lock=False):
+        """Return this zone as stored, or None for a new zone.
+
+        Keyword Args:
+            lock (bool): Hold the row until the transaction ends. Defaults to False.
+        """
+        if not self.present_in_database:
+            return None
+
+        zones = DNSZone.objects.filter(pk=self.pk)
+        if lock:
+            # Locked so that a zone being added to this catalog, which locks this row to read its view, waits
+            # for this save instead of slipping past the view check.
+            zones = zones.select_for_update()
+
+        return zones.first()
 
     def _sync_member_ptr_record(self, stored_zone):
         """Withdraw the PTR this zone was published under if its catalog or label changed, then publish the current one."""
