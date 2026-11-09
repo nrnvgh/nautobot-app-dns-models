@@ -557,6 +557,27 @@ class DNSZone(DNSModel):
         verbose_name="View",
         default=get_default_view_pk,
     )
+    catalog_zone = models.ForeignKey(
+        to="self",
+        on_delete=models.PROTECT,
+        related_name="members",
+        blank=True,
+        null=True,
+        limit_choices_to={"type": DNSZoneTypeChoices.TYPE_CATALOG},
+        help_text="The catalog zone this zone is a member of.",
+        verbose_name="Catalog Zone",
+    )
+    member_label = models.CharField(
+        max_length=63,
+        blank=True,
+        default="",
+        editable=False,
+        help_text=(
+            "Opaque DNS label identifying this zone within its catalog zone. "
+            "Generated when the zone is added to a catalog or renamed."
+        ),
+        verbose_name="Member Label",
+    )
     ttl = models.PositiveBigIntegerField(
         validators=[MaxValueValidator(UINT32_MAX)],
         default=3600,
@@ -618,27 +639,6 @@ class DNSZone(DNSModel):
         default=False,
         help_text="Automatically create PTR records when A/AAAA records are created in this zone.",
         verbose_name="Auto-create PTR Records",
-    )
-    catalog_zone = models.ForeignKey(
-        to="self",
-        on_delete=models.PROTECT,
-        related_name="members",
-        blank=True,
-        null=True,
-        limit_choices_to={"type": DNSZoneTypeChoices.TYPE_CATALOG},
-        help_text="The catalog zone this zone is a member of.",
-        verbose_name="Catalog Zone",
-    )
-    member_label = models.CharField(
-        max_length=63,
-        blank=True,
-        default="",
-        editable=False,
-        help_text=(
-            "Opaque DNS label identifying this zone within its catalog zone. "
-            "Generated when the zone is added to a catalog or renamed."
-        ),
-        verbose_name="Member Label",
     )
 
     objects = BaseManager.from_queryset(DNSZoneQuerySet)()
