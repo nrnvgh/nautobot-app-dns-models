@@ -129,15 +129,14 @@ from nautobot_dns_models.tables import (
 
 
 class ZoneFieldsPanel(ObjectFieldsPanel):
-    """The zone's own fields, minus membership fields that cannot apply to this zone type."""
+    """The zone's own fields, minus a catalog zone's Catalog Zone field, which cannot apply to it."""
 
     def get_data(self, context):
-        """Drop fields that this zone's type cannot use."""
+        """Drop the Catalog Zone field on a catalog zone."""
         data = super().get_data(context)
         zone = get_obj_from_context(context)
         if zone is not None and zone.is_catalog_zone:
             data.pop("catalog_zone", None)
-            data.pop("member_label", None)
 
         return data
 
@@ -377,6 +376,7 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 weight=100,
                 section=SectionChoices.LEFT_HALF,
                 fields="__all__",
+                exclude_fields=["member_label"],
             ),
             ZoneRegistrationPanel(
                 weight=200,

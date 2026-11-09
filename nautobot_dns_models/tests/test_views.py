@@ -478,6 +478,13 @@ class DNSZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         self.assertIn(self.catalog_zone.get_absolute_url(), content)
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_member_zone_has_no_member_label_row(self):
+        """A member zone's fields panel leaves out its member label."""
+        content = self._detail(self.member_zone)
+        self.assertInHTML("<td>Member Label</td>", content, 0)
+        self.assertNotIn(self.member_zone.member_label, content)
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_catalog_zone_omits_the_membership_fields(self):
         """A catalog zone carries no Catalog Zone or Member Label row."""
         content = self._detail(self.catalog_zone)
