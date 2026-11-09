@@ -535,9 +535,7 @@ class DNSZoneBulkDeleteForm(ConfirmationForm):
         """
         try:
             with transaction.atomic():
-                models.refuse_member_deletes_without_catalog_permission(queryset.values("pk"))
-                models.withdraw_member_ptr_records(queryset.values("pk"))
-                models.purge_system_managed_records(queryset)
+                queryset.prepare_for_delete()
                 Collector(using=queryset.db).collect(list(queryset))
         except (ProtectedError, RestrictedError):
             pass

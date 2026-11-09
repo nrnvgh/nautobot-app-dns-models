@@ -342,18 +342,6 @@ def withdraw_member_ptr_record(catalog_zone_id, member_label):
         delete_member_ptr_records(PTRRecord.objects.filter(name=member_ptr_name(member_label), zone_id=catalog_zone_id))
 
 
-def withdraw_member_ptr_records(zone_pks):
-    """Withdraw the PTR records of the catalog members among `zone_pks`, ahead of deleting those zones.
-
-    Reads the stored memberships, since an instance in hand may predate a change to its catalog.
-    """
-    memberships = DNSZone.objects.filter(pk__in=zone_pks, catalog_zone__isnull=False).values_list(
-        "catalog_zone_id", "member_label"
-    )
-    for catalog_zone_id, member_label in memberships:
-        withdraw_member_ptr_record(catalog_zone_id, member_label)
-
-
 def acting_user():
     """Return the user the current change context attributes changes to, or None outside one.
 
@@ -365,39 +353,6 @@ def acting_user():
         return None
 
     return change_context.get_user()
-
-
-def refuse_member_deletes_without_catalog_permission(zone_pks):
-    """Refuse to delete the members among `zone_pks` whose catalog zone the acting user may not change.
-
-    Deleting a member withdraws its PTR record from the catalog, as removing it from the catalog does.
-    Raises `ProtectedError`, which every delete path reports as a refusal. Outside a change context,
-    as in a shell or a migration, there is no user to hold to it.
-    """
-    user = acting_user()
-    if user is None:
-        return
-
-    refused = DNSZone.objects.filter(pk__in=zone_pks, catalog_zone__isnull=False).exclude(
-        catalog_zone__in=DNSZone.objects.restrict(user, "change")
-    )
-    if refused.exists():
-        raise ProtectedError(CATALOG_MEMBER_DELETE_ERROR, list(refused[:50]))
-
-
-def purge_system_managed_records(zones):
-    """Delete the system-managed records of the zones in `zones`, ahead of deleting the zones.
-
-    Every record in a catalog zone is system-managed. `DNSRecord.zone` is PROTECT and those
-    records refuse user deletes, so a catalog zone would otherwise be permanently undeletable.
-    """
-    managed_zone_pks = [zone.pk for zone in zones if zone.is_catalog_zone]
-    if not managed_zone_pks:
-        return
-
-    with system_write():
-        for record_model in dns_record_models():
-            record_model.objects.filter(zone_id__in=managed_zone_pks).delete()
 
 
 class DNSZoneQuerySet(RestrictedQuerySet):
@@ -422,16 +377,15 @@ class DNSZoneQuerySet(RestrictedQuerySet):
         if "name" in fields:
             # Stored membership, since an instance in hand may predate a change to its catalog.
             self.filter(pk__in=[obj.pk for obj in objs])._refuse_member_renames()
+
         return super().bulk_update(objs, fields, *args, **kwargs)
 
     def delete(self):
         """Withdraw member PTR records and clear system-managed records, then delete the zones."""
         with transaction.atomic():
-            refuse_member_deletes_without_catalog_permission(self.values("pk"))
             # Nothing protects the records in the purge, but if the delete fails (e.g. due to
             # PROTECT from a member zone), the records are restored.
-            withdraw_member_ptr_records(self.values("pk"))
-            purge_system_managed_records(self)
+            self.prepare_for_delete()
             return super().delete()
 
     def update(self, **kwargs):
@@ -439,7 +393,48 @@ class DNSZoneQuerySet(RestrictedQuerySet):
         self._refuse_membership_fields(kwargs)
         if "name" in kwargs:
             self._refuse_member_renames()
+
         return super().update(**kwargs)
+
+    def prepare_for_delete(self):
+        """Refuse members whose catalog the acting user may not change, then withdraw their PTR records and clear system-managed records.
+
+        Run it in the same transaction as the delete, so that a refused delete keeps the records.
+        """
+        self._refuse_member_deletes_without_catalog_permission()
+        self._withdraw_member_ptr_records()
+        self._purge_system_managed_records()
+
+    def _purge_system_managed_records(self):
+        """Delete the records of the catalog zones among these zones.
+
+        Every record in a catalog zone is system-managed. `DNSRecord.zone` is PROTECT and those
+        records refuse user deletes, so a catalog zone would otherwise be permanently undeletable.
+        """
+        managed_zone_pks = list(self.filter(type=DNSZoneTypeChoices.TYPE_CATALOG).values_list("pk", flat=True))
+        if not managed_zone_pks:
+            return
+
+        with system_write():
+            for record_model in dns_record_models():
+                record_model.objects.filter(zone_id__in=managed_zone_pks).delete()
+
+    def _refuse_member_deletes_without_catalog_permission(self):
+        """Refuse to delete the members among these zones whose catalog zone the acting user may not change.
+
+        Deleting a member withdraws its PTR record from the catalog, as removing it from the catalog does.
+        Raises `ProtectedError`, which every delete path reports as a refusal. Outside a change context,
+        as in a shell or a migration, there is no user to hold to it.
+        """
+        user = acting_user()
+        if user is None:
+            return
+
+        refused = self.filter(catalog_zone__isnull=False).exclude(
+            catalog_zone__in=DNSZone.objects.restrict(user, "change")
+        )
+        if refused.exists():
+            raise ProtectedError(CATALOG_MEMBER_DELETE_ERROR, list(refused[:50]))
 
     def _refuse_member_renames(self):
         """Raise if this holds a catalog member, whose PTR record names it and which a rename gives a new label."""
@@ -453,6 +448,15 @@ class DNSZoneQuerySet(RestrictedQuerySet):
             raise ValidationError(
                 f"These fields cannot be written through a queryset; save each zone instead: {', '.join(refused)}."
             )
+
+    def _withdraw_member_ptr_records(self):
+        """Withdraw the PTR records of the catalog members among these zones.
+
+        Reads the stored memberships, since an instance in hand may predate a change to its catalog.
+        """
+        memberships = self.filter(catalog_zone__isnull=False).values_list("catalog_zone_id", "member_label")
+        for catalog_zone_id, member_label in memberships:
+            withdraw_member_ptr_record(catalog_zone_id, member_label)
 
 
 class DNSModel(PrimaryModel):
@@ -796,11 +800,9 @@ class DNSZone(DNSModel):
     def delete(self, *args, **kwargs):
         """Withdraw the member PTR record and clear system-managed records, then delete the zone."""
         with transaction.atomic():
-            refuse_member_deletes_without_catalog_permission([self.pk])
             # Nothing protects the records in the purge, but if the zone delete fails (e.g. due to
             # PROTECT from a member zone), the records are restored.
-            withdraw_member_ptr_records([self.pk])
-            purge_system_managed_records([self])
+            DNSZone.objects.filter(pk=self.pk).prepare_for_delete()
             return super().delete(*args, **kwargs)
 
     def save(self, *args, **kwargs):
