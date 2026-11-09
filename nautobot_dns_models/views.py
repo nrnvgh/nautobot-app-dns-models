@@ -412,6 +412,8 @@ class DNSZoneUIViewSet(views.NautobotUIViewSet):
                 table_filter="catalog_zone",
                 table_title="Member Zones",
                 order_by_fields=["name"],
+                max_display_count=5,
+                footer_content_template_path="nautobot_dns_models/panels/member_zones_footer.html",
             ),
             # Right pane
             RecordStatsPanel(

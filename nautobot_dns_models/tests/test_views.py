@@ -442,6 +442,34 @@ class DNSZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         self.assertIn(reverse("plugins:nautobot_dns_models:dnszone_edit", kwargs={"pk": self.member_zone.pk}), content)
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_member_zones_panel_links_the_catalogs_ptr_records(self):
+        """The Member Zones panel links the PTR record list filtered to the catalog zone."""
+        url = f"{reverse('plugins:nautobot_dns_models:ptrrecord_list')}?zone={self.catalog_zone.pk}"
+        self.assertIn(url, self._detail(self.catalog_zone))
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["nautobot_dns_models.dnszone"])
+    def test_member_zones_panel_omits_the_ptr_record_link_without_view_ptrrecord(self):
+        """The Member Zones panel has no PTR record link for a user who may not view PTR records."""
+        url = f"{reverse('plugins:nautobot_dns_models:ptrrecord_list')}?zone={self.catalog_zone.pk}"
+        self.assertNotIn(url, self._detail(self.catalog_zone))
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_member_zones_panel_links_the_members_beyond_the_first_five(self):
+        """The Member Zones panel shows five members and links the zone list for the rest."""
+        for index in range(5):
+            create_zone(f"more-{index}.example", catalog_zone=self.catalog_zone)
+        content = self._detail(self.catalog_zone)
+        self.assertIn("View 1 more Member Zones", content)
+        self.assertIn(
+            f"{reverse('plugins:nautobot_dns_models:dnszone_list')}?catalog_zone={self.catalog_zone.pk}", content
+        )
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_member_zones_panel_has_no_more_link_with_five_members_or_fewer(self):
+        """The Member Zones panel has no link to further members when it shows them all."""
+        self.assertNotIn("more Member Zones", self._detail(self.catalog_zone))
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_primary_zone_has_no_member_zones_panel(self):
         """An ordinary zone renders no Member Zones panel, having no members to publish."""
         self.assertNotIn("MEMBER ZONES", self._panel_headings(self.member_zone))
