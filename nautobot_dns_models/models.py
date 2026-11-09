@@ -268,40 +268,6 @@ def dns_record_models():
     return [model for model in apps.get_models() if issubclass(model, DNSRecord)]
 
 
-def reconcile_required_catalog_records(zone):
-    """Hold `zone`'s apex NS and `version` TXT records at what RFC 9432 requires of a catalog.
-
-    Idempotent, so saving the zone repairs those two records rather than only populating a
-    brand-new catalog.
-    """
-    if not zone.is_catalog_zone:
-        return
-
-    with system_write():
-        _reconcile_apex_ns_record(zone)
-        _reconcile_version_record(zone)
-
-
-def _reconcile_apex_ns_record(zone):
-    """Hold the apex NS RRset RFC 9432 §4 requires at the single `invalid.` RR it recommends."""
-    ns_records = NSRecord.objects.filter(zone=zone)
-    ns_records.exclude(name=APEX_RECORD_NAME, server=CATALOG_APEX_NS_SERVER).delete()
-    if not ns_records.exists():
-        NSRecord(
-            name=APEX_RECORD_NAME, server=CATALOG_APEX_NS_SERVER, zone=zone, _ttl=CATALOG_RECORD_TTL
-        ).validated_save()
-
-
-def _reconcile_version_record(zone):
-    """Hold the schema version TXT at the single RR RFC 9432 §4.2.1 requires."""
-    version_records = TXTRecord.objects.filter(name="version", zone=zone)
-    # "2" is the only version the RFC defines. A second RR in the version RRset makes the whole
-    # catalog broken.
-    version_records.exclude(text="2").delete()
-    if not version_records.filter(text="2").exists():
-        TXTRecord(name="version", text="2", zone=zone, _ttl=CATALOG_RECORD_TTL).validated_save()
-
-
 def delete_member_ptr_records(member_ptr_records):
     """Delete each record in `member_ptr_records`, keeping its primary key on the deleted instance.
 
@@ -313,33 +279,6 @@ def delete_member_ptr_records(member_ptr_records):
         pk = record.pk
         record.delete()
         record.pk = pk
-
-
-def member_ptr_name(member_label):
-    """Return the owner name a member is published at, relative to the catalog apex (RFC 9432 §4.1)."""
-    return f"{member_label}.zones"
-
-
-def publish_member_ptr_record(zone):
-    """Publish the PTR record naming member `zone` in its catalog zone.
-
-    RFC 9432 §4.1 allows only a single RR at that owner name, so anything else standing there gives way.
-    """
-    owner_name = member_ptr_name(zone.member_label)
-    member_ptr_records = PTRRecord.objects.filter(name=owner_name, zone_id=zone.catalog_zone_id)
-
-    with system_write():
-        delete_member_ptr_records(member_ptr_records.exclude(ptrdname=zone.name))
-        if not member_ptr_records.filter(ptrdname=zone.name).exists():
-            PTRRecord(
-                name=owner_name, ptrdname=zone.name, zone_id=zone.catalog_zone_id, _ttl=CATALOG_RECORD_TTL
-            ).validated_save()
-
-
-def withdraw_member_ptr_record(catalog_zone_id, member_label):
-    """Withdraw the PTR record a member was published under in a catalog zone."""
-    with system_write():
-        delete_member_ptr_records(PTRRecord.objects.filter(name=member_ptr_name(member_label), zone_id=catalog_zone_id))
 
 
 def acting_user():
@@ -376,7 +315,8 @@ class DNSZoneQuerySet(RestrictedQuerySet):
         objs = list(objs)
         if "name" in fields:
             # Stored membership, since an instance in hand may predate a change to its catalog.
-            self.filter(pk__in=[obj.pk for obj in objs])._refuse_member_renames()
+            stored_zones = self.filter(pk__in=[obj.pk for obj in objs])
+            stored_zones._refuse_member_renames()  # pylint: disable=protected-access
 
         return super().bulk_update(objs, fields, *args, **kwargs)
 
@@ -454,9 +394,8 @@ class DNSZoneQuerySet(RestrictedQuerySet):
 
         Reads the stored memberships, since an instance in hand may predate a change to its catalog.
         """
-        memberships = self.filter(catalog_zone__isnull=False).values_list("catalog_zone_id", "member_label")
-        for catalog_zone_id, member_label in memberships:
-            withdraw_member_ptr_record(catalog_zone_id, member_label)
+        for zone in self.filter(catalog_zone__isnull=False):
+            zone.withdraw_member_ptr_record()
 
 
 class DNSModel(PrimaryModel):
@@ -842,13 +781,14 @@ class DNSZone(DNSModel):
                 kwargs["update_fields"] = {*update_fields, "member_label"}
 
             super().save(*args, **kwargs)
-            reconcile_required_catalog_records(self)
+            self._reconcile_required_catalog_records()
             self._sync_member_ptr_record(stored_zone)
 
     @property
     def ptr_record_name(self):
         """Return the owner name this zone is published at in its catalog zone, or None outside a catalog."""
-        return member_ptr_name(self.member_label) if self.catalog_zone_id else None
+        # Relative to the catalog apex (RFC 9432 §4.1).
+        return f"{self.member_label}.zones" if self.catalog_zone_id else None
 
     @property
     def is_catalog_zone(self):
@@ -872,6 +812,11 @@ class DNSZone(DNSModel):
             if zone:
                 return zone
         return None
+
+    def withdraw_member_ptr_record(self):
+        """Withdraw the PTR record naming this member zone in its catalog zone."""
+        with system_write():
+            delete_member_ptr_records(PTRRecord.objects.filter(name=self.ptr_record_name, zone_id=self.catalog_zone_id))
 
     def _assign_member_label(self, stored_zone):
         """Set the member label this save requires, refusing a supplied label it cannot keep."""
@@ -914,14 +859,60 @@ class DNSZone(DNSModel):
         # this save instead of slipping past the view check.
         return DNSZone.objects.select_for_update().filter(pk=self.pk).first()
 
+    def _publish_member_ptr_record(self):
+        """Publish the PTR record naming this member zone in its catalog zone.
+
+        RFC 9432 §4.1 allows only a single RR at that owner name, so anything else standing there gives way.
+        """
+        owner_name = self.ptr_record_name
+        member_ptr_records = PTRRecord.objects.filter(name=owner_name, zone_id=self.catalog_zone_id)
+
+        with system_write():
+            delete_member_ptr_records(member_ptr_records.exclude(ptrdname=self.name))
+            if not member_ptr_records.filter(ptrdname=self.name).exists():
+                PTRRecord(
+                    name=owner_name, ptrdname=self.name, zone_id=self.catalog_zone_id, _ttl=CATALOG_RECORD_TTL
+                ).validated_save()
+
+    def _reconcile_apex_ns_record(self):
+        """Hold the apex NS RRset RFC 9432 §4 requires at the single `invalid.` RR it recommends."""
+        ns_records = NSRecord.objects.filter(zone=self)
+        ns_records.exclude(name=APEX_RECORD_NAME, server=CATALOG_APEX_NS_SERVER).delete()
+        if not ns_records.exists():
+            NSRecord(
+                name=APEX_RECORD_NAME, server=CATALOG_APEX_NS_SERVER, zone=self, _ttl=CATALOG_RECORD_TTL
+            ).validated_save()
+
+    def _reconcile_required_catalog_records(self):
+        """Hold this catalog zone's apex NS and `version` TXT records at what RFC 9432 requires.
+
+        Idempotent, so saving the zone repairs those two records rather than only populating a
+        brand-new catalog.
+        """
+        if not self.is_catalog_zone:
+            return
+
+        with system_write():
+            self._reconcile_apex_ns_record()
+            self._reconcile_version_record()
+
+    def _reconcile_version_record(self):
+        """Hold the schema version TXT at the single RR RFC 9432 §4.2.1 requires."""
+        version_records = TXTRecord.objects.filter(name="version", zone=self)
+        # "2" is the only version the RFC defines. A second RR in the version RRset makes the whole
+        # catalog broken.
+        version_records.exclude(text="2").delete()
+        if not version_records.filter(text="2").exists():
+            TXTRecord(name="version", text="2", zone=self, _ttl=CATALOG_RECORD_TTL).validated_save()
+
     def _sync_member_ptr_record(self, stored_zone):
         """Withdraw the PTR this zone was published under if its catalog or label changed, then publish the current one."""
         if stored_zone is not None and stored_zone.catalog_zone_id:
             if (stored_zone.catalog_zone_id, stored_zone.member_label) != (self.catalog_zone_id, self.member_label):
-                withdraw_member_ptr_record(stored_zone.catalog_zone_id, stored_zone.member_label)
+                stored_zone.withdraw_member_ptr_record()
 
         if self.catalog_zone_id:
-            publish_member_ptr_record(self)
+            self._publish_member_ptr_record()
 
     def _validate_catalog_permission(self, catalog_zone_ids):
         """Require the acting user to be allowed to change every catalog zone in `catalog_zone_ids`.
