@@ -2186,7 +2186,7 @@ class CatalogMembershipTest(TestCase):
 
         self.assertEqual(
             context.exception.messages[0],
-            "These fields cannot be written through update(); save each zone instead: catalog_zone.",
+            "These fields cannot be written through a queryset; save each zone instead: catalog_zone.",
         )
 
     def test_bulk_update_refuses_the_membership_fields(self):
@@ -2214,6 +2214,38 @@ class CatalogMembershipTest(TestCase):
                     DNSZone.objects.bulk_update([zone], [field])
 
                 self.assertEqual(DNSZone.objects.values("catalog_zone_id", "member_label").get(pk=zone.pk), stored)
+
+    def test_queryset_renames_refuse_a_member(self):
+        """`update()` and `bulk_update()` refuse to rename a member, and store nothing.
+
+        The member's PTR record names it, and a rename gives it a new label.
+        """
+        member = create_zone("member.example", catalog_zone=self.catalog_zone)
+        member.name = "renamed.example"
+        published = member_ptr_records(self.catalog_zone)
+
+        test_cases = [
+            ("update", lambda: DNSZone.objects.filter(pk=member.pk).update(name="renamed.example")),
+            ("bulk_update", lambda: DNSZone.objects.bulk_update([member], ["name"])),
+        ]
+
+        for method, rename in test_cases:
+            with self.subTest(method=method):
+                with self.assertRaises(ValidationError):
+                    rename()
+
+                self.assertEqual(DNSZone.objects.get(pk=member.pk).name, "member.example")
+                self.assertEqual(member_ptr_records(self.catalog_zone), published)
+
+    def test_queryset_renames_allow_a_zone_outside_a_catalog(self):
+        """`update()` and `bulk_update()` rename a zone in no catalog."""
+        outsider = create_zone("outsider.example")
+
+        DNSZone.objects.filter(pk=outsider.pk).update(name="renamed.example")
+        outsider.name = "renamed-again.example"
+        DNSZone.objects.bulk_update([outsider], ["name"])
+
+        self.assertEqual(DNSZone.objects.get(pk=outsider.pk).name, "renamed-again.example")
 
     def test_bulk_create_refuses_a_member(self):
         """`bulk_create()` refuses a member.

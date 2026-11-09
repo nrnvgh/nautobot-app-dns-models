@@ -414,19 +414,18 @@ class DNSZoneQuerySet(RestrictedQuerySet):
         return super().bulk_create(objs, *args, **kwargs)
 
     def bulk_update(self, objs, fields, *args, **kwargs):
-        """Refuse the membership fields, which this would otherwise write without publishing the member PTR.
-
-        Without this, `update()` would still refuse them, but only inside Django's atomic block, leaving the caller's
-        transaction unusable.
-        """
-        self._refuse_membership_fields(fields, "bulk_update")
+        """Refuse the membership fields, and renaming members, which this would write without publishing the member PTR."""
+        # `update()` would refuse these too, but only inside Django's atomic block, leaving the caller's
+        # transaction unusable.
+        self._refuse_membership_fields(fields)
+        objs = list(objs)
+        if "name" in fields:
+            # Stored membership, since an instance in hand may predate a change to its catalog.
+            self.filter(pk__in=[obj.pk for obj in objs])._refuse_member_renames()
         return super().bulk_update(objs, fields, *args, **kwargs)
 
     def delete(self):
-        """Withdraw member PTR records and clear system-managed records, then delete the zones.
-
-        If the delete fails, the records are kept.
-        """
+        """Withdraw member PTR records and clear system-managed records, then delete the zones."""
         with transaction.atomic():
             refuse_member_deletes_without_catalog_permission(self.values("pk"))
             # Nothing protects the records in the purge, but if the delete fails (e.g. due to
@@ -436,16 +435,23 @@ class DNSZoneQuerySet(RestrictedQuerySet):
             return super().delete()
 
     def update(self, **kwargs):
-        """Refuse the membership fields, which this would otherwise write without publishing the member PTR."""
-        self._refuse_membership_fields(kwargs, "update")
+        """Refuse the membership fields, and renaming members, which this would write without publishing the member PTR."""
+        self._refuse_membership_fields(kwargs)
+        if "name" in kwargs:
+            self._refuse_member_renames()
         return super().update(**kwargs)
 
+    def _refuse_member_renames(self):
+        """Raise if this holds a catalog member, whose PTR record names it and which a rename gives a new label."""
+        if self.filter(catalog_zone__isnull=False).exists():
+            raise ValidationError("Catalog member zones cannot be renamed through a queryset; save each zone instead.")
+
     @staticmethod
-    def _refuse_membership_fields(fields, method):
+    def _refuse_membership_fields(fields):
         """Raise if `fields` names a catalog membership field."""
         if refused := sorted(set(fields) & CATALOG_MEMBERSHIP_FIELDS):
             raise ValidationError(
-                f"These fields cannot be written through {method}(); save each zone instead: {', '.join(refused)}."
+                f"These fields cannot be written through a queryset; save each zone instead: {', '.join(refused)}."
             )
 
 
@@ -788,10 +794,7 @@ class DNSZone(DNSModel):
         self._validate_membership(stored_zone)
 
     def delete(self, *args, **kwargs):
-        """Clear system-managed records, then the zone.
-
-        If the delete fails, the records are kept.
-        """
+        """Withdraw the member PTR record and clear system-managed records, then delete the zone."""
         with transaction.atomic():
             refuse_member_deletes_without_catalog_permission([self.pk])
             # Nothing protects the records in the purge, but if the zone delete fails (e.g. due to
