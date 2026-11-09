@@ -161,7 +161,7 @@ class ZoneRecordsTablePanel(ObjectsTablePanel):
 
         if self.system_managed:
             kwargs.setdefault("add_button_route", None)
-            kwargs.setdefault("exclude_columns", ["zone", "actions"])
+            kwargs.setdefault("exclude_columns", ["zone", "actions", "comment"])
         else:
             kwargs.setdefault("exclude_columns", ["zone"])
 

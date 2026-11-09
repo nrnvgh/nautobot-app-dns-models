@@ -246,6 +246,11 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
             self.fail("Couldn't find a single deletable object!")
         return instance
 
+    def _column_headers(self, zone):
+        """Return the table column headers on `zone`'s detail page, upper-cased and stripped of markup."""
+        cells = re.findall(r"<th\b[^>]*>(.*?)</th>", self._detail(zone), flags=re.DOTALL)
+        return {re.sub(r"<[^>]+>", "", cell).strip().upper() for cell in cells}
+
     def _detail(self, zone):
         """Return the rendered body of `zone`'s detail page."""
         response = self.client.get(zone.get_absolute_url())
@@ -365,6 +370,16 @@ class DnsZoneViewTest(ViewTestCases.PrimaryObjectViewTestCase):
         self.add_permissions("nautobot_dns_models.add_txtrecord")
         url = reverse("plugins:nautobot_dns_models:txtrecord_add")
         self.assertIn(url, self._detail(self.primary_zone))
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_catalog_zone_record_panels_have_no_comment_column(self):
+        """A catalog zone's record panels have no Comment column, since its records never carry one."""
+        self.assertNotIn("COMMENT", self._column_headers(self.catalog_zone))
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
+    def test_primary_zone_keeps_the_comment_column(self):
+        """A primary zone's TXT panel has a Comment column."""
+        self.assertIn("COMMENT", self._column_headers(self.primary_zone))
 
     @override_settings(EXEMPT_VIEW_PERMISSIONS=["*"])
     def test_catalog_zone_hides_the_add_records_menu(self):
