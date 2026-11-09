@@ -560,6 +560,25 @@ class DNSZoneAPITestCase(APIViewTestCases.APIViewTestCase):
         zone.refresh_from_db()
         self.assertFalse(zone.enabled)
 
+    def test_list_orders_zones_by_view_name_then_zone_name(self):
+        """The zone list, which the zone pickers read, is ordered by view name and then zone name."""
+        self.add_permissions("nautobot_dns_models.view_dnszone")
+        later_view = DNSView.objects.create(name="Zzz View")
+        earlier_view = DNSView.objects.create(name="Aaa View")
+        _create_zone(name="a.example", dns_view=later_view)
+        _create_zone(name="z.example", dns_view=earlier_view)
+        _create_zone(name="b.example", dns_view=earlier_view)
+
+        url = reverse("plugins-api:nautobot_dns_models-api:dnszone-list")
+        response = self.client.get(f"{url}?limit=0", **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        names = [zone["name"] for zone in response.data["results"]]
+        self.assertEqual(
+            [name for name in names if name in ("a.example", "b.example", "z.example")],
+            ["b.example", "z.example", "a.example"],
+        )
+
     def test_create_zone_helper_uses_supplied_dns_view(self):
         """_create_zone should use the DNSView explicitly provided by the caller."""
         custom_view = DNSView.objects.create(name="Helper Supplied View")
